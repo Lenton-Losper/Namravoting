@@ -1,0 +1,39 @@
+# dependencies
+node_modules/
+
+# secrets / local config (keep .env.example)
+.env
+.env.*
+!.env.example
+
+# runtime data: candidate photos, DB dumps
+uploads/
+*.dump
+*.sql.gz
+pgdata/
+
+# build output
+dist/
+build/
+*.tsbuildinfo
+
+# test / coverage / scratch
+coverage/
+.vitest-cache/
+scratch/
+scratchpad/
+screenshots/
+shots/
+shots*/
+*.png.tmp
+
+# logs
+*.log
+npm-debug.log*
+
+# editors / OS
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+.DS_Store
