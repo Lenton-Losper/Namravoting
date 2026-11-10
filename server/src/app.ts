@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import express, { type Express } from 'express';
 import helmet from 'helmet';
 import { getConfig } from './config.js';
+import { accessGate, createAccessVerifier, type AccessVerifier } from './auth/access.js';
 import { mountAuth } from './auth/index.js';
 import { csrfProtection, mountCsrf } from './auth/csrf.js';
 import { errorHandler, notFoundHandler } from './errors.js';
@@ -11,10 +12,13 @@ import { adminRouter } from './routes/admin.js';
 import { photosRouter } from './routes/photos.js';
 import { voteRouter } from './routes/vote.js';
 
-export function createApp(): Express {
+export function createApp(opts: { accessVerifier?: AccessVerifier } = {}): Express {
   const config = getConfig();   // throws (refuses to start) on AUTH_MODE=dev + NODE_ENV=production
   const app = express();
   app.disable('x-powered-by');
+
+  // Demo mode: the Cloudflare Access gate is the very first middleware, ahead of helmet, static files and every route.
+  if (config.access) app.use(accessGate(opts.accessVerifier ?? createAccessVerifier(config.access)));
 
   app.use(helmet({
     contentSecurityPolicy: {

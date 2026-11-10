@@ -1,9 +1,7 @@
 import crypto from 'node:crypto';
-import fs from 'node:fs/promises';
-import path from 'node:path';
 import sharp from 'sharp';
-import { getConfig } from '../config.js';
 import { HttpError } from '../errors.js';
+import { getStorage } from './storage.js';
 
 export const MAX_UPLOAD_BYTES = 2 * 1024 * 1024;
 
@@ -21,19 +19,17 @@ export async function savePhoto(buf: Buffer): Promise<string> {
   } catch {
     throw new HttpError(400, 'Image could not be processed', 'bad_image');
   }
-  const dir = getConfig().uploadDir;
-  await fs.mkdir(dir, { recursive: true });
   const name = crypto.randomBytes(16).toString('hex') + '.jpg';
-  await fs.writeFile(path.join(dir, name), out, { flag: 'wx' });
+  await getStorage().put(name, out);
   return name;
 }
 
 export async function readPhoto(name: string): Promise<Buffer | null> {
   if (!FILE_RE.test(name)) return null;
-  try { return await fs.readFile(path.join(getConfig().uploadDir, name)); } catch { return null; }
+  return getStorage().get(name);
 }
 
 export async function deletePhoto(name: string | null | undefined): Promise<void> {
   if (!name || !FILE_RE.test(name)) return;
-  try { await fs.unlink(path.join(getConfig().uploadDir, name)); } catch { /* already gone */ }
+  await getStorage().delete(name);
 }

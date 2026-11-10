@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import pg from 'pg';
 import { loadDotEnv } from '../src/env.js';
+import { assertImportAllowed } from '../src/umoja/guard.js';
 import { importUmoja } from '../src/umoja/import.js';
 import { parseUmojaExport, UmojaParseError } from '../src/umoja/parse.js';
 
@@ -9,8 +10,13 @@ import { parseUmojaExport, UmojaParseError } from '../src/umoja/parse.js';
 loadDotEnv();
 const args = process.argv.slice(2);
 const dry = args.includes('--dry-run');
+const allowRemote = args.includes('--allow-remote');
 const file = args.find((a) => !a.startsWith('--'));
-if (!file) { console.error('Usage: npm run umoja:import -- <path-to-HR-export> [--dry-run]'); process.exit(1); }
+if (!file) { console.error('Usage: npm run umoja:import -- <path-to-HR-export> [--dry-run] [--allow-remote]'); process.exit(1); }
+// Guard FIRST, before the file is even read: the member list only goes into a local database.
+try {
+  if (!dry) assertImportAllowed(process.env.MIGRATE_DATABASE_URL ?? '', allowRemote);
+} catch (e) { console.error((e as Error).message); process.exit(1); }
 // npm runs workspace scripts from server/, so resolve relative paths against where the user typed the command.
 const full = path.resolve(process.env.INIT_CWD ?? process.cwd(), file);
 

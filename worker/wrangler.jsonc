@@ -1,0 +1,36 @@
+{
+  // Demo deployment only. Secrets (SESSION_SECRET, DATABASE_URL, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY) are set with
+  // `wrangler secret put` and never written here.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "namra-voting-demo",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "workers_dev": true,
+  "preview_urls": false,
+
+  "containers": [
+    {
+      "class_name": "NamraContainer",
+      "image": "../Dockerfile",
+      "image_build_context": "..",
+      "max_instances": 1,          // rate limits live in memory, so exactly one instance
+      "instance_type": "basic"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [{ "name": "APP", "class_name": "NamraContainer" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["NamraContainer"] }],
+
+  // Non-secret configuration.
+  "vars": {
+    "NODE_ENV": "production",
+    "AUTH_MODE": "demo",
+    "STORAGE": "r2",
+    "R2_BUCKET": "namra-voting-photos",
+    "PUBLIC_BASE_URL": "https://namra-voting-demo.llosperofficial.workers.dev",
+    "CF_ACCESS_TEAM_DOMAIN": "yellow-flower-4592.cloudflareaccess.com",
+    "SLEEP_AFTER_MINUTES": "60"
+  },
+  "observability": { "enabled": true }
+}

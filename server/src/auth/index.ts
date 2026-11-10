@@ -20,8 +20,9 @@ export const isAdmin = (u: AuthUser): boolean => u.roles.includes(ADMIN_ROLE);
 
 /** Mounts login/logout/session routes for the active auth mode. */
 export function mountAuth(app: Express, config: Config): void {
-  if (config.authMode === 'dev') {
-    devAuth.mount(app, config);   // includes POST /api/dev/login (dev only)
+  if (config.authMode === 'dev' || config.authMode === 'demo') {
+    // Identity picker + POST /api/dev/login. 'dev' is refused in production; 'demo' only runs behind the Cloudflare Access gate.
+    devAuth.mount(app, config);
   } else {
     throw new Error('AUTH_MODE=entra is not implemented yet (see README: "Swapping in Entra ID")');
   }

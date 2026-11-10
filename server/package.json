@@ -10,12 +10,14 @@
     "seed": "tsx scripts/seed.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "umoja:import": "tsx scripts/umoja-import.ts"
+    "umoja:import": "tsx scripts/umoja-import.ts",
+    "demo:db": "tsx scripts/demo-setup.ts"
   },
   "dependencies": {
     "express": "^5.3.0",
     "express-rate-limit": "^8.7.3",
     "helmet": "^8.3.0",
+    "jose": "^6.2.17",
     "multer": "^2.5.0",
     "pdfkit": "^0.20.2",
     "pg": "^8.23.1",
