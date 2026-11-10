@@ -120,7 +120,7 @@ describe('load', () => {
     const c = await makeCampaign(admin, 2);
     await admin.post(`/api/campaigns/${c.id}/start`).expect(200);
     const sessions = await Promise.all(Array.from({ length: 40 }, (_, i) => login(app, {
-      oid: `c${String(i).padStart(7, '0')}-0000-4000-8000-000000000000`, email: `load${i}@namra.test`, displayName: `Load ${i}`, roles: [],
+      oid: `c${String(i).padStart(7, '0')}-0000-4000-8000-000000000000`, email: `load${i}@namra.test`, displayName: `Load ${i}`, roles: [], employeeCode: null,
     })));
     const rs = await Promise.all(sessions.map((s, i) => s.post(`/api/vote/${c.token}`).send({ candidateId: c.candidates[i % 4 === 0 ? 1 : 0] })));
     expect(rs.filter((r) => r.status !== 201).map((r) => r.status)).toEqual([]);

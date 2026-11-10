@@ -6,6 +6,12 @@ node_modules/
 .env.*
 !.env.example
 
+# HR source files: union membership is sensitive, NEVER commit the member list
+data/
+*.umoja*.txt
+*umoja*.csv
+*umoja*.txt
+
 # runtime data: candidate photos, DB dumps
 uploads/
 *.dump

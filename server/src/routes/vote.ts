@@ -7,7 +7,8 @@ import { currentUser, getCurrentUser, requireUser, type AuthUser } from '../auth
 import { voterState } from '../domain/status.js';
 import { tokenParams, voteBody } from '../domain/validation.js';
 import { getResults, refreshStatus, type CampaignRow } from '../services/campaigns.js';
-import { castVote } from '../services/voting.js';
+import { castVote, notMemberMessage } from '../services/voting.js';
+import { isActiveMemberSql, logNotMember, umojaReason } from '../services/umoja.js';
 
 /** Malformed and unknown tokens answer identically (404) so nothing reveals whether a campaign exists. */
 function parseToken(req: Request): string {
@@ -24,10 +25,19 @@ async function loadByToken(token: string): Promise<CampaignRow> {
 }
 
 async function standing(c: CampaignRow, u: AuthUser) {
-  const eligible = c.eligibility === 'all' ||
-    (await getPool().query('SELECT 1 FROM eligible_voters WHERE campaign_id = $1 AND voter_email = $2', [c.id, u.email.toLowerCase()])).rowCount! > 0;
+  let notMember = false;
+  let eligible: boolean;
+  if (c.eligibility === 'umoja') {
+    const reason = await umojaReason(getPool(), u.oid);
+    notMember = reason !== 'member';
+    if (reason !== 'member') logNotMember(reason, c.id, u.oid);   // the reason goes to the server log only
+    eligible = !notMember;
+  } else {
+    eligible = c.eligibility === 'all' ||
+      (await getPool().query('SELECT 1 FROM eligible_voters WHERE campaign_id = $1 AND voter_email = $2', [c.id, u.email.toLowerCase()])).rowCount! > 0;
+  }
   const hasVoted = (await getPool().query('SELECT 1 FROM vote_receipts WHERE campaign_id = $1 AND voter_oid = $2', [c.id, u.oid])).rowCount! > 0;
-  return { eligible, hasVoted, state: voterState(c, new Date(), { eligible, hasVoted }) };
+  return { eligible, notMember, hasVoted, state: voterState(c, new Date(), { eligible, notMember, hasVoted }) };
 }
 
 export function voteRouter(): Router {
@@ -50,7 +60,8 @@ export function voteRouter(): Router {
               EXISTS (SELECT 1 FROM vote_receipts v WHERE v.campaign_id = c.id AND v.voter_oid = $1) AS has_voted
          FROM campaigns c
         WHERE (c.status = 'open' OR (c.status = 'closed' AND c.results_published))
-          AND (c.eligibility = 'all' OR EXISTS (SELECT 1 FROM eligible_voters e WHERE e.campaign_id = c.id AND e.voter_email = $2))
+          AND (c.eligibility = 'all' OR (c.eligibility = 'umoja' AND ${isActiveMemberSql('$1')})
+               OR (c.eligibility = 'list' AND EXISTS (SELECT 1 FROM eligible_voters e WHERE e.campaign_id = c.id AND e.voter_email = $2)))
         ORDER BY c.closes_at NULLS LAST, c.created_at DESC`, [u.oid, u.email.toLowerCase()]);
     const now = new Date();
     res.set('Cache-Control', 'no-store').json({
@@ -68,6 +79,7 @@ export function voteRouter(): Router {
     const c = await loadByToken(shareToken);
     const s = await standing(c, u);
     // Ineligible callers get no campaign data at all (not even the title).
+    if (s.notMember) throw new HttpError(403, notMemberMessage, 'not_member');
     if (!s.eligible) throw new HttpError(403, 'You are not eligible to vote in this campaign', 'not_eligible');
     const showCandidates = c.status !== 'draft';
     const cands = showCandidates
@@ -94,6 +106,7 @@ export function voteRouter(): Router {
     const shareToken = parseToken(req);
     const c = await loadByToken(shareToken);
     const s = await standing(c, currentUser(req));
+    if (s.notMember) throw new HttpError(403, notMemberMessage, 'not_member');
     if (!s.eligible) throw new HttpError(403, 'You are not eligible to view these results', 'not_eligible');
     if (c.status !== 'closed' || !c.results_published) throw new HttpError(404, 'Results are not published');
     res.set('Cache-Control', 'no-store').json({ title: c.title, ...(await getResults(getPool(), c.id)) });

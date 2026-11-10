@@ -5,7 +5,7 @@ import { audit } from './audit.js';
 
 export interface CampaignRow {
   id: string; share_token: string; created_by: string; title: string; description: string | null;
-  status: Status; opens_at: Date | null; closes_at: Date | null; eligibility: 'all' | 'list';
+  status: Status; opens_at: Date | null; closes_at: Date | null; eligibility: 'all' | 'list' | 'umoja';
   results_published: boolean; created_at: Date;
 }
 
@@ -43,7 +43,8 @@ export async function getResults(db: Queryable, campaignId: string): Promise<Res
       WHERE c.campaign_id = $1 GROUP BY c.id ORDER BY c.sort_order, c.name`, [campaignId]);
   const t = await db.query(
     `SELECT (SELECT count(*)::int FROM vote_receipts WHERE campaign_id = $1) AS votes,
-            CASE WHEN (SELECT eligibility FROM campaigns WHERE id = $1) = 'list'
-                 THEN (SELECT count(*)::int FROM eligible_voters WHERE campaign_id = $1) END AS eligible`, [campaignId]);
+            CASE (SELECT eligibility FROM campaigns WHERE id = $1)
+                 WHEN 'list' THEN (SELECT count(*)::int FROM eligible_voters WHERE campaign_id = $1)
+                 WHEN 'umoja' THEN (SELECT count(*)::int FROM umoja_members WHERE active) END AS eligible`, [campaignId]);
   return { candidates: cands.rows, turnout: { votes: t.rows[0].votes, eligible: t.rows[0].eligible } };
 }

@@ -2,11 +2,14 @@ import { DEADLOCK, getPool, SERIALIZATION_FAILURE, UNIQUE_VIOLATION, withTx } fr
 import { HttpError, notFound } from '../errors.js';
 import { isVotingWindowOpen, shouldAutoClose } from '../domain/status.js';
 import { refreshStatus } from './campaigns.js';
+import { logNotMember, umojaReason } from './umoja.js';
 
 /** Test seam: lets a test force a specific interleaving (e.g. a close landing right after the status read). Empty in production. */
 export const testHooks: { afterCampaignRead?: () => Promise<void> } = {};
 
-type Outcome = { kind: 'recorded' } | { kind: 'closed' } | { kind: 'close_due' } | { kind: 'not_open' } | { kind: 'not_eligible' };
+export const notMemberMessage = 'This vote is for Umoja members only';
+
+type Outcome = { kind: 'recorded' } | { kind: 'closed' } | { kind: 'close_due' } | { kind: 'not_open' } | { kind: 'not_eligible' } | { kind: 'not_member' };
 
 /**
  * Casts a ballot. One SERIALIZABLE transaction:
@@ -40,6 +43,12 @@ export async function castVote(voterOid: string, voterEmail: string, shareToken:
         if (camp.eligibility === 'list') {
           const e = await c.query('SELECT 1 FROM eligible_voters WHERE campaign_id = $1 AND voter_email = $2', [camp.id, voterEmail.toLowerCase()]);
           if (e.rowCount === 0) return { kind: 'not_eligible' } as Outcome;
+        }
+
+        if (camp.eligibility === 'umoja') {
+          // Same check as the ballot page (services/umoja.ts), against users.employee_code set at login.
+          const reason = await umojaReason(c, voterOid);
+          if (reason !== 'member') { logNotMember(reason, camp.id, voterOid); return { kind: 'not_member' } as Outcome; }
         }
 
         // No SELECT on vote_receipts here on purpose: reading it would make every concurrent voter
@@ -77,6 +86,7 @@ export async function castVote(voterOid: string, voterEmail: string, shareToken:
     case 'recorded': return;
     case 'closed': throw new HttpError(409, 'Voting has closed', 'closed');
     case 'not_open': throw new HttpError(409, 'Voting is not open yet', 'not_open');
+    case 'not_member': throw new HttpError(403, notMemberMessage, 'not_member');
     case 'not_eligible': throw new HttpError(403, 'You are not eligible to vote in this campaign', 'not_eligible');
     default: throw new HttpError(500, 'Internal server error');
   }

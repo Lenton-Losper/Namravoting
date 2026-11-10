@@ -1,7 +1,10 @@
 {
   "name": "namra-voting",
   "private": true,
-  "workspaces": ["server", "client"],
+  "workspaces": [
+    "server",
+    "client"
+  ],
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "dev:lan": "node scripts/dev-lan.mjs",
@@ -9,6 +12,7 @@
     "seed": "npm run seed -w server",
     "test": "npm test -w server",
     "build": "npm run build -w client && npm run build -w server",
-    "db:up": "docker compose up -d --wait"
+    "db:up": "docker compose up -d --wait",
+    "umoja:import": "npm run umoja:import -w server --"
   }
 }

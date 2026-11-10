@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import pg from 'pg';
 import sharp from 'sharp';
 import { loadDotEnv } from '../src/env.js';
-import { DEV_USERS } from '../src/auth/devUsers.js';
+import { DEV_USERS, DEV_UMOJA_MEMBERS } from '../src/auth/devUsers.js';
 
 loadDotEnv();
 const url = process.env.MIGRATE_DATABASE_URL;
@@ -27,10 +27,17 @@ await client.connect();
 try {
   for (const u of DEV_USERS) {
     await client.query(
-      `INSERT INTO users (entra_oid, email, display_name) VALUES ($1,$2,$3)
-       ON CONFLICT (entra_oid) DO UPDATE SET email = EXCLUDED.email, display_name = EXCLUDED.display_name`,
-      [u.oid, u.email, u.displayName]);
+      `INSERT INTO users (entra_oid, email, display_name, employee_code) VALUES ($1,$2,$3,$4)
+       ON CONFLICT (entra_oid) DO UPDATE SET email = EXCLUDED.email, display_name = EXCLUDED.display_name, employee_code = EXCLUDED.employee_code`,
+      [u.oid, u.email, u.displayName, u.employeeCode]);
   }
+  // Fake Umoja list for development ONLY when none has been imported (never overwrites a real import).
+  const have = (await client.query('SELECT count(*)::int AS n FROM umoja_members')).rows[0].n as number;
+  if (have === 0) {
+    await client.query('INSERT INTO umoja_members (employee_code, active) SELECT * FROM unnest($1::text[], $2::boolean[])',
+      [DEV_UMOJA_MEMBERS.map((m) => m.code), DEV_UMOJA_MEMBERS.map((m) => m.active)]);
+    console.log(`Seeded ${DEV_UMOJA_MEMBERS.length} fake Umoja members (dev only).`);
+  } else console.log('umoja_members already populated; leaving it alone.');
   const admin = DEV_USERS[0];
   const title = 'Election of the Commissioner (sample)';
   const exists = await client.query('SELECT 1 FROM campaigns WHERE created_by = $1 AND title = $2', [admin.oid, title]);

@@ -47,7 +47,7 @@ function EligibilityTab({ c }: { c: CampaignDetail }) {
     <>
       <SectionTitle icon="lock" actions={c.status === 'draft' ? <Link className="btn btn-secondary btn-sm" to={`/admin/c/${c.id}/edit`}>Edit eligibility</Link> : undefined}>Who can vote</SectionTitle>
       <div className="field-grid">
-        <Field label="Eligible voters" helper="Who may take part in this vote">{c.eligibility === 'all' ? 'All signed-in NamRA staff' : `${c.eligible_emails.length} listed email address${c.eligible_emails.length === 1 ? '' : 'es'}`}</Field>
+        <Field label="Eligible voters" helper="Who may take part in this vote">{c.eligibility === 'all' ? 'All signed-in NamRA staff' : c.eligibility === 'umoja' ? `Umoja members only (${c.umoja_active_count} active member${c.umoja_active_count === 1 ? '' : 's'})` : `${c.eligible_emails.length} listed email address${c.eligible_emails.length === 1 ? '' : 'es'}`}</Field>
         <Field label="Votes per person" helper="Enforced by the system">One</Field>
       </div>
       {c.eligibility === 'list' && (

@@ -1,3 +1,4 @@
+import { activeMemberCount } from '../services/umoja.js';
 import crypto from 'node:crypto';
 import { Router, type Request, type RequestHandler, type Response } from 'express';
 import multer from 'multer';
@@ -81,7 +82,8 @@ export function adminRouter(): Router {
     for (const row of open.rows) await refreshStatus(row.id);
     const { rows } = await getPool().query(
       `SELECT c.*, (SELECT count(*)::int FROM vote_receipts v WHERE v.campaign_id = c.id) AS turnout,
-              CASE WHEN c.eligibility = 'list' THEN (SELECT count(*)::int FROM eligible_voters e WHERE e.campaign_id = c.id) END AS eligible_count
+              CASE c.eligibility WHEN 'list' THEN (SELECT count(*)::int FROM eligible_voters e WHERE e.campaign_id = c.id)
+                                WHEN 'umoja' THEN (SELECT count(*)::int FROM umoja_members WHERE active) END AS eligible_count
          FROM campaigns c WHERE c.created_by = $1 ORDER BY c.created_at DESC`, [u.oid]);
     res.json({ campaigns: rows.map((c) => ({ ...present(c), turnout: c.turnout, eligible_count: c.eligible_count })) });
   });
@@ -97,7 +99,8 @@ export function adminRouter(): Router {
     const { rows } = await getPool().query(
       `SELECT c.id, c.title, c.status, c.created_at, c.opens_at, c.closes_at, c.eligibility, c.results_published,
               (SELECT count(*)::int FROM vote_receipts v WHERE v.campaign_id = c.id) AS turnout,
-              CASE WHEN c.eligibility = 'list' THEN (SELECT count(*)::int FROM eligible_voters e WHERE e.campaign_id = c.id) END AS eligible_count,
+              CASE c.eligibility WHEN 'list' THEN (SELECT count(*)::int FROM eligible_voters e WHERE e.campaign_id = c.id)
+                                WHEN 'umoja' THEN (SELECT count(*)::int FROM umoja_members WHERE active) END AS eligible_count,
               (SELECT min(a.at) FROM audit_log a WHERE a.campaign_id = c.id AND a.action = 'campaign.start') AS started_at,
               (SELECT max(a.at) FROM audit_log a WHERE a.campaign_id = c.id AND a.action LIKE 'campaign.close%') AS closed_at
          FROM campaigns c WHERE c.created_by = $1 ORDER BY c.created_at DESC`, [u.oid]);
@@ -155,6 +158,7 @@ export function adminRouter(): Router {
       ...present(c),
       candidates: cands.rows.map((x) => ({ id: x.id, name: x.name, bio: x.bio, photo_url: photoUrl(x), sort_order: x.sort_order })),
       eligible_emails: el.rows.map((x) => x.voter_email),
+      umoja_active_count: await activeMemberCount(getPool()),   // count only; never the members themselves
     });
   });
 
@@ -262,6 +266,9 @@ export function adminRouter(): Router {
       const n = (await tx.query('SELECT count(*)::int AS n FROM candidates WHERE campaign_id = $1', [c.id])).rows[0].n;
       if (n < 2) throw new HttpError(409, 'At least 2 candidates are required to start', 'needs_candidates');
       const fresh = (await tx.query('SELECT eligibility, closes_at FROM campaigns WHERE id = $1', [c.id])).rows[0];
+      if (fresh.eligibility === 'umoja' && (await activeMemberCount(tx)) < 1) {
+        throw new HttpError(409, 'There are no active Umoja members loaded (run the Umoja import first)', 'needs_voters');
+      }
       if (fresh.eligibility === 'list') {
         const e = (await tx.query('SELECT count(*)::int AS n FROM eligible_voters WHERE campaign_id = $1', [c.id])).rows[0].n;
         if (e < 1) throw new HttpError(409, 'The eligible voter list is empty', 'needs_voters');

@@ -1,5 +1,5 @@
 export type Status = 'draft' | 'open' | 'closed';
-export type VoterState = 'can_vote' | 'already_voted' | 'not_eligible' | 'not_open' | 'closed';
+export type VoterState = 'can_vote' | 'already_voted' | 'not_eligible' | 'not_member' | 'not_open' | 'closed';
 
 export interface CampaignTimes { status: Status; opens_at: Date | null; closes_at: Date | null }
 
@@ -20,9 +20,10 @@ export function isVotingWindowOpen(c: CampaignTimes, now: Date): boolean {
 }
 
 export function voterState(
-  c: CampaignTimes, now: Date, opts: { eligible: boolean; hasVoted: boolean },
+  c: CampaignTimes, now: Date, opts: { eligible: boolean; notMember?: boolean; hasVoted: boolean },
 ): VoterState {
   if (c.status === 'closed' || shouldAutoClose(c, now)) return 'closed';
+  if (opts.notMember) return 'not_member';
   if (!opts.eligible) return 'not_eligible';
   if (opts.hasVoted) return 'already_voted';
   return isVotingWindowOpen(c, now) ? 'can_vote' : 'not_open';

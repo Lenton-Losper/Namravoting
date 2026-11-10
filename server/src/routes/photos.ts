@@ -1,3 +1,4 @@
+import { isActiveMemberSql } from '../services/umoja.js';
 import { Router } from 'express';
 import { z } from 'zod';
 import { getPool } from '../db.js';
@@ -14,8 +15,10 @@ export function photosRouter(): Router {
     const me = currentUser(req);
     const { rows } = await getPool().query(
       `SELECT c.photo_path, k.status, k.created_by,
-              (k.eligibility = 'all' OR EXISTS (SELECT 1 FROM eligible_voters e WHERE e.campaign_id = k.id AND e.voter_email = $2)) AS eligible
-         FROM candidates c JOIN campaigns k ON k.id = c.campaign_id WHERE c.id = $1`, [cid, me.email.toLowerCase()]);
+              (k.eligibility = 'all'
+               OR (k.eligibility = 'umoja' AND ${isActiveMemberSql('$3')})
+               OR (k.eligibility = 'list' AND EXISTS (SELECT 1 FROM eligible_voters e WHERE e.campaign_id = k.id AND e.voter_email = $2))) AS eligible
+         FROM candidates c JOIN campaigns k ON k.id = c.campaign_id WHERE c.id = $1`, [cid, me.email.toLowerCase(), me.oid]);
     const row = rows[0];
     // Visible to the campaign's creator, or (once it has started) to voters who are eligible for it. Otherwise 404.
     const allowed = row && (row.created_by === me.oid || (row.status !== 'draft' && row.eligible));

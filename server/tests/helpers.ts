@@ -14,7 +14,7 @@ export const ownerDb = () => (owner ??= new pg.Pool({ connectionString: TEST_OWN
 export async function closeOwner() { await owner?.end(); owner = undefined; }
 
 export async function resetDb() {
-  await ownerDb().query('TRUNCATE ballots, vote_receipts, eligible_voters, candidates, audit_log, campaigns, users CASCADE');
+  await ownerDb().query('TRUNCATE ballots, vote_receipts, eligible_voters, candidates, audit_log, campaigns, users, umoja_members CASCADE');
 }
 
 export interface Session {
@@ -63,8 +63,9 @@ export const png = (w = 100, h = 80) =>
   sharp({ create: { width: w, height: h, channels: 3, background: '#3366cc' } }).png().toBuffer();
 
 /** Creates a campaign with N candidates via the API and returns ids. */
-export async function makeCampaign(admin: Session, n = 2, title = 'Test vote') {
+export async function makeCampaign(admin: Session, n = 2, title = 'Test vote', eligibility: 'all' | 'umoja' = 'all') {
   const c = (await admin.post('/api/campaigns').send({ title }).expect(201)).body;
+  await admin.put(`/api/campaigns/${c.id}/eligible`).send({ mode: eligibility }).expect(200);   // new campaigns default to umoja; older tests want 'all'
   const candidates: string[] = [];
   for (let i = 0; i < n; i++) {
     const r = await admin.post(`/api/campaigns/${c.id}/candidates`).field('name', `Candidate ${i + 1}`).field('bio', 'bio').expect(201);
@@ -75,3 +76,9 @@ export async function makeCampaign(admin: Session, n = 2, title = 'Test vote') {
 
 export const count = async (table: 'ballots' | 'vote_receipts', campaignId: string) =>
   (await ownerDb().query(`SELECT count(*)::int AS n FROM ${table} WHERE campaign_id = $1`, [campaignId])).rows[0].n as number;
+
+/** Replaces umoja_members with the given rows (owner role, like the import script). */
+export async function setMembers(rows: [string, boolean][]) {
+  await ownerDb().query('DELETE FROM umoja_members');
+  if (rows.length) await ownerDb().query('INSERT INTO umoja_members (employee_code, active) SELECT * FROM unnest($1::text[], $2::boolean[])', [rows.map((r) => r[0]), rows.map((r) => r[1])]);
+}

@@ -33,6 +33,7 @@ export const candidatePatchBody = z.object({
 
 export const eligibleBody = z.discriminatedUnion('mode', [
   z.object({ mode: z.literal('all') }).strict(),
+  z.object({ mode: z.literal('umoja') }).strict(),
   z.object({ mode: z.literal('list'), emails: z.array(z.string().trim().max(254)).min(1).max(5000) }).strict(),
 ]);
 

@@ -139,7 +139,7 @@ function EligibilitySection({ c, onSaved }: { c: CampaignDetail; onSaved: () => 
   async function save() {
     setError(null); setMsg(null);
     try {
-      await api('PUT', `/api/campaigns/${c.id}/eligible`, mode === 'all' ? { mode } : { mode, emails });
+      await api('PUT', `/api/campaigns/${c.id}/eligible`, mode === 'list' ? { mode, emails } : { mode });
       setMsg('Saved.'); onSaved();
     } catch (e) { setError((e as Error).message); }
   }
@@ -147,6 +147,7 @@ function EligibilitySection({ c, onSaved }: { c: CampaignDetail; onSaved: () => 
     <section className="form-section">
       <SectionTitle icon="lock">Eligibility</SectionTitle>
       <div className="stack">
+        <label className="check"><input type="radio" name="elig" checked={mode === 'umoja'} onChange={() => setMode('umoja')} /> Umoja members only ({c.umoja_active_count} active member{c.umoja_active_count === 1 ? '' : 's'})</label>
         <label className="check"><input type="radio" name="elig" checked={mode === 'all'} onChange={() => setMode('all')} /> All signed-in NamRA staff</label>
         <label className="check"><input type="radio" name="elig" checked={mode === 'list'} onChange={() => setMode('list')} /> Only these email addresses</label>
         {mode === 'list' && (

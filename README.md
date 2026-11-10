@@ -47,7 +47,24 @@ Only the **`server/src/auth/`** module changes:
 3. Delete `/api/dev/*` usage: the client `pages/Login.tsx` becomes a "Sign in with Microsoft" redirect.
 4. Set `AUTH_MODE=entra` and the tenant/client settings in config.
 
+5. **Employee code (needed for Umoja-only votes).** `AuthUser.employeeCode` must come from the Entra **`employeeId`** user attribute. That needs either an optional claim on the ID token or a Microsoft Graph `GET /me?$select=employeeId` call at sign-in. **IT must confirm the attribute actually holds the NAM codes** (e.g. `TST0445`, `TST0012`) for everyone. Never derive it from the email address. Upsert it into `users.employee_code` at sign-in (`auth/devAuth.ts` shows how); a missing or malformed value must be stored as `null`.
+
 Nothing in routes, services or the database changes. CSRF (`auth/csrf.ts`) is independent of the session mechanism.
+
+## Umoja-only voting
+
+New campaigns default to **Umoja members only**. A voter is eligible when their `users.employee_code` (set at login) exists in `umoja_members` with `active = true`; otherwise they see the `not_member` card. The reason (no code / unknown code / inactive) is written to the **server log only**.
+
+`umoja_members` holds just `employee_code` + `active` (+ import timestamp). No names, gender, position or dates. The app DB role has SELECT only.
+
+**Where to put the HR file:** `data/` in the project root (e.g. `data/umoja-export.txt`). `data/`, `*.umoja*.txt` and `*umoja*.csv` are gitignored: the member list must never be committed.
+
+```powershell
+npm run umoja:import -- data/umoja-export.txt             # full sync: members missing from the file are removed
+npm run umoja:import -- data/umoja-export.txt --dry-run   # parse and report only
+```
+
+Accepts CSV/TSV with a header, or the "one value per line" layout (header names, then blocks of 8). Only Employee Code and Umoja Membership (`Active` -> true, anything else -> false) are read; everything else is discarded in memory. It prints rows read / active / inactive / invalid codes / duplicates and the columns it saw, and writes an `umoja.import` audit entry with counts only. Conflicting duplicate rows are treated as inactive. Dev seed: `npm run seed` loads a fake list when the table is empty.
 
 ## Security notes
 

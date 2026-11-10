@@ -1,4 +1,4 @@
-export interface EligibilityRule { eligibility: 'all' | 'list' }
+export interface EligibilityRule { eligibility: 'all' | 'list' | 'umoja' }
 
 export const normalizeEmail = (e: string): string => e.trim().toLowerCase();
 
@@ -14,5 +14,6 @@ export function parseEmailList(raw: string): { emails: string[]; invalid: string
 }
 
 export function isEligible(rule: EligibilityRule, email: string, list: Set<string>): boolean {
+  if (rule.eligibility === 'umoja') return false;   // decided by the DB membership check, never by an email list
   return rule.eligibility === 'all' || list.has(normalizeEmail(email));
 }

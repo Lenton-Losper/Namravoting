@@ -92,7 +92,7 @@ describe('closing is atomic', () => {
   it('votes racing a close: receipts = ballots, the audit count is final, and nothing is accepted after the close commits', async () => {
     const admin = await login(app, ADMIN_A);
     const voters = await Promise.all(Array.from({ length: 16 }, (_, i) => login(app, {
-      oid: `e${String(i).padStart(7, '0')}-0000-4000-8000-000000000000`, email: `race${i}@namra.test`, displayName: `Racer ${i}`, roles: [],
+      oid: `e${String(i).padStart(7, '0')}-0000-4000-8000-000000000000`, email: `race${i}@namra.test`, displayName: `Racer ${i}`, roles: [], employeeCode: null,
     })));
 
     for (let round = 0; round < 12; round++) {

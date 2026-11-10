@@ -5,7 +5,7 @@ import { Icon } from '../icons';
 import { closesIn, useNow } from '../time';
 import { BackLink, Dialog, ErrorBox, ResultsChart, Spinner, Thumb, initials } from '../ui';
 
-type VoterState = 'can_vote' | 'already_voted' | 'not_eligible' | 'not_open' | 'closed';
+type VoterState = 'can_vote' | 'already_voted' | 'not_eligible' | 'not_member' | 'not_open' | 'closed';
 interface Info {
   title: string; description: string | null; opensAt: string | null; closesAt: string | null; resultsPublished: boolean;
   voterState: VoterState; candidates: { id: string; name: string; bio: string | null; photoUrl: string | null }[];
@@ -39,16 +39,18 @@ export function VotePage() {
   const [done, setDone] = useState(false);
   const [invalid, setInvalid] = useState(false);
   const [ineligible, setIneligible] = useState(false);
+  const [notMember, setNotMember] = useState(false);
   const submitting = useRef(false);   // synchronous guard: a double tap can never send two requests
 
   const load = useCallback(async (): Promise<Info | null> => {
     try {
       const i = await api<Info>('GET', `/api/vote/${shareToken}`);
-      setInfo(i); setError(null); setInvalid(false); setIneligible(false);
+      setInfo(i); setError(null); setInvalid(false); setIneligible(false); setNotMember(false);
       return i;
     } catch (e) {
       if (e instanceof ApiError && e.status === 404) setInvalid(true);                          // unknown or malformed link
       else if (e instanceof ApiError && e.status === 403 && e.code === 'not_eligible') setIneligible(true);
+      else if (e instanceof ApiError && e.status === 403 && e.code === 'not_member') setNotMember(true);
       else setError((e as Error).message);
       return null;
     }
@@ -82,6 +84,14 @@ export function VotePage() {
         <p className="muted">Check that you opened the full link or scanned the whole QR code.</p>
         <Link className="btn btn-secondary" to="/votes">Go to My votes</Link>
       </section>
+    );
+  }
+  if (notMember) {
+    return (
+      <StateCard icon="ban" title="This vote is for Umoja members">
+        <p className="muted">This vote is for Umoja members. You're not on the Umoja membership list. Sign up as an Umoja member to take part, or contact Human Capital if you think this is a mistake.</p>
+        <Link className="btn btn-secondary" to="/votes">Go to My votes</Link>
+      </StateCard>
     );
   }
   if (ineligible) {

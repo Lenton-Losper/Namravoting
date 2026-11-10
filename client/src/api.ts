@@ -29,10 +29,10 @@ export interface User { oid: string; email: string; displayName: string; roles: 
 export interface Candidate { id: string; name: string; bio: string | null; photo_url: string | null }
 export interface Campaign {
   id: string; title: string; description: string | null; status: 'draft' | 'open' | 'closed';
-  opens_at: string | null; closes_at: string | null; eligibility: 'all' | 'list'; results_published: boolean;
+  opens_at: string | null; closes_at: string | null; eligibility: 'all' | 'list' | 'umoja'; results_published: boolean;
   share_token: string; share_url: string; turnout?: number; eligible_count?: number | null;
 }
-export interface CampaignDetail extends Campaign { candidates: Candidate[]; eligible_emails: string[] }
+export interface CampaignDetail extends Campaign { candidates: Candidate[]; eligible_emails: string[]; umoja_active_count: number }
 export interface Results { status: string; results_published: boolean; candidates: { id: string; name: string; votes: number }[]; turnout: { votes: number; eligible: number | null } }
 
 export interface SummaryCampaign {
