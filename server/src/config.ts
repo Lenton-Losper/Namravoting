@@ -51,6 +51,11 @@ export function parseConfig(env: NodeJS.ProcessEnv) {
     adminRateLimit: e.ADMIN_RATE_LIMIT_PER_MIN,
   };
 }
+/** One line describing a config failure: names the keys, never their values. */
+export function describeConfigError(e: unknown): string {
+  if (e instanceof z.ZodError) return 'invalid or missing environment variables: ' + e.issues.map((i) => `${i.path.join('.') || '(root)'} (${i.message})`).join('; ');
+  return e instanceof Error ? e.message : String(e);
+}
 export type Config = ReturnType<typeof parseConfig>;
 
 let cached: Config | undefined;

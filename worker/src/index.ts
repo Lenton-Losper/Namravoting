@@ -1,4 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
+import { toContainerRequest } from './forward';
 
 /**
  * Routes every request to ONE container instance running the Express app (max_instances: 1, because the app's
@@ -21,6 +22,15 @@ const CONTAINER_ENV_KEYS = [
   'NODE_ENV', 'AUTH_MODE', 'STORAGE', 'R2_BUCKET', 'PUBLIC_BASE_URL', 'CF_ACCESS_TEAM_DOMAIN', 'CF_ACCESS_AUD',
   'SESSION_SECRET', 'DATABASE_URL', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'R2_ENDPOINT',
 ] as const;
+
+function logError(what: string, e: unknown): void {
+  console.error(what, e instanceof Error ? `${e.name}: ${e.message}
+${e.stack ?? ''}` : String(e));
+}
+
+function startingUp(): Response {
+  return new Response('Starting up, try again in a few seconds.', { status: 503, headers: { 'retry-after': '5', 'content-type': 'text/plain; charset=utf-8' } });
+}
 
 export class NamraContainer extends DurableObject<Env> {
   private lastTouch = 0;
@@ -45,17 +55,22 @@ export class NamraContainer extends DurableObject<Env> {
     try {
       await this.ensureRunning();
     } catch (e) {
-      console.error('container start failed', e instanceof Error ? e.message : e);
-      return new Response('The demo is starting up. Please refresh in a few seconds.', { status: 503, headers: { 'retry-after': '5' } });
+      logError('container start failed', e);
+      return startingUp();
     }
-    // Keep the instance warm: push the idle alarm out on activity (written at most every 30 s).
-    const now = Date.now();
-    if (now - this.lastTouch > 30_000) {
-      this.lastTouch = now;
-      const minutes = Number(this.env.SLEEP_AFTER_MINUTES ?? '60') || 60;
-      await this.ctx.storage.setAlarm(now + minutes * 60_000);
+    try {
+      // Keep the instance warm: push the idle alarm out on activity (written at most every 30 s).
+      const now = Date.now();
+      if (now - this.lastTouch > 30_000) {
+        this.lastTouch = now;
+        const minutes = Number(this.env.SLEEP_AFTER_MINUTES ?? '60') || 60;
+        await this.ctx.storage.setAlarm(now + minutes * 60_000);
+      }
+      return await this.ctx.container!.getTcpPort(PORT).fetch(toContainerRequest(request));
+    } catch (e) {
+      logError('forward to container failed', e);
+      return startingUp();
     }
-    return this.ctx.container!.getTcpPort(PORT).fetch(request);
   }
 
   /** Idle timeout reached: stop the container (it restarts on the next request). */
@@ -67,6 +82,11 @@ export class NamraContainer extends DurableObject<Env> {
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    return env.APP.get(env.APP.idFromName('demo')).fetch(request);
+    try {
+      return await env.APP.get(env.APP.idFromName('demo')).fetch(request);
+    } catch (e) {
+      logError('worker fetch failed', e);
+      return startingUp();
+    }
   },
 };
