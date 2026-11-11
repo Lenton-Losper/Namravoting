@@ -178,7 +178,7 @@ describe('Umoja import', () => {
   it('stores no name, gender, position or dates anywhere: columns, audit details and a full-database scan', async () => {
     await withClient((c) => importUmoja(c, parseUmojaExport(file(row('NAM0001', 'Active', 'Zorblax Quentin'), row('BAD', 'Active', 'Wimbleton Prax')))));
     const cols = (await ownerDb().query("SELECT column_name FROM information_schema.columns WHERE table_name = 'umoja_members' ORDER BY column_name")).rows.map((r) => r.column_name);
-    expect(cols).toEqual(['active', 'employee_code', 'imported_at']);
+    expect(cols).toEqual(['active', 'email', 'employee_code', 'entra_oid', 'imported_at']);   // still no name column
 
     const audit = (await ownerDb().query("SELECT details FROM audit_log WHERE action = 'umoja.import'")).rows;
     expect(audit).toHaveLength(1);

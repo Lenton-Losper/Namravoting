@@ -8,7 +8,9 @@ import { normalizeEmployeeCode } from '../domain/employeeCode.js';
  *  - CSV (also tab/semicolon separated) with a header row;
  *  - "one value per line": the header names one per line, then repeating blocks of N lines (N = number of columns).
  */
-export interface ParsedMember { code: string; active: boolean }
+/** `name` is only present when the caller asked for it (keepNames) - the matching script, which holds it in memory and never stores it. */
+export interface ParsedMember { code: string; active: boolean; name?: string }
+export interface ParseOptions { keepNames?: boolean }
 export interface ParseResult {
   layout: 'csv' | 'lines';
   columns: string[];             // header names as seen (column names only, no data)
@@ -24,6 +26,7 @@ export class UmojaParseError extends Error {}
 
 // Header names are compared loosely; a trailing footnote digit ("Employee Code2" in the real export) is ignored.
 const key = (h: string) => h.toLowerCase().replace(/[^a-z0-9]/g, '').replace(/[0-9]+$/, '');
+const NAME_KEYS = new Set(['employeename', 'name', 'fullname']);
 const CODE_KEYS = new Set(['employeecode', 'empcode', 'employeeno', 'employeenumber']);
 const STATUS_KEYS = new Set(['umojamembership', 'umojastatus', 'umojamember']);
 /** Shape of an employee code (letters then digits). Deliberately looser than the validity check so bad codes still anchor a record. */
@@ -52,27 +55,31 @@ function readDelimited(text: string, delim: string): string[][] {
   return rows;
 }
 
-function locate(columns: string[]): { codeIdx: number; statusIdx: number } {
+function locate(columns: string[]): { codeIdx: number; statusIdx: number; nameIdx: number } {
   const codeIdx = columns.findIndex((c) => CODE_KEYS.has(key(c)));
+  const nameIdx = columns.findIndex((c) => NAME_KEYS.has(key(c)));
   const statusIdx = columns.findIndex((c) => STATUS_KEYS.has(key(c)));
   if (codeIdx < 0 || statusIdx < 0) {
     throw new UmojaParseError(
       `Could not find the "Employee Code" and "Umoja Membership" columns. Columns seen: ${columns.map((c) => JSON.stringify(c)).join(', ')}`);
   }
-  return { codeIdx, statusIdx };
+  return { codeIdx, statusIdx, nameIdx };
 }
 
 class Collector {
+  constructor(private readonly keepNames = false) {}
+  private names = new Map<string, string>();
   rowsRead = 0;
   invalid: string[] = [];
   duplicates = 0;
   conflicts = 0;
   irregular = 0;
   private seen = new Map<string, boolean>();
-  add(rawCode: string, rawStatus: string): void {
+  add(rawCode: string, rawStatus: string, rawName = ''): void {
     this.rowsRead++;
     const code = normalizeEmployeeCode(rawCode);
     if (!code) { this.invalid.push(rawCode.trim().slice(0, 16)); return; }
+    if (this.keepNames && rawName.trim() && !this.names.has(code)) this.names.set(code, rawName.trim());
     const active = rawStatus.trim().toLowerCase() === 'active';
     const prev = this.seen.get(code);
     if (prev === undefined) { this.seen.set(code, active); return; }
@@ -80,7 +87,9 @@ class Collector {
     if (prev !== active) this.conflicts++;
     this.seen.set(code, prev && active);   // conflicting duplicates fail closed: inactive
   }
-  members(): ParsedMember[] { return [...this.seen].map(([code, active]) => ({ code, active })); }
+  members(): ParsedMember[] {
+    return [...this.seen].map(([code, active]) => (this.keepNames ? { code, active, name: this.names.get(code) ?? '' } : { code, active }));
+  }
 }
 
 function finish(layout: 'csv' | 'lines', columns: string[], c: Collector): ParseResult {
@@ -90,18 +99,18 @@ function finish(layout: 'csv' | 'lines', columns: string[], c: Collector): Parse
   };
 }
 
-export function parseUmojaExport(input: string): ParseResult {
+export function parseUmojaExport(input: string, opts: ParseOptions = {}): ParseResult {
   const text = input.replace(/^﻿/, '');
   const firstLine = text.split(/\r\n|\n|\r/).find((l) => l.trim() !== '');
   if (firstLine === undefined) throw new UmojaParseError('The file is empty');
   const delim = [',', '\t', ';'].find((d) => firstLine.includes(d));
-  const col = new Collector();
+  const col = new Collector(opts.keepNames);
 
   if (delim) {
     const rows = readDelimited(text, delim).filter((r) => r.some((f) => f.trim() !== ''));
     const columns = rows[0].map((c) => c.trim());
-    const { codeIdx, statusIdx } = locate(columns);
-    for (const r of rows.slice(1)) col.add(r[codeIdx] ?? '', r[statusIdx] ?? '');
+    const { codeIdx, statusIdx, nameIdx } = locate(columns);
+    for (const r of rows.slice(1)) col.add(r[codeIdx] ?? '', r[statusIdx] ?? '', nameIdx >= 0 ? r[nameIdx] ?? '' : '');
     return finish('csv', columns, col);
   }
 
@@ -116,12 +125,12 @@ export function parseUmojaExport(input: string): ParseResult {
   while (n < lines.length && known(lines[n])) n++;
   if (n < 2) throw new UmojaParseError(`Could not read a header. First line seen: ${JSON.stringify((lines[0] ?? '').slice(0, 40))}`);
   const columns = lines.slice(0, n);
-  const { codeIdx, statusIdx } = locate(columns);
+  const { codeIdx, statusIdx, nameIdx } = locate(columns);
   let body = lines.slice(n);
   if (body.length % n !== 0 && !separatedBlanks(lines)) body = body.filter((l) => l !== '');   // blanks may be separators rather than empty values
   const aligned = body.length % n === 0;
   if (aligned) {
-    for (let i = 0; i < body.length; i += n) col.add(body[i + codeIdx], body[i + statusIdx]);
+    for (let i = 0; i < body.length; i += n) col.add(body[i + codeIdx], body[i + statusIdx], nameIdx >= 0 ? body[i + nameIdx] : '');
     return finish('lines', columns, col);
   }
   // Irregular export (e.g. a long position wrapped onto extra lines): anchor each record on its employee-code line.
@@ -134,7 +143,7 @@ export function parseUmojaExport(input: string): ParseResult {
   for (const l of body) { if (LOOSE_CODE.test(l)) records.push([l]); else records[records.length - 1].push(l); }
   for (const r of records) {
     if (r.length !== n) col.irregular++;
-    if (r.length <= statusIdx) col.invalid.push(r[0].slice(0, 16)); else col.add(r[0], r[statusIdx]);
+    if (r.length <= statusIdx) col.invalid.push(r[0].slice(0, 16)); else col.add(r[0], r[statusIdx], nameIdx >= 0 && nameIdx < r.length ? r[nameIdx] : '');
   }
   return finish('lines', columns, col);
 }

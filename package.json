@@ -13,6 +13,7 @@
     "test": "npm test -w server",
     "build": "npm run build -w client && npm run build -w server",
     "db:up": "docker compose up -d --wait",
-    "umoja:import": "npm run umoja:import -w server --"
+    "umoja:import": "npm run umoja:import -w server --",
+    "umoja:match": "npm run umoja:match -w server --"
   }
 }

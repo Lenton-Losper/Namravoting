@@ -7,7 +7,7 @@ export interface ImportSummary {
 
 /**
  * Full sync in ONE transaction: the table ends up containing exactly the members in `parsed` (members missing
- * from the new file are removed). Run with the OWNER role (the app role has SELECT only).
+ * from the new file are removed; existing members keep their Entra match). Run with the OWNER role (the app role has SELECT only).
  * The audit entry holds counts only.
  */
 export async function importUmoja(client: pg.Client | pg.PoolClient, parsed: ParseResult): Promise<ImportSummary> {
@@ -18,8 +18,11 @@ export async function importUmoja(client: pg.Client | pg.PoolClient, parsed: Par
   await client.query('BEGIN');
   try {
     const before = (await client.query('SELECT count(*)::int AS n FROM umoja_members')).rows[0].n as number;
-    await client.query('DELETE FROM umoja_members');
-    await client.query('INSERT INTO umoja_members (employee_code, active) SELECT * FROM unnest($1::text[], $2::boolean[])', [codes, flags]);
+    // Sync, not wipe-and-reload: members that stay keep their Entra match (entra_oid/email); members missing from the file go.
+    await client.query('DELETE FROM umoja_members WHERE employee_code <> ALL($1::text[])', [codes]);
+    await client.query(
+      `INSERT INTO umoja_members (employee_code, active) SELECT * FROM unnest($1::text[], $2::boolean[])
+       ON CONFLICT (employee_code) DO UPDATE SET active = EXCLUDED.active, imported_at = now()`, [codes, flags]);
     const summary: ImportSummary = {
       rows_read: parsed.rowsRead, active, inactive: codes.length - active,
       invalid: parsed.invalid.length, duplicates: parsed.duplicates, removed: before,
