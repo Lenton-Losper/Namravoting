@@ -21,6 +21,7 @@ export function parseConfig(env: NodeJS.ProcessEnv) {
     ENTRA_CLIENT_SECRET: z.string().optional(),
     ENTRA_REDIRECT_URI: z.string().optional(),
     ADMIN_EMAILS: z.string().optional(),
+    DEMO_MEMBER_EMAILS: z.string().optional(),
     DEMO_BANNER: z.enum(['true', 'false']).optional(),
     PUBLIC_BASE_URL: z.string().url().default('http://localhost:5173'),
     SESSION_SECRET: z.string().min(32, 'SESSION_SECRET must be at least 32 characters'),
@@ -64,10 +65,10 @@ export function parseConfig(env: NodeJS.ProcessEnv) {
     adminRateLimit: e.ADMIN_RATE_LIMIT_PER_MIN,
   };
 }
-export interface EntraConfig { tenantId: string; clientId: string; clientSecret: string; redirectUri: string; adminEmails: string[] }
+export interface EntraConfig { tenantId: string; clientId: string; clientSecret: string; redirectUri: string; adminEmails: string[]; demoMemberEmails: string[] }
 
 /** AUTH_MODE=entra needs every ENTRA_* setting. Names the missing keys, never values. */
-function parseEntra(e: { ENTRA_TENANT_ID?: string; ENTRA_CLIENT_ID?: string; ENTRA_CLIENT_SECRET?: string; ENTRA_REDIRECT_URI?: string; ADMIN_EMAILS?: string }): EntraConfig {
+function parseEntra(e: { ENTRA_TENANT_ID?: string; ENTRA_CLIENT_ID?: string; ENTRA_CLIENT_SECRET?: string; ENTRA_REDIRECT_URI?: string; ADMIN_EMAILS?: string; DEMO_MEMBER_EMAILS?: string }): EntraConfig {
   const need = ['ENTRA_TENANT_ID', 'ENTRA_CLIENT_ID', 'ENTRA_CLIENT_SECRET', 'ENTRA_REDIRECT_URI'] as const;
   const missing = need.filter((k) => !e[k]?.trim());
   if (missing.length) throw new Error(`Refusing to start: AUTH_MODE=entra requires ${missing.join(', ')}`);
@@ -81,7 +82,19 @@ function parseEntra(e: { ENTRA_TENANT_ID?: string; ENTRA_CLIENT_ID?: string; ENT
     tenantId: e.ENTRA_TENANT_ID!.trim().toLowerCase(), clientId: e.ENTRA_CLIENT_ID!.trim().toLowerCase(),
     clientSecret: e.ENTRA_CLIENT_SECRET!.trim(), redirectUri: redirect.toString(),
     adminEmails: (e.ADMIN_EMAILS ?? '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
+    demoMemberEmails: parseDemoMemberEmails(e.DEMO_MEMBER_EMAILS),
   };
+}
+
+/**
+ * DEMO_MEMBER_EMAILS: comma-separated, lower-cased. A user whose email (from the verified Entra ID token, stored at sign-in)
+ * is listed counts as an active Umoja member even without an employeeId. Demo override only; empty/unset = no overrides.
+ * Entries are validated strictly because they are embedded in a SQL array literal (no quotes or backslashes can get through).
+ */
+export function parseDemoMemberEmails(raw: string | undefined): string[] {
+  const list = (raw ?? '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+  for (const e of list) if (!/^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/.test(e)) throw new Error('Refusing to start: DEMO_MEMBER_EMAILS has an entry that is not a plain email address');
+  return [...new Set(list)];
 }
 
 const demoUserSchema = z.object({

@@ -33,6 +33,7 @@
     "ENTRA_CLIENT_ID": "281ab38e-9ff5-4f17-88ea-18bdc3e65457",
     "ENTRA_REDIRECT_URI": "https://namra-voting-demo.llosperofficial.workers.dev/auth/callback",
     "ADMIN_EMAILS": "lenton.losper@namra.org.na",
+    "DEMO_MEMBER_EMAILS": "lenton.losper@namra.org.na",
     "DEMO_BANNER": "true",
     "CF_ACCESS_TEAM_DOMAIN": "yellow-flower-4592.cloudflareaccess.com",
     "SLEEP_AFTER_MINUTES": "60"

@@ -220,6 +220,13 @@ describe('employee code and not_member', () => {
     await s.post(`/api/vote/${c.token}`).send({ candidateId: c.candidates[0] }).expect(403);
   });
 
+  it('DEMO_MEMBER_EMAILS unset: no email is treated as a member (the override is off)', async () => {
+    const c = await umojaVote();
+    const { agent } = await signIn({ claims: { oid: OID, preferred_username: 'lenton.losper@namra.org.na' }, graph: {} });
+    const s = await asSession(agent);
+    expect((await s.get(`/api/vote/${c.token}`).expect(403)).body.code).toBe('not_member');
+  });
+
   it('POSITIVE CONTROL: a valid employeeId on the Umoja list can vote, exactly once', async () => {
     const c = await umojaVote();
     const { agent } = await signIn({ claims: { oid: OID, preferred_username: 'member@namra.org.na' }, graph: { employeeId: 'NAM0445' } });
