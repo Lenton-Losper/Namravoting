@@ -25,8 +25,16 @@ export async function deviceCodeToken(d: DeviceDeps): Promise<string> {
   const now = d.now ?? Date.now;
   const base = `${(d.authorityBase ?? 'https://login.microsoftonline.com').replace(/\/$/, '')}/${d.tenantId}/oauth2/v2.0`;
   const post = async (path: string, body: Record<string, string>) => {
-    const r = await f(`${base}/${path}`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(body) });
-    return (await r.json().catch(() => ({}))) as Record<string, unknown>;
+    // A dropped connection while waiting for the person to approve must not abort the sign-in: retry a few times.
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const r = await f(`${base}/${path}`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(body) });
+        return (await r.json().catch(() => ({}))) as Record<string, unknown>;
+      } catch (e) {
+        if (attempt >= 5) throw new DeviceFlowError(`Network error talking to Microsoft sign-in (${String((e as { cause?: { code?: string } })?.cause?.code ?? 'unknown')})`);
+        await sleep(Math.min(15_000, 2 ** attempt * 1000));
+      }
+    }
   };
   const code = await post('devicecode', { client_id: d.clientId, scope: d.scope });
   if (typeof code.device_code !== 'string') {

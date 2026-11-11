@@ -252,3 +252,26 @@ describe('device-code sign-in', () => {
     await expect(deviceCodeToken({ ...base, fetch: pending, announce: () => {}, now: () => (t += 5000), sleep: noSleep })).rejects.toThrow(/timed out/);
   });
 });
+
+describe('transient network errors', () => {
+  it('Graph search retries a dropped connection and succeeds', async () => {
+    let calls = 0; const slept: number[] = [];
+    const f = (async () => { if (++calls < 3) throw Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNRESET' } }); return new Response('{"value":[]}', { status: 200 }); }) as unknown as typeof fetch;
+    expect(await createGraphSearch({ token: 'T', fetch: f, sleep: async (ms) => { slept.push(ms); }, now: () => 0 })('x')).toEqual([]);
+    expect(calls).toBe(3);
+  });
+  it('after the retry budget it fails with the cause code only (no URL, no token)', async () => {
+    const f = (async () => { throw Object.assign(new TypeError('fetch failed'), { cause: { code: 'ENOTFOUND' } }); }) as unknown as typeof fetch;
+    const err = await createGraphSearch({ token: 'TOK', fetch: f, sleep: noSleep, now: () => 0, maxRetries: 2 })('x').catch((e) => e);
+    expect(err.message).toBe('Graph /users search failed: network error (ENOTFOUND)');
+  });
+  it('the device-code poll survives a dropped connection', async () => {
+    let polls = 0;
+    const f = (async (url: string) => {
+      if (String(url).endsWith('/devicecode')) return new Response(JSON.stringify({ device_code: 'D', user_code: 'U', verification_uri: 'v', expires_in: 900, interval: 1 }), { status: 200 });
+      if (++polls === 1) throw Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNRESET' } });
+      return new Response(JSON.stringify({ access_token: 'OK' }), { status: 200 });
+    }) as unknown as typeof fetch;
+    expect(await deviceCodeToken({ tenantId: 't', clientId: 'c', scope: 's', fetch: f, sleep: async () => {}, announce: () => {}, now: () => 0 })).toBe('OK');
+  });
+});

@@ -73,6 +73,8 @@ export interface GraphDeps {
 }
 
 export class GraphError extends Error {}
+/** The low-level cause code of a failed fetch (e.g. ECONNRESET, ENOTFOUND); never a URL or header. */
+export const netCode = (e: unknown): string => String((e as { cause?: { code?: string } })?.cause?.code ?? (e as { code?: string })?.code ?? 'unknown');
 
 /** A small client: throttled to ratePerSec, honours Retry-After on 429. Error messages never contain the token or response bodies. */
 export function createGraphSearch(d: GraphDeps): (query: string) => Promise<GraphUser[]> {
@@ -93,7 +95,14 @@ export function createGraphSearch(d: GraphDeps): (query: string) => Promise<Grap
     const url = `${base}/users?$search=${encodeURIComponent(query)}&$select=id,displayName,givenName,surname,mail,userPrincipalName&$top=50`;
     for (let attempt = 0; ; attempt++) {
       await throttle();
-      const r = await f(url, { headers: { authorization: `Bearer ${d.token}`, ConsistencyLevel: 'eventual', accept: 'application/json' } });
+      let r: Response;
+      try {
+        r = await f(url, { headers: { authorization: `Bearer ${d.token}`, ConsistencyLevel: 'eventual', accept: 'application/json' } });
+      } catch (e) {
+        // A dropped connection / DNS blip must not kill a long run: back off and retry, then fail with the cause code only.
+        if (attempt < maxRetries) { await sleep(Math.min(30_000, 2 ** attempt * 1000)); continue; }
+        throw new GraphError(`Graph /users search failed: network error (${netCode(e)})`);
+      }
       if (r.ok) {
         const j = (await r.json()) as { value?: unknown };
         return (Array.isArray(j.value) ? j.value : []).filter((u): u is GraphUser => !!u && typeof (u as GraphUser).id === 'string');
