@@ -6,13 +6,14 @@ import helmet from 'helmet';
 import { getConfig } from './config.js';
 import { accessGate, createAccessVerifier, type AccessVerifier } from './auth/access.js';
 import { mountAuth } from './auth/index.js';
+import type { EntraOptions } from './auth/entra.js';
 import { csrfProtection, mountCsrf } from './auth/csrf.js';
 import { errorHandler, notFoundHandler } from './errors.js';
 import { adminRouter } from './routes/admin.js';
 import { photosRouter } from './routes/photos.js';
 import { voteRouter } from './routes/vote.js';
 
-export function createApp(opts: { accessVerifier?: AccessVerifier } = {}): Express {
+export function createApp(opts: { accessVerifier?: AccessVerifier; entra?: EntraOptions } = {}): Express {
   const config = getConfig();   // throws (refuses to start) on AUTH_MODE=dev + NODE_ENV=production
   const app = express();
   app.disable('x-powered-by');
@@ -38,7 +39,7 @@ export function createApp(opts: { accessVerifier?: AccessVerifier } = {}): Expre
   app.use(express.json({ limit: '100kb' }));
   mountCsrf(app, config);
   app.use('/api', csrfProtection(config));
-  mountAuth(app, config);
+  mountAuth(app, config, opts.entra);
 
   app.use('/api/campaigns', adminRouter());
   app.use('/api/vote', voteRouter());

@@ -1,0 +1,146 @@
+import type { Express, Request, Response } from 'express';
+import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey } from 'jose';
+import * as oidc from 'openid-client';
+import type { Config } from '../config.js';
+import { getPool, UNIQUE_VIOLATION } from '../db.js';
+import { normalizeEmployeeCode } from '../domain/employeeCode.js';
+import { cookieOptions, readCookie } from './cookies.js';
+import { safeNext } from './safeNext.js';
+import { clearSession, setSession } from './devAuth.js';
+import { sign, verify } from './signing.js';
+import { ADMIN_ROLE, type AuthUser } from './types.js';
+
+/**
+ * AUTH_MODE=entra: Microsoft Entra ID sign-in (OpenID Connect authorization code flow + PKCE, confidential client).
+ * The identity is `oid` from the verified ID token; the employee code comes from Microsoft Graph (`employeeId`),
+ * never from anything the browser supplies. After the callback the app issues its own signed session cookie.
+ */
+const AUTH_COOKIE = 'namra_auth';
+const AUTH_TTL_MS = 10 * 60 * 1000;
+const SCOPE = 'openid profile email User.Read';
+const FAIL = '/login?error=signin_failed';
+
+/** Test seams only: the real service is always login.microsoftonline.com over https. */
+export interface EntraOptions { authorityBase?: string; graphBase?: string; allowInsecure?: boolean }
+
+interface AuthState { s: string; n: string; v: string; next: string | null; exp: number }
+
+class SignInRejected extends Error {}
+const reject = (why: string) => new SignInRejected(why);
+
+export function mountEntra(app: Express, config: Config, opts: EntraOptions = {}): void {
+  const e = config.entra;
+  if (!e) throw new Error('mountEntra called without ENTRA_* settings');
+  const authority = (opts.authorityBase ?? 'https://login.microsoftonline.com').replace(/\/$/, '');
+  const graphBase = (opts.graphBase ?? 'https://graph.microsoft.com/v1.0').replace(/\/$/, '');
+  const issuer = `${authority}/${e.tenantId}/v2.0`;
+  const jwksUri = `${authority}/${e.tenantId}/discovery/v2.0/keys`;
+  const oc = new oidc.Configuration({
+    issuer,
+    authorization_endpoint: `${authority}/${e.tenantId}/oauth2/v2.0/authorize`,
+    token_endpoint: `${authority}/${e.tenantId}/oauth2/v2.0/token`,
+    jwks_uri: jwksUri,
+    end_session_endpoint: `${authority}/${e.tenantId}/oauth2/v2.0/logout`,
+    response_types_supported: ['code'],
+    id_token_signing_alg_values_supported: ['RS256'],
+  }, e.clientId, {}, oidc.ClientSecretPost(e.clientSecret));
+  if (opts.allowInsecure) oidc.allowInsecureRequests(oc);
+  const keys: JWTVerifyGetKey = createRemoteJWKSet(new URL(jwksUri), { cacheMaxAge: 60 * 60 * 1000, cooldownDuration: 30_000 });
+  const authCookie = (extra = {}) => cookieOptions(config, { httpOnly: true, sameSite: 'lax', path: '/auth', ...extra });   // Lax: Microsoft redirects back cross-site
+  const siteRoot = new URL(e.redirectUri).origin + '/';
+
+  app.get('/auth/login', async (req: Request, res: Response) => {
+    const verifier = oidc.randomPKCECodeVerifier();
+    const state = oidc.randomState();
+    const nonce = oidc.randomNonce();
+    const next = safeNext(typeof req.query.next === 'string' ? req.query.next : null);
+    const payload: AuthState = { s: state, n: nonce, v: verifier, next, exp: Date.now() + AUTH_TTL_MS };
+    res.cookie(AUTH_COOKIE, sign(config.sessionSecret, payload), authCookie({ maxAge: AUTH_TTL_MS }));
+    res.set('Cache-Control', 'no-store');
+    res.redirect(oidc.buildAuthorizationUrl(oc, {
+      redirect_uri: e.redirectUri, scope: SCOPE, response_type: 'code', state, nonce, prompt: 'select_account',
+      code_challenge: await oidc.calculatePKCECodeChallenge(verifier), code_challenge_method: 'S256',
+    }).href);
+  });
+
+  app.get('/auth/callback', async (req: Request, res: Response) => {
+    const raw = readCookie(req, AUTH_COOKIE);
+    res.clearCookie(AUTH_COOKIE, authCookie());   // single use, whatever happens next
+    res.set('Cache-Control', 'no-store');
+    try {
+      const st = raw ? verify<AuthState>(config.sessionSecret, raw) : null;
+      if (!st || typeof st.exp !== 'number' || st.exp < Date.now()) throw reject('missing or expired auth cookie');
+      if (typeof req.query.error === 'string') throw reject(`provider error ${req.query.error.slice(0, 40)}`);
+
+      // The library checks state, nonce, PKCE, issuer and audience of the ID token. The redirect URI is the configured one
+      // (behind the Worker the request URL is an internal http address, so it is never taken from the request).
+      const callbackUrl = new URL(e.redirectUri);
+      callbackUrl.search = new URL(req.originalUrl, 'http://x.invalid').search;
+      const tokens = await oidc.authorizationCodeGrant(oc, callbackUrl, { pkceCodeVerifier: st.v, expectedState: st.s, expectedNonce: st.n, idTokenExpected: true });
+      if (!tokens.id_token) throw reject('no id_token');
+
+      // The library does not verify the signature; do it ourselves against the tenant's published keys.
+      const { payload: claims } = await jwtVerify(tokens.id_token, keys, { issuer, audience: e.clientId, algorithms: ['RS256'] });
+      if (claims.tid !== e.tenantId) throw reject('wrong tenant');
+      if (claims.nonce !== st.n) throw reject('nonce mismatch');
+      const oid = typeof claims.oid === 'string' ? claims.oid : '';
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(oid)) throw reject('no oid');
+      const email = [claims.preferred_username, claims.email].find((v): v is string => typeof v === 'string' && v.includes('@'))?.trim().toLowerCase();
+      if (!email) throw reject('no email');
+
+      const graph = await readGraphProfile(graphBase, tokens.access_token, fetch);
+      const roles = Array.isArray(claims.roles) ? (claims.roles as unknown[]) : [];
+      const admin = roles.includes(ADMIN_ROLE) || e.adminEmails.includes(email);
+      const user: AuthUser = {
+        oid: oid.toLowerCase(), email,
+        displayName: String(claims.name ?? graph.displayName ?? email).slice(0, 120) || email,
+        roles: admin ? [ADMIN_ROLE] : [],
+        employeeCode: graph.employeeCode,
+      };
+      await upsertUser(user);
+      setSession(res, config, user);
+      res.redirect(st.next ?? (admin ? '/admin' : '/votes'));
+    } catch (err) {
+      // Log the reason (never tokens or secrets); the browser only learns that sign-in failed.
+      console.warn(`[entra] sign-in rejected: ${err instanceof Error ? err.message.slice(0, 200) : 'unknown'}`);
+      res.redirect(FAIL);
+    }
+  });
+
+  // Clear the app session, then end the Microsoft session and come back to the site root.
+  app.get('/auth/logout', (_req: Request, res: Response) => {
+    clearSession(res, config);
+    res.set('Cache-Control', 'no-store');
+    res.redirect(oidc.buildEndSessionUrl(oc, { post_logout_redirect_uri: siteRoot, client_id: e.clientId }).href);
+  });
+}
+
+/** Graph `GET /me?$select=employeeId,displayName,mail`. Any failure means "no code" (-> not_member), never a failed sign-in. */
+async function readGraphProfile(base: string, accessToken: string, f: typeof fetch): Promise<{ employeeCode: string | null; displayName: string | null }> {
+  try {
+    const r = await f(`${base}/me?$select=employeeId,displayName,mail`, { headers: { authorization: `Bearer ${accessToken}`, accept: 'application/json' } });
+    if (!r.ok) { console.warn(`[entra] Graph /me returned HTTP ${r.status}; user has no employee code`); return { employeeCode: null, displayName: null }; }
+    const j = (await r.json()) as { employeeId?: unknown; displayName?: unknown };
+    const employeeCode = normalizeEmployeeCode(j.employeeId);
+    if (!employeeCode) console.warn(`[entra] employeeId ${j.employeeId == null ? 'absent' : 'present but not a valid code'}; user will be not_member`);
+    return { employeeCode, displayName: typeof j.displayName === 'string' ? j.displayName : null };
+  } catch (e) {
+    console.warn(`[entra] Graph /me failed (${e instanceof Error ? e.message.slice(0, 100) : 'error'}); user has no employee code`);
+    return { employeeCode: null, displayName: null };
+  }
+}
+
+async function upsertUser(u: AuthUser): Promise<void> {
+  const pool = getPool();
+  const run = () => pool.query(
+    `INSERT INTO users (entra_oid, email, display_name, employee_code) VALUES ($1, $2, $3, $4)
+     ON CONFLICT (entra_oid) DO UPDATE SET email = EXCLUDED.email, display_name = EXCLUDED.display_name, employee_code = EXCLUDED.employee_code`,
+    [u.oid, u.email, u.displayName, u.employeeCode]);
+  try { await run(); } catch (err) {
+    if ((err as { code?: string }).code !== UNIQUE_VIOLATION) throw err;
+    // Another row already owns this email under a different oid (e.g. a pre-Entra demo identity). Keep it (campaigns
+    // reference it) but free the email so the real Microsoft identity can take it.
+    await pool.query(`UPDATE users SET email = 'superseded-' || left(entra_oid::text, 8) || '+' || email WHERE email = $1 AND entra_oid <> $2`, [u.email, u.oid]);
+    await run();
+  }
+}

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { toContainerRequest } from '../../../worker/src/forward';
-import { describeConfigError, parseConfig } from '../../src/config';
+import { toContainerRequest } from '../../../worker/src/forward.js';
+import { describeConfigError, parseConfig } from '../../src/config.js';
 
 describe('toContainerRequest', () => {
   it('downgrades https to http and keeps method, path, query, headers and body', async () => {

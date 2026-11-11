@@ -87,10 +87,10 @@ function Home() {
 }
 
 export function App() {
-  const { authMode } = useAuth();
+  const { demoBanner } = useAuth();
   return (
     <>
-    {authMode === 'demo' && <div className="demo-banner" role="status">DEMO: test identities, not real voting data</div>}
+    {demoBanner && <div className="demo-banner" role="status">DEMO: test data, not a real vote</div>}
     <Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route path="/" element={<Home />} />

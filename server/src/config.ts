@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { z } from 'zod';
 import { loadDotEnv } from './env.js';
+import { normalizeEmployeeCode } from './domain/employeeCode.js';
 
 export function parseConfig(env: NodeJS.ProcessEnv) {
   const schema = z.object({
@@ -14,6 +15,13 @@ export function parseConfig(env: NodeJS.ProcessEnv) {
     R2_SECRET_ACCESS_KEY: z.string().optional(),
     CF_ACCESS_TEAM_DOMAIN: z.string().optional(),
     CF_ACCESS_AUD: z.string().optional(),
+    DEMO_USERS: z.string().optional(),
+    ENTRA_TENANT_ID: z.string().optional(),
+    ENTRA_CLIENT_ID: z.string().optional(),
+    ENTRA_CLIENT_SECRET: z.string().optional(),
+    ENTRA_REDIRECT_URI: z.string().optional(),
+    ADMIN_EMAILS: z.string().optional(),
+    DEMO_BANNER: z.enum(['true', 'false']).optional(),
     PUBLIC_BASE_URL: z.string().url().default('http://localhost:5173'),
     SESSION_SECRET: z.string().min(32, 'SESSION_SECRET must be at least 32 characters'),
     DATABASE_URL: z.string().min(1),
@@ -35,7 +43,12 @@ export function parseConfig(env: NodeJS.ProcessEnv) {
   if (e.NODE_ENV === 'production' && e.SESSION_SECRET.startsWith('change-me')) {
     throw new Error('Refusing to start: set a real SESSION_SECRET in production');
   }
+  const entra = e.AUTH_MODE === 'entra' ? parseEntra(e) : null;
+  const demoUsers = parseDemoUsers(e.DEMO_USERS);
   return {
+    demoUsers,
+    entra,
+    demoBanner: e.DEMO_BANNER ? e.DEMO_BANNER === 'true' : e.AUTH_MODE === 'demo',
     nodeEnv: e.NODE_ENV,
     isProd: e.NODE_ENV === 'production',
     port: e.PORT,
@@ -51,6 +64,50 @@ export function parseConfig(env: NodeJS.ProcessEnv) {
     adminRateLimit: e.ADMIN_RATE_LIMIT_PER_MIN,
   };
 }
+export interface EntraConfig { tenantId: string; clientId: string; clientSecret: string; redirectUri: string; adminEmails: string[] }
+
+/** AUTH_MODE=entra needs every ENTRA_* setting. Names the missing keys, never values. */
+function parseEntra(e: { ENTRA_TENANT_ID?: string; ENTRA_CLIENT_ID?: string; ENTRA_CLIENT_SECRET?: string; ENTRA_REDIRECT_URI?: string; ADMIN_EMAILS?: string }): EntraConfig {
+  const need = ['ENTRA_TENANT_ID', 'ENTRA_CLIENT_ID', 'ENTRA_CLIENT_SECRET', 'ENTRA_REDIRECT_URI'] as const;
+  const missing = need.filter((k) => !e[k]?.trim());
+  if (missing.length) throw new Error(`Refusing to start: AUTH_MODE=entra requires ${missing.join(', ')}`);
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (!uuid.test(e.ENTRA_TENANT_ID!.trim())) throw new Error('Refusing to start: ENTRA_TENANT_ID must be a tenant GUID');
+  if (!uuid.test(e.ENTRA_CLIENT_ID!.trim())) throw new Error('Refusing to start: ENTRA_CLIENT_ID must be a client (application) GUID');
+  let redirect: URL;
+  try { redirect = new URL(e.ENTRA_REDIRECT_URI!.trim()); } catch { throw new Error('Refusing to start: ENTRA_REDIRECT_URI must be an absolute URL'); }
+  if (redirect.pathname !== '/auth/callback') throw new Error('Refusing to start: ENTRA_REDIRECT_URI must end with /auth/callback');
+  return {
+    tenantId: e.ENTRA_TENANT_ID!.trim().toLowerCase(), clientId: e.ENTRA_CLIENT_ID!.trim().toLowerCase(),
+    clientSecret: e.ENTRA_CLIENT_SECRET!.trim(), redirectUri: redirect.toString(),
+    adminEmails: (e.ADMIN_EMAILS ?? '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
+  };
+}
+
+const demoUserSchema = z.object({
+  displayName: z.string().trim().min(1).max(120),
+  roles: z.array(z.enum(['CampaignAdmin'])).max(1).default([]),
+  employeeCode: z.string().max(32).nullable().optional(),
+}).strict();
+export interface DemoProfile { displayName: string; roles: string[]; employeeCode: string | null }
+
+/** DEMO_USERS: JSON object email -> { displayName, roles, employeeCode }. Keys are lower-cased. Never echoes values on error. */
+export function parseDemoUsers(raw: string | undefined): Record<string, DemoProfile> {
+  if (!raw?.trim()) return {};
+  let json: unknown;
+  try { json = JSON.parse(raw); } catch { throw new Error('DEMO_USERS is not valid JSON'); }
+  if (!json || typeof json !== 'object' || Array.isArray(json)) throw new Error('DEMO_USERS must be a JSON object of email -> profile');
+  const out: Record<string, DemoProfile> = {};
+  for (const [email, v] of Object.entries(json)) {
+    const p = demoUserSchema.safeParse(v);
+    if (!p.success || !email.includes('@')) throw new Error(`DEMO_USERS entry for "${email}" is invalid (needs displayName, optional roles ["CampaignAdmin"], optional employeeCode)`);
+    const code = p.data.employeeCode == null ? null : normalizeEmployeeCode(p.data.employeeCode);
+    if (p.data.employeeCode != null && code === null) throw new Error(`DEMO_USERS entry for "${email}" has a malformed employeeCode (expected e.g. TST0001)`);
+    out[email.trim().toLowerCase()] = { displayName: p.data.displayName, roles: p.data.roles, employeeCode: code };
+  }
+  return out;
+}
+
 /** One line describing a config failure: names the keys, never their values. */
 export function describeConfigError(e: unknown): string {
   if (e instanceof z.ZodError) return 'invalid or missing environment variables: ' + e.issues.map((i) => `${i.path.join('.') || '(root)'} (${i.message})`).join('; ');

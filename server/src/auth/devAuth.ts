@@ -25,9 +25,13 @@ export function getCurrentUser(req: Request): AuthUser | null {
   return { oid: p.oid, email: p.email, displayName: p.displayName, roles: p.roles, employeeCode: p.employeeCode ?? null };
 }
 
-function setSession(res: Response, config: Config, user: AuthUser): void {
+export function setSession(res: Response, config: Config, user: AuthUser): void {
   const payload: SessionPayload = { ...user, exp: Date.now() + TTL_MS };
   res.cookie(COOKIE, sign(config.sessionSecret, payload), cookieOptions(config, { httpOnly: true, maxAge: TTL_MS }));
+}
+
+export function clearSession(res: Response, config: Config): void {
+  res.clearCookie(COOKIE, cookieOptions(config, { httpOnly: true }));
 }
 
 const loginBody = z.object({
@@ -62,7 +66,7 @@ export function mount(app: Express, config: Config): void {
   });
 
   app.post('/api/logout', (_req, res) => {
-    res.clearCookie(COOKIE, cookieOptions(config, { httpOnly: true }));
+    clearSession(res, config);
     res.status(204).end();
   });
 }

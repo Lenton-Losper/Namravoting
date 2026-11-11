@@ -36,21 +36,12 @@ afterAll(async () => { await closePool(); });
 const PATHS = ['/', '/index.html', '/login', '/api/session', '/api/csrf', '/api/dev/users', '/api/campaigns/mine', '/api/vote', '/fonts/inter.woff2', '/nope'];
 
 describe('Cloudflare Access gate (AUTH_MODE=demo)', () => {
-  it('POSITIVE CONTROL: a valid token reaches the app (picker users, session says demo)', async () => {
+  it('POSITIVE CONTROL: a valid token reaches the app and IS the login (identity = the token email)', async () => {
     const t = await token();
-    const users = await request(app).get('/api/dev/users').set('Cf-Access-Jwt-Assertion', t).expect(200);
-    expect(users.body.users.length).toBeGreaterThan(5);
     const s = await request(app).get('/api/session').set('Cf-Access-Jwt-Assertion', t).expect(200);
     expect(s.body.authMode).toBe('demo');
-  });
-
-  it('a demo identity can sign in and use the app behind the gate', async () => {
-    const t = await token();
-    const agent = request.agent(app);
-    const csrf = (await agent.get('/api/csrf').set('Cf-Access-Jwt-Assertion', t).expect(200)).body.token as string;
-    const alice = (await agent.get('/api/dev/users').set('Cf-Access-Jwt-Assertion', t)).body.users[0];
-    await agent.post('/api/dev/login').set('Cf-Access-Jwt-Assertion', t).set('x-csrf-token', csrf).send(alice).expect(200);
-    expect((await agent.get('/api/campaigns/mine').set('Cf-Access-Jwt-Assertion', t).expect(200)).body.campaigns).toBeDefined();
+    expect(s.body.user.email).toBe('someone@namra.org.na');
+    await request(app).get('/api/vote').set('Cf-Access-Jwt-Assertion', t).expect(200);   // no separate app login needed
   });
 
   it('missing header: 403 on every path (static files and API), before anything else runs', async () => {
@@ -61,7 +52,7 @@ describe('Cloudflare Access gate (AUTH_MODE=demo)', () => {
       expect(r.headers['content-security-policy'], `${p}: helmet must not have run (the gate is first)`).toBeUndefined();
       expect(r.headers['set-cookie'], `${p}: the CSRF middleware must not have run`).toBeUndefined();
     }
-    await request(app).post('/api/dev/login').send({}).expect(403);
+    await request(app).post('/api/logout').send({}).expect(403);
     await request(app).put('/api/campaigns/x/eligible').send({}).expect(403);
   });
 
@@ -87,7 +78,7 @@ describe('Cloudflare Access gate (AUTH_MODE=demo)', () => {
       expect(r.text).toBe('Forbidden');
       expect(r.headers['content-security-policy']).toBeUndefined();
     }
-    await request(app).post('/api/dev/login').set('Cf-Access-Jwt-Assertion', t).send({}).expect(403);
+    await request(app).post('/api/logout').set('Cf-Access-Jwt-Assertion', t).send({}).expect(403);
   });
 
   it('the app\'s own cookies are not a substitute for the Access header', async () => {

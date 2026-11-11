@@ -11,8 +11,9 @@ import { toContainerRequest } from './forward';
 interface Env {
   APP: DurableObjectNamespace<NamraContainer>;
   // secrets
-  SESSION_SECRET: string; DATABASE_URL: string; R2_ACCESS_KEY_ID: string; R2_SECRET_ACCESS_KEY: string; R2_ENDPOINT: string;
+  SESSION_SECRET: string; DEMO_USERS?: string; ENTRA_CLIENT_SECRET: string; DATABASE_URL: string; R2_ACCESS_KEY_ID: string; R2_SECRET_ACCESS_KEY: string; R2_ENDPOINT: string;
   // vars
+  ENTRA_TENANT_ID: string; ENTRA_CLIENT_ID: string; ENTRA_REDIRECT_URI: string; ADMIN_EMAILS: string; DEMO_BANNER: string;
   NODE_ENV: string; AUTH_MODE: string; STORAGE: string; R2_BUCKET: string; PUBLIC_BASE_URL: string;
   CF_ACCESS_TEAM_DOMAIN: string; CF_ACCESS_AUD: string; SLEEP_AFTER_MINUTES?: string;
 }
@@ -22,7 +23,7 @@ const START_BUDGET_MS = 50_000;     // a Worker request may wait this long for a
 const RECYCLE_AFTER_MS = 25_000;
 const CONTAINER_ENV_KEYS = [
   'NODE_ENV', 'AUTH_MODE', 'STORAGE', 'R2_BUCKET', 'PUBLIC_BASE_URL', 'CF_ACCESS_TEAM_DOMAIN', 'CF_ACCESS_AUD',
-  'SESSION_SECRET', 'DATABASE_URL', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'R2_ENDPOINT',
+  'SESSION_SECRET', 'DEMO_USERS', 'ENTRA_CLIENT_SECRET', 'ENTRA_TENANT_ID', 'ENTRA_CLIENT_ID', 'ENTRA_REDIRECT_URI', 'ADMIN_EMAILS', 'DEMO_BANNER', 'DATABASE_URL', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'R2_ENDPOINT',
 ] as const;
 
 function logError(what: string, e: unknown): void {

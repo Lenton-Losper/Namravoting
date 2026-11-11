@@ -28,6 +28,16 @@ async function umojaVote() {
   return { admin, ...c };
 }
 
+describe('dev mode keeps the identity picker', () => {
+  it('lists the seeded identities and signs in through /api/dev/login', async () => {
+    const agent = (await import('supertest')).default.agent(app);
+    const users = (await agent.get('/api/dev/users').expect(200)).body.users;
+    expect(users.length).toBeGreaterThan(5);
+    const s = await login(app, users[0]);
+    expect((await s.get('/api/session').expect(200)).body).toMatchObject({ authMode: 'dev', user: { email: users[0].email } });
+  });
+});
+
 describe('auth: employee code', () => {
   it('dev login stores a normalised code on the user; malformed values become null', async () => {
     await login(app, { ...S1, employeeCode: ' nam0101 ' });

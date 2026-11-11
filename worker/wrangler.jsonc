@@ -25,10 +25,15 @@
   // Non-secret configuration.
   "vars": {
     "NODE_ENV": "production",
-    "AUTH_MODE": "demo",
+    "AUTH_MODE": "entra",
     "STORAGE": "r2",
     "R2_BUCKET": "namra-voting-photos",
     "PUBLIC_BASE_URL": "https://namra-voting-demo.llosperofficial.workers.dev",
+    "ENTRA_TENANT_ID": "fe7b029e-7e19-4525-bdf4-57462a59d299",
+    "ENTRA_CLIENT_ID": "281ab38e-9ff5-4f17-88ea-18bdc3e65457",
+    "ENTRA_REDIRECT_URI": "https://namra-voting-demo.llosperofficial.workers.dev/auth/callback",
+    "ADMIN_EMAILS": "lenton.losper@namra.org.na",
+    "DEMO_BANNER": "true",
     "CF_ACCESS_TEAM_DOMAIN": "yellow-flower-4592.cloudflareaccess.com",
     "SLEEP_AFTER_MINUTES": "60"
   },

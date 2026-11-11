@@ -4,9 +4,9 @@ import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey } from 'jose';
 /**
  * Cloudflare Access gate for AUTH_MODE=demo. Every request must carry a valid `Cf-Access-Jwt-Assertion`
  * header: RS256 signature checked against the team's published keys, audience and expiry enforced.
- * This is NOT the app's own login (that is the demo identity picker inside the gate).
+ * The verified `email` claim (lower-cased) is left in res.locals.accessEmail: it is the demo identity (auth/demoAuth.ts).
  */
-export interface AccessVerifier { verify(token: string): Promise<void> }
+export interface AccessVerifier { verify(token: string): Promise<{ email: string | null }> }
 
 /** "myteam" or "myteam.cloudflareaccess.com" -> "myteam.cloudflareaccess.com" */
 export function normalizeTeamDomain(raw: string): string {
@@ -20,7 +20,9 @@ export function createAccessVerifier(opts: { teamDomain: string; aud: string; ke
   const keys = opts.keys ?? createRemoteJWKSet(new URL(`https://${team}/cdn-cgi/access/certs`), { cacheMaxAge: 60 * 60 * 1000, cooldownDuration: 30_000 });
   return {
     async verify(token: string) {
-      await jwtVerify(token, keys, { issuer: `https://${team}`, audience: opts.aud, algorithms: ['RS256'] });   // checks exp/nbf too
+      const { payload } = await jwtVerify(token, keys, { issuer: `https://${team}`, audience: opts.aud, algorithms: ['RS256'] });   // checks exp/nbf too
+      const email = typeof payload.email === 'string' && payload.email.includes('@') ? payload.email.trim().toLowerCase() : null;
+      return { email };
     },
   };
 }
@@ -30,6 +32,6 @@ export function accessGate(verifier: AccessVerifier): RequestHandler {
   return (req, res, next) => {
     const token = req.get('cf-access-jwt-assertion');
     if (!token) { res.status(403).type('text/plain').send('Forbidden'); return; }
-    verifier.verify(token).then(() => next(), () => { res.status(403).type('text/plain').send('Forbidden'); });
+    verifier.verify(token).then(({ email }) => { res.locals.accessEmail = email; next(); }, () => { res.status(403).type('text/plain').send('Forbidden'); });
   };
 }

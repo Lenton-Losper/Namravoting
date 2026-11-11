@@ -188,7 +188,9 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: non
 .stat-num { font-size: 28px; font-weight: 700; color: var(--navy-text); line-height: 1.2; }
 
 /* ---------- Tabs ---------- */
-.tabs { display: flex; gap: 24px; border-bottom: 1px solid var(--border); margin-bottom: 20px; overflow-x: auto; }
+.tabs { display: flex; gap: 24px; border-bottom: 1px solid var(--border); margin-bottom: 20px; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+.tabs::-webkit-scrollbar { display: none; }
+@media (min-width: 768px) { .tabs { overflow: visible; } }
 .tab { position: relative; min-height: 44px; padding: 0 2px; background: none; border: 0; border-bottom: 2px solid transparent; margin-bottom: -1px; color: var(--muted); font: 500 14px var(--font); cursor: pointer; white-space: nowrap; }
 .tab:hover { color: var(--navy-text); }
 .tab[aria-selected="true"] { color: var(--navy-text); font-weight: 600; border-bottom-color: var(--orange); }
