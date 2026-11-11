@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, fmtDate, type Summary } from '../../api';
 import { Icon } from '../../icons';
@@ -7,13 +7,14 @@ import { ErrorBox, PageTitle, Spinner, StatusBadge, Thumb, TurnoutBar } from '..
 export function ResultsArchive() {
   const [s, setS] = useState<Summary | null>(null);
   const [error, setError] = useState<string | null>(null);
-  useEffect(() => { api<Summary>('GET', '/api/campaigns/summary').then(setS).catch((e: Error) => setError(e.message)); }, []);
+  const load = useCallback(() => { setError(null); api<Summary>('GET', '/api/campaigns/summary').then(setS).catch((e: Error) => setError(e.message)); }, []);
+  useEffect(load, [load]);
   const closed = s ? [...s.closed].sort((a, b) => (b.closed_at ?? '').localeCompare(a.closed_at ?? '')) : [];
 
   return (
     <>
       <PageTitle title="Results" />
-      <ErrorBox message={error} />
+      <ErrorBox message={error} onRetry={load} />
       {!s && !error && <Spinner />}
       {s && closed.length === 0 && <div className="card card-pad center muted">Closed campaigns will appear here.</div>}
       <div className="grid3">

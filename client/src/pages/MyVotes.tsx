@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, fmtDate } from '../api';
 import { Icon } from '../icons';
@@ -16,12 +16,13 @@ export function MyVotes() {
   const now = useNow();
   const [items, setItems] = useState<Item[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  useEffect(() => { api<{ campaigns: Item[] }>('GET', '/api/vote').then((r) => setItems(r.campaigns)).catch((e: Error) => setError(e.message)); }, []);
+  const load = useCallback(() => { setError(null); api<{ campaigns: Item[] }>('GET', '/api/vote').then((r) => setItems(r.campaigns)).catch((e: Error) => setError(e.message)); }, []);
+  useEffect(load, [load]);
 
   return (
     <>
       <PageTitle title="My votes" />
-      <ErrorBox message={error} />
+      <ErrorBox message={error} onRetry={load} />
       {!items && !error && <Spinner />}
       {items && items.length === 0 && (
         <div className="card card-pad state-card"><Icon name="inbox" size={24} /><h2>Nothing to vote on right now</h2><p className="muted">When a vote you can take part in opens, it will appear here.</p></div>

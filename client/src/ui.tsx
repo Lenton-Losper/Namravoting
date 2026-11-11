@@ -6,8 +6,14 @@ export function Spinner({ label = 'Loading…' }: { label?: string }) {
   return <p className="muted center pad" role="status">{label}</p>;
 }
 
-export function ErrorBox({ message }: { message: string | null }) {
-  return message ? <p className="error" role="alert">{message}</p> : null;
+export function ErrorBox({ message, onRetry }: { message: string | null; onRetry?: () => void }) {
+  if (!message) return null;
+  return (
+    <div className="error" role="alert">
+      <p style={{ margin: 0 }}>{message}</p>
+      {onRetry && <button type="button" className="btn btn-secondary" style={{ marginTop: 8 }} onClick={onRetry}>Retry</button>}
+    </div>
+  );
 }
 
 /** Small outlined chips: Draft = grey, Open = orange text on orange-50, Closed = navy text on muted surface. */

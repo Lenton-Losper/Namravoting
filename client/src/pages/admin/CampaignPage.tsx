@@ -143,7 +143,7 @@ export function CampaignPage() {
   }, [id]);
   useEffect(() => { void reload(); }, [reload]);
 
-  if (error && !c) return <><ErrorBox message={error === 'Not found' ? 'Campaign not found.' : error} /><Link to="/admin">Back to campaigns</Link></>;
+  if (error && !c) return <><ErrorBox message={error === 'Not found' ? 'Campaign not found.' : error} onRetry={error === 'Not found' ? undefined : () => void reload()} /><Link to="/admin">Back to campaigns</Link></>;
   if (!c) return <Spinner />;
 
   return (

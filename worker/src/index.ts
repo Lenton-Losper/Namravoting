@@ -18,6 +18,8 @@ interface Env {
 }
 
 const PORT = 8080;
+const START_BUDGET_MS = 50_000;     // a Worker request may wait this long for a cold start before answering 503
+const RECYCLE_AFTER_MS = 25_000;
 const CONTAINER_ENV_KEYS = [
   'NODE_ENV', 'AUTH_MODE', 'STORAGE', 'R2_BUCKET', 'PUBLIC_BASE_URL', 'CF_ACCESS_TEAM_DOMAIN', 'CF_ACCESS_AUD',
   'SESSION_SECRET', 'DATABASE_URL', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'R2_ENDPOINT',
@@ -35,20 +37,41 @@ function startingUp(): Response {
 export class NamraContainer extends DurableObject<Env> {
   private lastTouch = 0;
 
-  /** Starts the container if needed and waits until the app answers (any HTTP status counts as "up"). */
-  private async ensureRunning(): Promise<void> {
+  private starting: Promise<void> | null = null;
+
+  /**
+   * Starts the container if needed and waits until the app answers (any HTTP status counts as "up").
+   * Concurrent requests share one start attempt. A start can fail transiently, e.g. right after a rollout while the
+   * previous instance is still being torn down ("no container instance that can be provided"), so it is retried; a
+   * container that is "running" but never answers is destroyed once and started afresh.
+   */
+  private ensureRunning(): Promise<void> {
+    this.starting ??= this.startAndWait().finally(() => { this.starting = null; });
+    return this.starting;
+  }
+
+  private async startAndWait(): Promise<void> {
     const c = this.ctx.container;
     if (!c) throw new Error('Containers are not enabled for this Durable Object');
-    if (!c.running) {
-      const env: Record<string, string> = { PORT: String(PORT) };
-      for (const k of CONTAINER_ENV_KEYS) { const v = (this.env as unknown as Record<string, string | undefined>)[k]; if (v) env[k] = v; }
-      c.start({ env, enableInternet: true });
+    const env: Record<string, string> = { PORT: String(PORT) };
+    for (const k of CONTAINER_ENV_KEYS) { const v = (this.env as unknown as Record<string, string | undefined>)[k]; if (v) env[k] = v; }
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    const t0 = Date.now();
+    let recycled = false;
+    let last: unknown;
+    while (Date.now() - t0 < START_BUDGET_MS) {
+      if (!c.running) {
+        try { c.start({ env, enableInternet: true }); } catch (e) { last = e; logError('container start() failed, retrying', e); await sleep(2000); continue; }
+      }
+      try { await c.getTcpPort(PORT).fetch('http://container/__ready'); return; } catch (e) { last = e; }
+      if (!recycled && Date.now() - t0 > RECYCLE_AFTER_MS && c.running) {
+        recycled = true;
+        logError('container running but not answering; recycling', last);
+        try { await c.destroy(); } catch (e) { logError('container destroy() failed', e); }
+      }
+      await sleep(1000);
     }
-    const port = c.getTcpPort(PORT);
-    for (let i = 0; i < 60; i++) {
-      try { await port.fetch('http://container/__ready'); return; } catch { await new Promise((r) => setTimeout(r, 1000)); }
-    }
-    throw new Error('The app did not start in time');
+    throw last instanceof Error ? last : new Error('The app did not start in time');
   }
 
   async fetch(request: Request): Promise<Response> {

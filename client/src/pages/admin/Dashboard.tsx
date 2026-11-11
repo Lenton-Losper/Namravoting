@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, fmtDate, type Campaign } from '../../api';
 import { Icon } from '../../icons';
@@ -21,7 +21,8 @@ export function Dashboard() {
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>('open');
   const [sharing, setSharing] = useState<Campaign | null>(null);
-  useEffect(() => { api<{ campaigns: Campaign[] }>('GET', '/api/campaigns/mine').then((r) => setItems(r.campaigns)).catch((e: Error) => setError(e.message)); }, []);
+  const load = useCallback(() => { setError(null); api<{ campaigns: Campaign[] }>('GET', '/api/campaigns/mine').then((r) => setItems(r.campaigns)).catch((e: Error) => setError(e.message)); }, []);
+  useEffect(load, [load]);
 
   const by = useMemo(() => ({
     open: items?.filter((c) => c.status === 'open') ?? [],
@@ -36,7 +37,7 @@ export function Dashboard() {
   return (
     <>
       <PageTitle title="Campaigns"><Link className="btn btn-primary" to="/admin/new">Create campaign</Link></PageTitle>
-      <ErrorBox message={error} />
+      <ErrorBox message={error} onRetry={load} />
       {!items && !error && <Spinner />}
       {items && (
         <>

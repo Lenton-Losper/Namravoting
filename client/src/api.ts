@@ -8,20 +8,29 @@ async function csrfToken(force = false): Promise<string> {
   return csrf;
 }
 
+const RETRIES = 6;
+const RETRY_DELAY_MS = 4000;
+
 export async function api<T = unknown>(method: string, url: string, body?: unknown, retry = true): Promise<T> {
   const headers: Record<string, string> = {};
   let payload: BodyInit | undefined;
   if (body instanceof FormData) payload = body;
   else if (body !== undefined) { headers['Content-Type'] = 'application/json'; payload = JSON.stringify(body); }
   if (method !== 'GET') headers['X-CSRF-Token'] = await csrfToken();
-  const res = await fetch(url, { method, headers, body: payload, credentials: 'same-origin' });
+  let res = await fetch(url, { method, headers, body: payload, credentials: 'same-origin' }).catch(() => null);
+  // Cold start / rollout: the gateway answers 502-504 while the app container comes up. Retry reads quietly.
+  for (let n = 0; method === 'GET' && (!res || [502, 503, 504].includes(res.status)) && n < RETRIES; n++) {
+    await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
+    res = await fetch(url, { method, headers, credentials: 'same-origin' }).catch(() => null);
+  }
+  if (!res) throw new ApiError(0, "Can't reach the server. Check your connection and retry.");
   if (res.status === 403 && method !== 'GET' && retry) {
     const j = await res.clone().json().catch(() => ({}));
     if ((j as { error?: string }).error === 'Invalid CSRF token') { await csrfToken(true); return api<T>(method, url, body, false); }
   }
   if (res.status === 204) return undefined as T;
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new ApiError(res.status, (data as { error?: string }).error ?? 'Something went wrong', (data as { code?: string }).code);
+  if (!res.ok) throw new ApiError(res.status, (data as { error?: string }).error ?? (res.status >= 500 ? 'The service is starting up or temporarily unavailable. Please retry.' : 'Something went wrong'), (data as { code?: string }).code);
   return data as T;
 }
 
