@@ -84,13 +84,13 @@ describe('the login redirect', () => {
 
   it('the auth cookie is HttpOnly, SameSite=Lax, short-lived and signed (no verifier or nonce readable)', async () => {
     const r = await request(app).get('/auth/login').expect(302);
-    const c = (r.headers['set-cookie'] as unknown as string[]).find((x) => x.startsWith('namra_auth='))!;
+    const c = (r.headers['set-cookie'] as unknown as string[]).find((x) => x.startsWith('namra_auth_'))!;
     expect(c).toMatch(/HttpOnly/i);
     expect(c).toMatch(/SameSite=Lax/i);
     expect(c).not.toMatch(/SameSite=Strict/i);
     expect(c).toMatch(/Max-Age=600/i);
     expect(c).toMatch(/Path=\/auth/i);
-    const payload = JSON.parse(Buffer.from(decodeURIComponent(c.split(';')[0].split('=')[1]).split('.')[0], 'base64url').toString());
+    const payload = JSON.parse(Buffer.from(decodeURIComponent(c.split(';')[0].slice(c.indexOf('=') + 1)).split('.')[0], 'base64url').toString());
     expect(Object.keys(payload).sort()).toEqual(['exp', 'n', 'next', 's', 'v']);   // it is signed, not encrypted: it holds nothing the browser could abuse
   });
 });
@@ -104,8 +104,8 @@ describe('successful sign-in', () => {
     expect(callback.status).toBe(302);
     expect(callback.headers.location).toBe('/votes');
     expect(sessionCookie(callback)).toMatch(/HttpOnly/i);
-    const cleared = (callback.headers['set-cookie'] as unknown as string[]).find((c) => c.startsWith('namra_auth='))!;
-    expect(cleared).toMatch(/namra_auth=;/);
+    const cleared = (callback.headers['set-cookie'] as unknown as string[]).find((c) => c.startsWith('namra_auth_'))!;
+    expect(cleared).toMatch(/^namra_auth_[A-Za-z0-9_-]+=;/);
     expect(cleared).toMatch(/Expires=Thu, 01 Jan 1970/);
     expect(cleared).toMatch(/SameSite=Lax/i);
     const rows = (await ownerDb().query('SELECT entra_oid, email, display_name, employee_code FROM users')).rows;
@@ -152,7 +152,7 @@ describe('rejections (each leaves no session and no user)', () => {
     ['wrong issuer', { claims: { iss: 'https://login.microsoftonline.com/ffffffff-ffff-4fff-8fff-ffffffffffff/v2.0' } }, /unexpected JWT claim/],
     ['wrong audience', { claims: { aud: '99999999-9999-4999-8999-999999999999' } }, /unexpected JWT claim/],
     ['bad nonce', { nonce: 'not-the-nonce-we-sent-xxxxxxxxxxxx' }, /unexpected JWT claim/],
-    ['state mismatch', { state: 'forged-state-value-forged-state-value' }, /invalid response/],
+    ['state mismatch', { state: 'forged-state-value-forged-state-value' }, /missing or expired auth cookie/],
     ['ID token signed by an unknown key', { signWithOtherKey: true }, /signature verification failed/],
     ['expired ID token', { claims: { exp: Math.floor(Date.now() / 1000) - 600, iat: Math.floor(Date.now() / 1000) - 1200 } }, /timestamp claim/],
     ['no oid', { claims: { oid: undefined } }, /no oid/],
@@ -178,11 +178,11 @@ describe('rejections (each leaves no session and no user)', () => {
     rejected(await request(app).get('/auth/callback?code=x&state=y'));
     // tampered cookie (verifier swapped) fails the signature
     const login = await request(app).get('/auth/login');
-    const raw = ((login.headers['set-cookie'] as unknown as string[]).find((c) => c.startsWith('namra_auth='))!).split(';')[0];
-    const [body, mac] = decodeURIComponent(raw.split('=')[1]).split('.');
+    const raw = ((login.headers['set-cookie'] as unknown as string[]).find((c) => c.startsWith('namra_auth_'))!).split(';')[0];
+    const [body, mac] = decodeURIComponent(raw.slice(raw.indexOf('=') + 1)).split('.');
     const p = JSON.parse(Buffer.from(body, 'base64url').toString()); p.v = crypto.randomBytes(32).toString('base64url');
     const forged = `${Buffer.from(JSON.stringify(p)).toString('base64url')}.${mac}`;
-    rejected(await request(app).get('/auth/callback?code=x&state=' + p.s).set('Cookie', `namra_auth=${encodeURIComponent(forged)}`));
+    rejected(await request(app).get('/auth/callback?code=x&state=' + p.s).set('Cookie', `namra_auth_${p.s}=${encodeURIComponent(forged)}`));
   });
 
   it('an error returned by Microsoft (e.g. the user cancelled) is a clean rejection', async () => {
@@ -234,6 +234,79 @@ describe('employee code and not_member', () => {
     expect((await s.get(`/api/vote/${c.token}`).expect(200)).body.voterState).toBe('can_vote');
     await s.post(`/api/vote/${c.token}`).send({ candidateId: c.candidates[0] }).expect(201);
     await s.post(`/api/vote/${c.token}`).send({ candidateId: c.candidates[0] }).expect(409);
+  });
+});
+
+describe('the ballot link survives the whole sign-in (QR -> ballot)', () => {
+  const ADMIN = { oid: OID2, preferred_username: ADMIN_EMAIL, name: 'Boss' };
+  const STAFF = { oid: OID, preferred_username: 'staff@namra.org.na', name: 'Staff' };
+  /** An open campaign created by the admin; returns the ballot path /v/:token. */
+  async function ballot() {
+    await setMembers([['NAM0445', true]]);
+    const { agent } = await signIn({ claims: ADMIN, graph: { employeeId: 'NAM0445' } });
+    const a = await asSession(agent);
+    const c = await makeCampaign(a, 2, 'QR vote', 'all');
+    await a.post(`/api/campaigns/${c.id}/start`).expect(200);
+    return `/v/${c.token}`;
+  }
+
+  it.each([['an admin', ADMIN], ['a non-admin', STAFF]])('signed out: %s lands on the ballot, not /admin or /votes', async (_who, claims) => {
+    const path = await ballot();
+    const { callback, agent } = await signIn({ claims, graph: { employeeId: 'NAM0445' }, next: path });
+    expect(callback.status).toBe(302);
+    expect(callback.headers.location).toBe(path);
+    const s = await asSession(agent);
+    await s.get('/api/vote/' + path.slice(3)).expect(200);   // and the ballot is really reachable with the new session
+  });
+
+  it.each([['an admin', ADMIN], ['a non-admin', STAFF]])('already signed in: /auth/login?next=ballot goes straight to the ballot for %s, no Microsoft round trip', async (_who, claims) => {
+    const path = await ballot();
+    const { agent } = await signIn({ claims, graph: { employeeId: 'NAM0445' } });
+    const r = await agent.get('/auth/login?next=' + encodeURIComponent(path)).expect(302);
+    expect(r.headers.location).toBe(path);
+    expect((await agent.get('/api/session').expect(200)).body.user.email).toBe(String(claims!.preferred_username));
+    expect(r.headers['set-cookie']).toBeUndefined();   // no new auth flow was started
+  });
+
+  it('already signed in without a next: the role default, never an authorize redirect', async () => {
+    const { agent: a } = await signIn({ claims: ADMIN });
+    expect((await a.get('/auth/login').expect(302)).headers.location).toBe('/admin');
+    const { agent: s } = await signIn({ claims: STAFF });
+    expect((await s.get('/auth/login').expect(302)).headers.location).toBe('/votes');
+  });
+
+  it('REGRESSION: a second /auth/login (a second tap, another tab, the plain /login page) cannot overwrite the ballot target of the first', async () => {
+    const path = await ballot();
+    const agent = request.agent(app);
+    const a = new URL((await agent.get('/auth/login?next=' + encodeURIComponent(path))).headers.location);   // QR flow, Microsoft page open
+    await agent.get('/auth/login').expect(302);                                                              // another hit with NO next
+    await agent.get('/auth/login?next=%2Fadmin').expect(302);                                                // and one pointing elsewhere
+    const code = `code-${++n}`;
+    idp.register(code, { nonce: a.searchParams.get('nonce')!, codeChallenge: a.searchParams.get('code_challenge')!, claims: ADMIN, graph: { employeeId: 'NAM0445' } });
+    const cb = await agent.get(`/auth/callback?code=${code}&state=${encodeURIComponent(a.searchParams.get('state')!)}`);
+    expect(cb.status).toBe(302);
+    expect(cb.headers.location).toBe(path);
+  });
+
+  it('each overlapping flow keeps its own target', async () => {
+    const agent = request.agent(app);
+    const flows = [] as { loc: URL; next: string }[];
+    for (const next of ['/votes', '/admin']) flows.push({ loc: new URL((await agent.get('/auth/login?next=' + encodeURIComponent(next))).headers.location), next });
+    const first = flows[0];
+    const code = `code-${++n}`;
+    idp.register(code, { nonce: first.loc.searchParams.get('nonce')!, codeChallenge: first.loc.searchParams.get('code_challenge')!, claims: STAFF, graph: {} });
+    const cb = await agent.get(`/auth/callback?code=${code}&state=${encodeURIComponent(first.loc.searchParams.get('state')!)}`);
+    expect(cb.headers.location).toBe(first.next);
+  });
+
+  it('pending-flow cookies are capped (expired ones dropped, at most 6 kept), so repeated taps cannot grow the Cookie header', async () => {
+    const agent = request.agent(app);
+    let last: string[] = [];
+    for (let i = 0; i < 15; i++) last = (await agent.get('/auth/login?next=%2Fvotes').expect(302)).headers['set-cookie'] as unknown as string[];
+    const cleared = last.filter((c) => /^namra_auth_[^=]+=;/.test(c));
+    const added = last.filter((c) => /^namra_auth_[^=]+=[^;]+/.test(c) && !/^namra_auth_[^=]+=;/.test(c));
+    expect(added).toHaveLength(1);
+    expect(cleared.length).toBeGreaterThanOrEqual(1);   // the surplus is being cleared
   });
 });
 

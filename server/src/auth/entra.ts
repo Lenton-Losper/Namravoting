@@ -6,7 +6,7 @@ import { getPool, UNIQUE_VIOLATION } from '../db.js';
 import { normalizeEmployeeCode } from '../domain/employeeCode.js';
 import { cookieOptions, readCookie } from './cookies.js';
 import { safeNext } from './safeNext.js';
-import { clearSession, setSession } from './devAuth.js';
+import { clearSession, getCurrentUser, setSession } from './devAuth.js';
 import { sign, verify } from './signing.js';
 import { ADMIN_ROLE, type AuthUser } from './types.js';
 
@@ -15,7 +15,10 @@ import { ADMIN_ROLE, type AuthUser } from './types.js';
  * The identity is `oid` from the verified ID token; the employee code comes from Microsoft Graph (`employeeId`),
  * never from anything the browser supplies. After the callback the app issues its own signed session cookie.
  */
-const AUTH_COOKIE = 'namra_auth';
+/** One cookie PER sign-in attempt, named by its state: a second tap, another tab or a stale page can never overwrite (and lose the `next` of) a flow in progress. */
+const AUTH_COOKIE_PREFIX = 'namra_auth_';
+const MAX_PENDING_FLOWS = 6;
+const STATE_RE = /^[A-Za-z0-9_-]{16,128}$/;
 const AUTH_TTL_MS = 10 * 60 * 1000;
 const SCOPE = 'openid profile email User.Read';
 const FAIL = '/login?error=signin_failed';
@@ -54,8 +57,12 @@ export function mountEntra(app: Express, config: Config, opts: EntraOptions = {}
     const state = oidc.randomState();
     const nonce = oidc.randomNonce();
     const next = safeNext(typeof req.query.next === 'string' ? req.query.next : null);
+    // Already signed in (valid session): there is nothing to sign in to. Go straight to the target, no second Microsoft round trip.
+    const current = getCurrentUser(req);
+    if (current) { res.set('Cache-Control', 'no-store'); return res.redirect(next ?? (current.roles.includes(ADMIN_ROLE) ? '/admin' : '/votes')); }
+    pruneFlows(req, res);
     const payload: AuthState = { s: state, n: nonce, v: verifier, next, exp: Date.now() + AUTH_TTL_MS };
-    res.cookie(AUTH_COOKIE, sign(config.sessionSecret, payload), authCookie({ maxAge: AUTH_TTL_MS }));
+    res.cookie(AUTH_COOKIE_PREFIX + state, sign(config.sessionSecret, payload), authCookie({ maxAge: AUTH_TTL_MS }));
     res.set('Cache-Control', 'no-store');
     res.redirect(oidc.buildAuthorizationUrl(oc, {
       redirect_uri: e.redirectUri, scope: SCOPE, response_type: 'code', state, nonce, prompt: 'select_account',
@@ -64,12 +71,14 @@ export function mountEntra(app: Express, config: Config, opts: EntraOptions = {}
   });
 
   app.get('/auth/callback', async (req: Request, res: Response) => {
-    const raw = readCookie(req, AUTH_COOKIE);
-    res.clearCookie(AUTH_COOKIE, authCookie());   // single use, whatever happens next
+    const stateParam = typeof req.query.state === 'string' && STATE_RE.test(req.query.state) ? req.query.state : null;
+    const raw = stateParam ? readCookie(req, AUTH_COOKIE_PREFIX + stateParam) : undefined;
+    if (stateParam) res.clearCookie(AUTH_COOKIE_PREFIX + stateParam, authCookie());   // single use, whatever happens next
     res.set('Cache-Control', 'no-store');
     try {
       const st = raw ? verify<AuthState>(config.sessionSecret, raw) : null;
       if (!st || typeof st.exp !== 'number' || st.exp < Date.now()) throw reject('missing or expired auth cookie');
+      if (st.s !== stateParam) throw reject('state does not match its cookie');
       if (typeof req.query.error === 'string') throw reject(`provider error ${req.query.error.slice(0, 40)}`);
 
       // The library checks state, nonce, PKCE, issuer and audience of the ID token. The redirect URI is the configured one
@@ -113,6 +122,22 @@ export function mountEntra(app: Express, config: Config, opts: EntraOptions = {}
     res.set('Cache-Control', 'no-store');
     res.redirect(oidc.buildEndSessionUrl(oc, { post_logout_redirect_uri: siteRoot, client_id: e.clientId }).href);
   });
+}
+
+/** Drops expired pending-flow cookies and, past MAX_PENDING_FLOWS, the oldest ones, so repeated taps can't grow the Cookie header. */
+function pruneFlows(req: Request, res: Response): void {
+  const flows: { name: string; exp: number }[] = [];
+  for (const part of (req.headers.cookie ?? '').split(';')) {
+    const i = part.indexOf('=');
+    const name = i > 0 ? part.slice(0, i).trim() : '';
+    if (!name.startsWith(AUTH_COOKIE_PREFIX)) continue;
+    let exp = 0;
+    try { exp = (JSON.parse(Buffer.from(decodeURIComponent(part.slice(i + 1).trim()).split('.')[0], 'base64url').toString()) as { exp?: number }).exp ?? 0; } catch { /* unreadable: treat as expired */ }
+    flows.push({ name, exp });
+  }
+  const live = flows.filter((f) => f.exp > Date.now()).sort((a, b) => b.exp - a.exp);
+  const drop = [...flows.filter((f) => f.exp <= Date.now()), ...live.slice(MAX_PENDING_FLOWS - 1)];
+  for (const f of drop) res.clearCookie(f.name, { httpOnly: true, sameSite: 'lax', path: '/auth' });
 }
 
 /** Graph `GET /me?$select=employeeId,displayName,mail`. Any failure means "no code" (-> not_member), never a failed sign-in. */
