@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api, fmtDate, type CampaignDetail, type Results } from '../../api';
 import { Icon } from '../../icons';
 import { SharePanel } from '../../share';
-import { BackLink, Dialog, ErrorBox, Field, ResultsChart, SectionTitle, Spinner, StatusBadge, Tabs, Thumb, initials } from '../../ui';
+import { BackLink, Dialog, ErrorBox, Field, ResetHistory, ResultsChart, SectionTitle, Spinner, StatusBadge, Tabs, Thumb, initials } from '../../ui';
 
 type Tab = 'candidates' | 'eligibility' | 'results';
 
-function useResults(id: string, enabled: boolean, poll: boolean) {
+/** `version` re-fetches once when the vote count changes (a reset changes it without changing the status). */
+function useResults(id: string, enabled: boolean, poll: boolean, version?: number) {
   const [r, setR] = useState<Results | null>(null);
   const [err, setErr] = useState<string | null>(null);
   useEffect(() => {
@@ -18,7 +19,7 @@ function useResults(id: string, enabled: boolean, poll: boolean) {
     if (!poll) return () => { alive = false; };
     const t = setInterval(() => void tick(), 5000);   // live results: every 5 s
     return () => { alive = false; clearInterval(t); };
-  }, [id, enabled, poll]);
+  }, [id, enabled, poll, version]);
   return { r, err };
 }
 
@@ -60,7 +61,7 @@ function EligibilityTab({ c }: { c: CampaignDetail }) {
 }
 
 function ResultsTab({ c, reload }: { c: CampaignDetail; reload: () => Promise<void> }) {
-  const { r, err } = useResults(c.id, c.status !== 'draft', c.status === 'open');
+  const { r, err } = useResults(c.id, c.status !== 'draft', c.status === 'open', c.turnout);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // If the campaign auto-closed (closes_at passed) while we were watching, refresh the page state.
@@ -83,22 +84,35 @@ function ResultsTab({ c, reload }: { c: CampaignDetail; reload: () => Promise<vo
       <ErrorBox message={err ?? error} />
       {c.status === 'draft' && <p className="muted">Results will appear here once voting has started.</p>}
       {c.status !== 'draft' && (r ? <ResultsChart candidates={r.candidates} turnout={r.turnout} /> : !err && <Spinner />)}
+      <ResetHistory resets={r?.resets} />
     </>
   );
 }
 
+type Dlg = 'start' | 'close' | 'deleteDraft' | 'archive' | 'unarchive' | 'permanent' | 'reset' | null;
+
 function SideCard({ c, reload }: { c: CampaignDetail; reload: () => Promise<void> }) {
-  const [dialog, setDialog] = useState<'start' | 'close' | null>(null);
+  const nav = useNavigate();
+  const [dialog, setDialog] = useState<Dlg>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const reason = c.candidates.length < 2 ? 'Add at least 2 candidates to start.'
+  const [typed, setTyped] = useState('');
+  const [reason, setReason] = useState('');
+  const [closes, setCloses] = useState('');
+  const archived = !!c.archived_at;
+  const blockedReason = c.candidates.length < 2 ? 'Add at least 2 candidates to start.'
     : c.eligibility === 'list' && c.eligible_emails.length === 0 ? 'Add at least one eligible email.' : null;
+  const open = (d: Dlg) => { setTyped(''); setReason(''); setCloses(''); setError(null); setDialog(d); };
 
-  async function act(kind: 'start' | 'close') {
+  async function run(fn: () => Promise<unknown>, after: () => Promise<void> | void) {
     setBusy(true); setError(null);
-    try { await api('POST', `/api/campaigns/${c.id}/${kind}`); setDialog(null); await reload(); }
+    try { await fn(); setDialog(null); await after(); }
     catch (e) { setError((e as Error).message); setDialog(null); } finally { setBusy(false); }
   }
+  const post = (path: string, body?: unknown) => api('POST', `/api/campaigns/${c.id}/${path}`, body);
+  const titleOk = typed === c.title;
+  const reasonOk = reason.trim().length >= 10;
+
   return (
     <aside className="card card-pad side-card">
       {c.status === 'draft' ? (
@@ -106,27 +120,75 @@ function SideCard({ c, reload }: { c: CampaignDetail; reload: () => Promise<void
           <SectionTitle icon="flag">Actions</SectionTitle>
           <p className="field-helper">Starting opens the vote and locks the campaign. Details, candidates and voters can no longer be changed.</p>
           <div className="stack">
-            <button className="btn btn-primary" disabled={!!reason} onClick={() => setDialog('start')}>Start voting</button>
-            {reason && <p className="field-helper" role="note">{reason}</p>}
+            <button className="btn btn-primary" disabled={!!blockedReason} onClick={() => open('start')}>Start voting</button>
+            {blockedReason && <p className="field-helper" role="note">{blockedReason}</p>}
             <Link className="btn btn-secondary" to={`/admin/c/${c.id}/edit`}>Edit campaign</Link>
+            <button className="btn btn-danger" onClick={() => open('deleteDraft')}>Delete draft</button>
           </div>
         </>
       ) : (
         <>
           <SectionTitle icon="link">Share</SectionTitle>
           <SharePanel c={c} compact />
-          {c.status === 'open' && <div className="stack side-close"><button className="btn btn-danger" onClick={() => setDialog('close')}>Close voting</button></div>}
+          <div className="stack side-close">
+            {c.status === 'open' && <button className="btn btn-danger" onClick={() => open('close')}>Close voting</button>}
+            {c.status === 'open' && <p className="field-helper" role="note">Close the campaign first to archive or delete it.</p>}
+            {c.status === 'closed' && !archived && <button className="btn btn-secondary" onClick={() => open('archive')}>Archive</button>}
+            {archived && <button className="btn btn-secondary" onClick={() => open('unarchive')}>Unarchive</button>}
+            {archived && <button className="btn btn-danger" onClick={() => open('permanent')}>Delete permanently</button>}
+            {!archived && <button className="btn btn-danger" onClick={() => open('reset')}>Reset votes</button>}
+            {archived && <p className="field-helper" role="note">Unarchive the campaign to reset its votes.</p>}
+          </div>
         </>
       )}
       <ErrorBox message={error} />
+
       {dialog === 'start' && (
-        <Dialog title="Start voting?" confirmLabel="Start and lock" busy={busy} onConfirm={() => void act('start')} onCancel={() => setDialog(null)}>
+        <Dialog title="Start voting?" confirmLabel="Start and lock" busy={busy} onConfirm={() => void run(() => post('start'), reload)} onCancel={() => setDialog(null)}>
           <p>This <strong>locks the campaign</strong>. You will not be able to edit the details, candidates or eligible voters afterwards.</p>
         </Dialog>
       )}
       {dialog === 'close' && (
-        <Dialog title="Close voting now?" confirmLabel="Close voting" danger busy={busy} onConfirm={() => void act('close')} onCancel={() => setDialog(null)}>
+        <Dialog title="Close voting now?" confirmLabel="Close voting" danger busy={busy} onConfirm={() => void run(() => post('close'), reload)} onCancel={() => setDialog(null)}>
           <p>No more votes will be accepted. This cannot be undone.</p>
+        </Dialog>
+      )}
+      {dialog === 'deleteDraft' && (
+        <Dialog title="Delete this draft?" confirmLabel="Delete draft" danger busy={busy}
+          onConfirm={() => void run(() => api('DELETE', `/api/campaigns/${c.id}`), () => nav('/admin', { replace: true }))} onCancel={() => setDialog(null)}>
+          <p>This permanently deletes the draft <strong>{c.title}</strong>, its candidates, voter list and uploaded photos. This can't be undone.</p>
+        </Dialog>
+      )}
+      {dialog === 'archive' && (
+        <Dialog title="Archive this campaign?" confirmLabel="Archive" busy={busy} onConfirm={() => void run(() => post('archive'), reload)} onCancel={() => setDialog(null)}>
+          <p>It moves to the <strong>Archived</strong> tab and out of the dashboard stats. Its results stay viewable and exportable, and you can unarchive it any time.</p>
+        </Dialog>
+      )}
+      {dialog === 'unarchive' && (
+        <Dialog title="Unarchive this campaign?" confirmLabel="Unarchive" busy={busy} onConfirm={() => void run(() => post('unarchive'), reload)} onCancel={() => setDialog(null)}>
+          <p>It returns to the Closed tab.</p>
+        </Dialog>
+      )}
+      {dialog === 'permanent' && (
+        <Dialog title="Delete permanently?" confirmLabel="Delete permanently" danger busy={busy} confirmDisabled={!titleOk}
+          onConfirm={() => void run(() => post('permanent-delete', { confirm_title: typed }), () => nav('/admin', { replace: true }))} onCancel={() => setDialog(null)}>
+          <p className="confirm-warning">This deletes the campaign, its {c.turnout} recorded {c.turnout === 1 ? 'vote' : 'votes'}, candidates and photos for good. This can't be undone. (A record of the deletion stays in the audit log.)</p>
+          <label>Type the campaign title to confirm<span className="field-helper">{c.title}</span>
+            <input value={typed} onChange={(e) => setTyped(e.target.value)} autoComplete="off" spellCheck={false} /></label>
+        </Dialog>
+      )}
+      {dialog === 'reset' && (
+        <Dialog title="Reset votes?" confirmLabel="Reset votes" danger busy={busy} confirmDisabled={!titleOk || !reasonOk}
+          onConfirm={() => void run(() => post('reset', { confirm_title: typed, reason: reason.trim(), closes_at: closes ? new Date(closes).toISOString() : null }), reload)} onCancel={() => setDialog(null)}>
+          <p className="confirm-warning">All {c.turnout} {c.turnout === 1 ? 'vote' : 'votes'} will be deleted. Everyone will be able to vote again. This can't be undone.</p>
+          <div className="stack">
+            <label>Type the campaign title to confirm<span className="field-helper">{c.title}</span>
+              <input value={typed} onChange={(e) => setTyped(e.target.value)} autoComplete="off" spellCheck={false} /></label>
+            <label>Reason<span className="field-helper">At least 10 characters. It is kept in the reset history, visible with the results.</span>
+              <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={3} maxLength={1000} /></label>
+            <label>New closing time <span className="field-helper">Optional. Needed if the closing time has already passed.</span>
+              <input type="datetime-local" value={closes} onChange={(e) => setCloses(e.target.value)} /></label>
+          </div>
         </Dialog>
       )}
     </aside>
@@ -156,7 +218,7 @@ export function CampaignPage() {
             <h1 className="head-title">{c.title}</h1>
             {c.description && <p className="head-desc">{c.description}</p>}
             <div className="meta-row">
-              <span className="meta"><Icon name="flag" /> <StatusBadge status={c.status} /></span>
+              <span className="meta"><Icon name="flag" /> <StatusBadge status={c.status} />{c.archived_at && <span className="chip chip-outline">Archived</span>}</span>
               <span className="meta"><Icon name="calendar" /> Opens {fmtDate(c.opens_at)}</span>
               <span className="meta"><Icon name="clock" /> Closes {fmtDate(c.closes_at)}</span>
             </div>

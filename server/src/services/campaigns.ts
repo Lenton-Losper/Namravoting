@@ -6,7 +6,7 @@ import { audit } from './audit.js';
 export interface CampaignRow {
   id: string; share_token: string; created_by: string; title: string; description: string | null;
   status: Status; opens_at: Date | null; closes_at: Date | null; eligibility: 'all' | 'list' | 'umoja';
-  results_published: boolean; created_at: Date;
+  results_published: boolean; created_at: Date; archived_at: Date | null;
 }
 
 export interface Integrity { ballots: number; receipts: number; match: boolean }
@@ -28,6 +28,29 @@ export async function refreshStatus(campaignId: string): Promise<void> {
   await withTx(async (c) => {
     const { rows } = await c.query('SELECT status, opens_at, closes_at FROM campaigns WHERE id = $1 FOR UPDATE', [campaignId]);
     if (rows[0] && shouldAutoClose(rows[0], new Date())) await closeInTx(c, campaignId, null, 'auto');
+  });
+}
+
+export interface ResetEntry {
+  at: Date; by: string | null; reason: string; votes_cleared: number;
+  /** Per-candidate counts before the reset. Only included for the campaign's creator. */
+  candidates?: { name: string; votes: number }[];
+}
+
+/**
+ * Reset history, newest last. Built from the permanent audit entries (action 'campaign.reset'); the snapshot holds
+ * counts only, never anything about individual voters.
+ */
+export async function getResetHistory(db: Queryable, campaignId: string, withTallies: boolean): Promise<ResetEntry[]> {
+  const { rows } = await db.query(
+    `SELECT a.at, u.display_name AS by, a.details
+       FROM audit_log a LEFT JOIN users u ON u.entra_oid = a.actor_oid
+      WHERE a.campaign_id = $1 AND a.action = 'campaign.reset' ORDER BY a.at, a.id`, [campaignId]);
+  return rows.map((r) => {
+    const snap = r.details?.snapshot ?? {};
+    const e: ResetEntry = { at: r.at, by: r.by ?? null, reason: String(r.details?.reason ?? ''), votes_cleared: Number(snap.turnout?.votes ?? 0) };
+    if (withTallies) e.candidates = (snap.candidates ?? []) as { name: string; votes: number }[];
+    return e;
   });
 }
 

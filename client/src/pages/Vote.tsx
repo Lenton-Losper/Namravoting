@@ -3,7 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import { api, ApiError, fmtDate, type Results } from '../api';
 import { Icon } from '../icons';
 import { closesIn, useNow } from '../time';
-import { BackLink, Dialog, ErrorBox, ResultsChart, Spinner, Thumb, initials } from '../ui';
+import { BackLink, Dialog, ErrorBox, ResetHistory, ResultsChart, Spinner, Thumb, initials } from '../ui';
 
 type VoterState = 'can_vote' | 'already_voted' | 'not_eligible' | 'not_member' | 'not_open' | 'closed';
 interface Info {
@@ -25,7 +25,7 @@ function PublishedResults({ token }: { token: string }) {
   const [r, setR] = useState<(Results & { title: string }) | null>(null);
   useEffect(() => { api<Results & { title: string }>('GET', `/api/vote/${token}/results`).then(setR).catch(() => undefined); }, [token]);
   if (!r) return null;
-  return <section className="card card-pad"><h2>Results</h2><ResultsChart candidates={r.candidates} turnout={r.turnout} /></section>;
+  return <section className="card card-pad"><h2>Results</h2><ResultsChart candidates={r.candidates} turnout={r.turnout} /><ResetHistory resets={r.resets} /></section>;
 }
 
 export function VotePage() {

@@ -41,3 +41,11 @@ export const voteBody = z.object({ candidateId: uuid }).strict();
 export const idParams = z.object({ id: uuid });
 export const candParams = z.object({ id: uuid, cid: uuid });
 export const tokenParams = z.object({ shareToken: z.string().regex(/^[A-Za-z0-9_-]{32,128}$/) });
+
+/** Type-the-title confirmations compare the title EXACTLY (no trimming, no case folding). */
+export const permanentDeleteBody = z.object({ confirm_title: z.string().max(200) }).strict();
+export const resetBody = z.object({
+  confirm_title: z.string().max(200),
+  reason: z.string().trim().min(10, 'Give a reason of at least 10 characters').max(1000),
+  closes_at: z.string().datetime({ offset: true }).nullable().optional(),
+}).strict();

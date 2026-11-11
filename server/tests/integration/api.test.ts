@@ -320,7 +320,7 @@ describe('dashboard summary', () => {
     await a.post(`/api/campaigns/${done.id}/close`).expect(200);
 
     const s = (await a.get('/api/campaigns/summary').expect(200)).body;
-    expect(s.counts).toEqual({ active: 1, drafts: 1, votes_open: 1 });
+    expect(s.counts).toEqual({ active: 1, drafts: 1, archived: 0, votes_open: 1 });
     expect(s.featured.id).toBe(open.id);
     expect(s.open).toHaveLength(1);
     expect(s.closed).toHaveLength(1);
@@ -329,7 +329,7 @@ describe('dashboard summary', () => {
     expect(JSON.stringify(s)).not.toContain(draft.token);
 
     const other = (await b.get('/api/campaigns/summary').expect(200)).body;
-    expect(other.counts).toEqual({ active: 0, drafts: 0, votes_open: 0 });
+    expect(other.counts).toEqual({ active: 0, drafts: 0, archived: 0, votes_open: 0 });
     expect(other.closed).toEqual([]);
     await (await login(app, S1)).get('/api/campaigns/summary').expect(403);
     await request(app).get('/api/campaigns/summary').expect(401);

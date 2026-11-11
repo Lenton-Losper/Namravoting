@@ -12,10 +12,10 @@ import { HttpError, notFound } from '../errors.js';
 import { ADMIN_ROLE, currentUser, getCurrentUser, isAdmin, requireUser } from '../auth/index.js';
 import { normalizeEmail } from '../domain/eligibility.js';
 import {
-  candParams, candidateBody, candidatePatchBody, createCampaignBody, eligibleBody, idParams, patchCampaignBody,
+  candParams, candidateBody, candidatePatchBody, createCampaignBody, eligibleBody, idParams, patchCampaignBody, permanentDeleteBody, resetBody,
 } from '../domain/validation.js';
 import { audit } from '../services/audit.js';
-import { closeInTx, getResults, refreshStatus, type CampaignRow } from '../services/campaigns.js';
+import { closeInTx, getResetHistory, getResults, refreshStatus, type CampaignRow } from '../services/campaigns.js';
 import { deletePhoto, MAX_UPLOAD_BYTES, savePhoto } from '../services/images.js';
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_UPLOAD_BYTES, files: 1, fields: 5, fieldSize: 4096 } });
@@ -67,6 +67,35 @@ async function inDraftTx<T>(id: string, fn: (c: PoolClient) => Promise<T>): Prom
   });
 }
 
+/**
+ * Calls one of the SECURITY DEFINER clean-up functions (migration 005). They re-check creator + state inside the database and
+ * signal with custom SQLSTATEs: NR404 -> 404 (also for "not yours", so ids are not confirmed), NR409 -> 409, NR400 -> 400.
+ */
+async function callCleanup(sql: string, params: unknown[], conflictMessage: (status: string | null, archived: boolean) => { message: string; code: string }, campaignId: string): Promise<Record<string, any>> {
+  try {
+    return (await getPool().query(sql, params)).rows[0].result as Record<string, any>;
+  } catch (e) {
+    const code = (e as { code?: string }).code;
+    if (code === 'NR404') throw notFound();
+    if (code === 'NR400') throw new HttpError(400, (e as Error).message, 'invalid');
+    if (code === 'NR409') {
+      const msg = (e as Error).message;
+      if (msg.startsWith('the closing time')) throw new HttpError(409, msg[0].toUpperCase() + msg.slice(1), 'needs_new_close');
+      const f = (await getPool().query('SELECT status, archived_at FROM campaigns WHERE id = $1', [campaignId])).rows[0];
+      const m = conflictMessage(f?.status ?? null, !!f?.archived_at);
+      throw new HttpError(409, m.message, m.code);
+    }
+    throw e;
+  }
+}
+
+/** Photo files are removed only AFTER the database transaction committed. A storage hiccup never undoes the deletion. */
+async function removePhotos(photos: unknown): Promise<void> {
+  for (const p of Array.isArray(photos) ? photos : []) {
+    try { await deletePhoto(String(p)); } catch (e) { console.warn(`[cleanup] could not delete a photo file: ${(e as Error).message}`); }
+  }
+}
+
 const shareUrl = (token: string) => `${getConfig().publicBaseUrl}/v/${token}`;
 const present = (c: CampaignRow) => ({ ...c, share_url: shareUrl(c.share_token) });
 const photoUrl = (cand: { id: string; photo_path: string | null }) => (cand.photo_path ? `/api/photos/${cand.id}` : null);
@@ -97,7 +126,7 @@ export function adminRouter(): Router {
     const mine = await getPool().query("SELECT id FROM campaigns WHERE created_by = $1 AND status = 'open'", [u.oid]);
     for (const row of mine.rows) await refreshStatus(row.id);
     const { rows } = await getPool().query(
-      `SELECT c.id, c.title, c.status, c.created_at, c.opens_at, c.closes_at, c.eligibility, c.results_published,
+      `SELECT c.id, c.title, c.status, c.created_at, c.opens_at, c.closes_at, c.eligibility, c.results_published, c.archived_at,
               (SELECT count(*)::int FROM vote_receipts v WHERE v.campaign_id = c.id) AS turnout,
               CASE c.eligibility WHEN 'list' THEN (SELECT count(*)::int FROM eligible_voters e WHERE e.campaign_id = c.id)
                                 WHEN 'umoja' THEN (SELECT count(*)::int FROM umoja_members WHERE active) END AS eligible_count,
@@ -120,17 +149,19 @@ export function adminRouter(): Router {
     };
     const slim = (c: (typeof rows)[number]) => ({
       id: c.id, title: c.title, status: c.status, created_at: c.created_at, opens_at: c.opens_at, closes_at: c.closes_at,
-      started_at: c.started_at, closed_at: c.closed_at, results_published: c.results_published,
+      started_at: c.started_at, closed_at: c.closed_at, results_published: c.results_published, archived_at: c.archived_at,
       turnout: c.turnout, eligible_count: c.eligible_count,
     });
     const open = rows.filter((c) => c.status === 'open');
     const drafts = rows.filter((c) => c.status === 'draft');
+    const archived = rows.filter((c) => c.archived_at);
     const featured = open[0] ?? drafts[0] ?? null;
     res.set('Cache-Control', 'no-store').json({
-      counts: { active: open.length, drafts: drafts.length, votes_open: open.reduce((n, c) => n + c.turnout, 0) },
+      counts: { active: open.length, drafts: drafts.length, archived: archived.length, votes_open: open.reduce((n, c) => n + c.turnout, 0) },
       open: open.map(slim),
       featured: featured ? slim(featured) : null,
-      closed: rows.filter((c) => c.status === 'closed').map((c) => ({ ...slim(c), winner: winnerOf(c.id) })),
+      closed: rows.filter((c) => c.status === 'closed' && !c.archived_at).map((c) => ({ ...slim(c), winner: winnerOf(c.id) })),
+      archived: archived.map((c) => ({ ...slim(c), winner: winnerOf(c.id) })),
     });
   });
 
@@ -158,6 +189,7 @@ export function adminRouter(): Router {
       ...present(c),
       candidates: cands.rows.map((x) => ({ id: x.id, name: x.name, bio: x.bio, photo_url: photoUrl(x), sort_order: x.sort_order })),
       eligible_emails: el.rows.map((x) => x.voter_email),
+      turnout: (await getPool().query('SELECT count(*)::int AS n FROM vote_receipts WHERE campaign_id = $1', [c.id])).rows[0].n,
       umoja_active_count: await activeMemberCount(getPool()),   // count only; never the members themselves
     });
   });
@@ -290,9 +322,77 @@ export function adminRouter(): Router {
     res.json({ status: 'closed', integrity });
   });
 
+  // ---- Clean-up -------------------------------------------------------------------------------------------------
+
+  /** Draft: hard delete (campaign, candidates, eligibility rows) and its photo files. Creator only. */
+  r.delete('/:id', loadOwned, async (req, res) => {
+    const c = camp(res);
+    const out = await callCleanup('SELECT delete_draft_campaign($1, $2) AS result', [c.id, currentUser(req).oid],
+      (status) => status === 'open'
+        ? { message: 'Close the campaign first', code: 'open_campaign' }
+        : { message: 'Only a draft can be deleted. Archive a closed campaign instead.', code: 'not_draft' }, c.id);
+    await removePhotos(out.photos);
+    res.status(204).end();
+  });
+
+  /** Closed -> archived. Open campaigns must be closed first; drafts are deleted, not archived. */
+  r.post('/:id/archive', loadOwned, async (req, res) => {
+    const c = camp(res);
+    await withTx(async (tx) => {
+      const { rows } = await tx.query('SELECT status, archived_at, title FROM campaigns WHERE id = $1 FOR UPDATE', [c.id]);
+      const f = rows[0];
+      if (f.status === 'open') throw new HttpError(409, 'Close the campaign first', 'open_campaign');
+      if (f.status !== 'closed') throw new HttpError(409, 'Only a closed campaign can be archived', 'not_closed');
+      if (f.archived_at) throw new HttpError(409, 'Already archived', 'already_archived');
+      await tx.query('UPDATE campaigns SET archived_at = now() WHERE id = $1', [c.id]);
+      await audit(tx, currentUser(req).oid, 'campaign.archive', c.id, { title: f.title });
+    });
+    res.json({ archived: true });
+  });
+
+  r.post('/:id/unarchive', loadOwned, async (req, res) => {
+    const c = camp(res);
+    await withTx(async (tx) => {
+      const { rows } = await tx.query('SELECT archived_at, title FROM campaigns WHERE id = $1 FOR UPDATE', [c.id]);
+      if (!rows[0].archived_at) throw new HttpError(409, 'The campaign is not archived', 'not_archived');
+      await tx.query('UPDATE campaigns SET archived_at = NULL WHERE id = $1', [c.id]);
+      await audit(tx, currentUser(req).oid, 'campaign.unarchive', c.id, { title: rows[0].title });
+    });
+    res.json({ archived: false });
+  });
+
+  /** Archived only: removes ballots, receipts, candidates, eligibility and the campaign for good. Needs the exact title. */
+  r.post('/:id/permanent-delete', loadOwned, async (req, res) => {
+    const c = camp(res);
+    const b = permanentDeleteBody.parse(req.body);
+    if (!c.archived_at || c.status !== 'closed') throw new HttpError(409, 'Archive the campaign first. Only archived campaigns can be deleted permanently.', 'not_archived');
+    if (b.confirm_title !== c.title) throw new HttpError(400, 'The title you typed does not match', 'title_mismatch');
+    const out = await callCleanup('SELECT delete_archived_campaign($1, $2) AS result', [c.id, currentUser(req).oid],
+      () => ({ message: 'Archive the campaign first. Only archived campaigns can be deleted permanently.', code: 'not_archived' }), c.id);
+    await removePhotos(out.photos);
+    res.json({ deleted: true, ballots_removed: out.ballots, receipts_removed: out.receipts });
+  });
+
+  /** Open or closed (not archived): wipes all votes and re-opens the voting. Needs the exact title and a reason. */
+  r.post('/:id/reset', loadOwned, async (req, res) => {
+    const c = camp(res);
+    const b = resetBody.parse(req.body);
+    if (c.archived_at) throw new HttpError(409, 'Unarchive the campaign before resetting it', 'archived');
+    if (c.status === 'draft') throw new HttpError(409, 'A draft has no votes to reset', 'not_started');
+    if (b.confirm_title !== c.title) throw new HttpError(400, 'The title you typed does not match', 'title_mismatch');
+    const out = await callCleanup('SELECT reset_campaign_votes($1, $2, $3, $4) AS result', [c.id, currentUser(req).oid, b.reason, b.closes_at ?? null],
+      (status, archived) => archived ? { message: 'Unarchive the campaign before resetting it', code: 'archived' }
+        : status === 'draft' ? { message: 'A draft has no votes to reset', code: 'not_started' } : { message: 'This campaign cannot be reset right now', code: 'conflict' }, c.id);
+    res.json({ status: 'open', votes_cleared: out.votes_cleared });
+  });
+
   r.get('/:id/results', loadOwned, async (_req, res) => {
     res.set('Cache-Control', 'no-store');
-    res.json({ status: camp(res).status, results_published: camp(res).results_published, ...(await getResults(getPool(), camp(res).id)) });
+    res.json({
+      status: camp(res).status, results_published: camp(res).results_published, archived: !!camp(res).archived_at,
+      ...(await getResults(getPool(), camp(res).id)),
+      resets: await getResetHistory(getPool(), camp(res).id, true),
+    });
   });
 
   r.post('/:id/publish', loadOwned, async (req, res) => {

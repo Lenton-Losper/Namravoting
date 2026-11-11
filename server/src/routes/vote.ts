@@ -6,7 +6,7 @@ import { HttpError, notFound } from '../errors.js';
 import { currentUser, getCurrentUser, requireUser, type AuthUser } from '../auth/index.js';
 import { voterState } from '../domain/status.js';
 import { tokenParams, voteBody } from '../domain/validation.js';
-import { getResults, refreshStatus, type CampaignRow } from '../services/campaigns.js';
+import { getResetHistory, getResults, refreshStatus, type CampaignRow } from '../services/campaigns.js';
 import { castVote, notMemberMessage } from '../services/voting.js';
 import { isActiveMemberSql, logNotMember, umojaReason } from '../services/umoja.js';
 
@@ -109,7 +109,7 @@ export function voteRouter(): Router {
     if (s.notMember) throw new HttpError(403, notMemberMessage, 'not_member');
     if (!s.eligible) throw new HttpError(403, 'You are not eligible to view these results', 'not_eligible');
     if (c.status !== 'closed' || !c.results_published) throw new HttpError(404, 'Results are not published');
-    res.set('Cache-Control', 'no-store').json({ title: c.title, ...(await getResults(getPool(), c.id)) });
+    res.set('Cache-Control', 'no-store').json({ title: c.title, ...(await getResults(getPool(), c.id)), resets: await getResetHistory(getPool(), c.id, false) });
   });
 
   return r;

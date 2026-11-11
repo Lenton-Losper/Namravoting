@@ -190,6 +190,11 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: non
 /* ---------- Tabs ---------- */
 .tabs { display: flex; gap: 24px; border-bottom: 1px solid var(--border); margin-bottom: 20px; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
 .tabs::-webkit-scrollbar { display: none; }
+.reset-history { margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--border); }
+.reset-history h3 { margin: 0 0 8px; font-size: 14px; }
+.reset-item { padding: 8px 0; border-bottom: 1px solid var(--border); }
+.reset-item:last-child { border-bottom: 0; }
+.confirm-warning { padding: 10px 12px; border: 1px solid var(--danger); border-radius: var(--radius-sm); color: var(--danger); background: #fff; font-weight: 500; }
 @media (min-width: 768px) { .tabs { overflow: visible; } }
 .tab { position: relative; min-height: 44px; padding: 0 2px; background: none; border: 0; border-bottom: 2px solid transparent; margin-bottom: -1px; color: var(--muted); font: 500 14px var(--font); cursor: pointer; white-space: nowrap; }
 .tab:hover { color: var(--navy-text); }

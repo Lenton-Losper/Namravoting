@@ -39,10 +39,11 @@ export interface Candidate { id: string; name: string; bio: string | null; photo
 export interface Campaign {
   id: string; title: string; description: string | null; status: 'draft' | 'open' | 'closed';
   opens_at: string | null; closes_at: string | null; eligibility: 'all' | 'list' | 'umoja'; results_published: boolean;
-  share_token: string; share_url: string; turnout?: number; eligible_count?: number | null;
+  share_token: string; share_url: string; turnout?: number; eligible_count?: number | null; archived_at?: string | null;
 }
-export interface CampaignDetail extends Campaign { candidates: Candidate[]; eligible_emails: string[]; umoja_active_count: number }
-export interface Results { status: string; results_published: boolean; candidates: { id: string; name: string; votes: number }[]; turnout: { votes: number; eligible: number | null } }
+export interface CampaignDetail extends Campaign { turnout: number; candidates: Candidate[]; eligible_emails: string[]; umoja_active_count: number }
+export interface ResetEntry { at: string; by: string | null; reason: string; votes_cleared: number; candidates?: { name: string; votes: number }[] }
+export interface Results { status: string; results_published: boolean; archived?: boolean; candidates: { id: string; name: string; votes: number }[]; turnout: { votes: number; eligible: number | null }; resets?: ResetEntry[] }
 
 export interface SummaryCampaign {
   id: string; title: string; status: 'draft' | 'open' | 'closed'; created_at: string; opens_at: string | null; closes_at: string | null;

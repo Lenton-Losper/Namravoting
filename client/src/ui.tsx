@@ -80,7 +80,7 @@ export function Tabs<T extends string>({ tabs, value, onChange, label, children,
 /** Accessible modal / bottom sheet. Closes on Escape and backdrop click. */
 export function Dialog(props: {
   title: string; children: ReactNode; confirmLabel: string; cancelLabel?: string; busy?: boolean; danger?: boolean;
-  hideConfirm?: boolean; className?: string; onConfirm: () => void; onCancel: () => void;
+  hideConfirm?: boolean; confirmDisabled?: boolean; className?: string; onConfirm: () => void; onCancel: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const { onCancel } = props;
@@ -98,13 +98,32 @@ export function Dialog(props: {
         <div className="row">
           <button className="btn btn-secondary" onClick={props.onCancel} disabled={props.busy}>{props.cancelLabel ?? 'Cancel'}</button>
           {!props.hideConfirm && (
-            <button className={`btn ${props.danger ? 'btn-danger' : 'btn-primary'}`} onClick={props.onConfirm} disabled={props.busy}>
+            <button className={`btn ${props.danger ? 'btn-danger' : 'btn-primary'}`} onClick={props.onConfirm} disabled={props.busy || props.confirmDisabled}>
               {props.busy ? 'Working…' : props.confirmLabel}
             </button>
           )}
         </div>
       </div>
     </div>
+  );
+}
+
+/** Who reset the votes, when and why. Counts only, never voter data. Shown to everyone who can see the results. */
+export function ResetHistory({ resets }: { resets: { at: string; by: string | null; reason: string; votes_cleared: number; candidates?: { name: string; votes: number }[] }[] | undefined }) {
+  if (!resets?.length) return null;
+  return (
+    <section className="reset-history" aria-label="Reset history">
+      <h3>Reset history</h3>
+      <ul className="list">
+        {resets.map((x, i) => (
+          <li key={i} className="reset-item">
+            <div><strong>{new Date(x.at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}</strong>{x.by ? ` · ${x.by}` : ''} · {x.votes_cleared} {x.votes_cleared === 1 ? 'vote' : 'votes'} cleared</div>
+            <div className="muted small">Reason: {x.reason}</div>
+            {x.candidates && x.candidates.length > 0 && <div className="muted small">Before the reset: {x.candidates.map((c) => `${c.name} ${c.votes}`).join(' · ')}</div>}
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 

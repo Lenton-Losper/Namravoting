@@ -5,7 +5,7 @@ import { Icon } from '../../icons';
 import { ShareDialog } from '../../share';
 import { ErrorBox, PageTitle, Spinner, StatusBadge, Tabs, TurnoutBar } from '../../ui';
 
-type Tab = 'open' | 'draft' | 'closed';
+type Tab = 'open' | 'draft' | 'closed' | 'archived';
 
 function Stat({ icon, label, value }: { icon: string; label: string; value: number }) {
   return (
@@ -27,11 +27,12 @@ export function Dashboard() {
   const by = useMemo(() => ({
     open: items?.filter((c) => c.status === 'open') ?? [],
     draft: items?.filter((c) => c.status === 'draft') ?? [],
-    closed: items?.filter((c) => c.status === 'closed') ?? [],
+    closed: items?.filter((c) => c.status === 'closed' && !c.archived_at) ?? [],
+    archived: items?.filter((c) => !!c.archived_at) ?? [],
   }), [items]);
 
   const empty: Record<Tab, string> = {
-    open: 'No campaigns are open right now.', draft: 'No drafts. Create a campaign to get started.', closed: 'Closed campaigns will appear here.',
+    open: 'No campaigns are open right now.', draft: 'No drafts. Create a campaign to get started.', closed: 'Closed campaigns will appear here.', archived: 'Archived campaigns will appear here.',
   };
 
   return (
@@ -50,6 +51,7 @@ export function Dashboard() {
             { id: 'open', label: 'Active', count: by.open.length },
             { id: 'draft', label: 'Drafts', count: by.draft.length },
             { id: 'closed', label: 'Closed', count: by.closed.length },
+            { id: 'archived', label: 'Archived', count: by.archived.length },
           ]}>
             {by[tab].length === 0 ? (
               <div className="card card-pad center muted">{empty[tab]}</div>
