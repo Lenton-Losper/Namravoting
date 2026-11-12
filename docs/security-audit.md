@@ -10,6 +10,41 @@
 
 ---
 
+## 0. Fix status
+
+Updated as each phase lands. The detailed findings below are the original audit text and are not rewritten.
+
+| ID | Status | Commit | Notes |
+|---|---|---|---|
+| SEC-01 | ✅ fixed | `cee80e3` | Turnout only while open; early close and reset need a reason, shown to voters and in published results; reset-round counts withheld until close; live per-candidate polling removed. |
+| SEC-02 | ✅ fixed | `cee80e3` | Per-candidate tallies replace the ballots table (migration 007). Tally rows re-stamped after each vote and at close so no xmin matches a receipt. A shuffled/encrypted ballot box was not needed. |
+| SEC-03 | ✅ fixed | `cee80e3` | Receipts carry member_key (oid-match, then employee code, then demo email) with UNIQUE (campaign, member_key) (migration 008). |
+| SEC-04 | ◐ partly fixed | `cee80e3` | Done: final tallies sealed in a hash-chained audit entry, verify function, admin "Verify results integrity", sealed entry survives permanent delete. Remaining (Phase 2): export before permanent delete. |
+| SEC-05 | ✅ fixed | `cee80e3` | campaign_voters snapshot (identities only) taken at start; eligibility checked against it (migration 009). |
+| SEC-06 | ☐ open |  | Phase 2. |
+| SEC-07 | ✅ fixed | `cee80e3` | Production refuses DEMO_MEMBER_EMAILS without DEMO=true; admin banner and log line while active. wrangler.jsonc now sets DEMO=true for the current demo deployment. |
+| SEC-08 | ☐ open |  | Phase 2. |
+| SEC-09 | ✅ fixed | `cee80e3` | Dockerfile on node:22-bookworm-slim (tag; not pinned by digest). |
+| SEC-10 | ☑ accepted (owner decision) |  | Accepted by the owner (2026-11-12): no credential rotation or token scoping. |
+| SEC-11 | ✅ fixed | `cee80e3` | ADMIN_OIDS added; email matching is the documented fallback (off once ADMIN_OIDS is set). The deployed config still uses ADMIN_EMAILS until ADMIN_OIDS is set (docs/operations.md). |
+| SEC-12 | ☐ open |  | Phase 3. |
+| SEC-13 | ☐ open |  | Phase 3. |
+| SEC-14 | ☐ open |  | Phase 3. |
+| SEC-15 | ☐ open |  | Phase 3. |
+| SEC-16 | ☐ open |  | Phase 3. |
+| SEC-17 | ☐ open |  | Phase 3. |
+| SEC-18 | ☐ open |  | Phase 3. |
+| SEC-19 | ☐ open |  | Phase 3. |
+| SEC-20 | ☐ open |  | Phase 3. |
+| SEC-21 | ☐ open |  | Phase 3. |
+| SEC-22 | ☐ open |  | Phase 3. |
+| SEC-23 | ☐ open |  | Phase 3. |
+| SEC-24 | ☑ accepted (owner decision) |  | Owner decision (2026-11-12): the repository stays public for now. |
+| SEC-25 | ☐ open |  | Phase 3. |
+| SEC-26 | ☐ open |  | Phase 3. |
+
+---
+
 ## 1. Summary table
 
 | ID | Title | Severity | Area | File:line | Exploitable now? |
