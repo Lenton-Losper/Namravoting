@@ -70,7 +70,7 @@ function TopBar() {
   );
 }
 
-/** Operator banners for campaign admins: demo override active, admins matched by email, Entra secret about to expire. */
+/** Operator banners for campaign admins: admins matched by email, Entra secret about to expire. */
 function AdminBanners() {
   const { notices, isAdmin } = useAuth();
   if (!isAdmin || notices.length === 0) return null;
@@ -80,7 +80,6 @@ function AdminBanners() {
         if (n.kind === 'secret_expiry') {
           return <div key={n.kind} className="admin-banner admin-banner-danger" role="alert">{n.expired ? 'The Entra client secret has EXPIRED: nobody can sign in. ' : `The Entra client secret expires in ${n.daysLeft} day${n.daysLeft === 1 ? '' : 's'}. `}Create a new one in the Entra app registration and update ENTRA_CLIENT_SECRET and ENTRA_SECRET_EXPIRES_AT.</div>;
         }
-        if (n.kind === 'demo_override') return <div key={n.kind} className="admin-banner" role="status">Demo override active: some accounts count as Umoja members regardless of the HR list (DEMO_MEMBER_EMAILS). Remove it before a real election.</div>;
         return <div key={n.kind} className="admin-banner" role="status">Admins are matched by email. Set ADMIN_OIDS so that admin rights follow the Entra account, not an email address.</div>;
       })}
     </div>
@@ -105,10 +104,8 @@ function Home() {
 }
 
 export function App() {
-  const { demoBanner } = useAuth();
   return (
     <>
-    {demoBanner && <div className="demo-banner" role="status">DEMO: test data, not a real vote</div>}
     <Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route path="/" element={<Home />} />

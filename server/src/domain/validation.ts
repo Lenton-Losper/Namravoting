@@ -11,18 +11,29 @@ const windowOk = (v: { opens_at?: string | null; closes_at?: string | null }) =>
   !v.opens_at || !v.closes_at || new Date(v.closes_at) > new Date(v.opens_at);
 const windowMsg = { message: 'closes_at must be after opens_at', path: ['closes_at'] };
 
+const eligibilityMode = z.enum(['umoja', 'all', 'list']);
+const emailList = z.array(z.string().trim().max(254)).min(1).max(5000);
+
 export const createCampaignBody = z.object({
   title: line(200),
   description: lines(2000).nullable().optional(),
   opens_at: isoDate.optional(),
   closes_at: isoDate.optional(),
-}).strict().refine(windowOk, windowMsg);
+  /** Who may vote. Saved with the campaign (omitted = Umoja members only, the default). 'list' needs emails. */
+  eligibility: eligibilityMode.optional(),
+  emails: emailList.optional(),
+  /** Keep title, description, closing time and (until the first vote) candidates editable after the campaign starts. */
+  allow_edits_after_start: z.boolean().optional(),
+}).strict().refine(windowOk, windowMsg)
+  .refine((v) => v.eligibility !== 'list' || (v.emails?.length ?? 0) > 0, { message: 'Add at least one email address for a listed vote', path: ['emails'] })
+  .refine((v) => v.eligibility === 'list' || v.emails === undefined, { message: 'emails only applies to a listed vote', path: ['emails'] });
 
 export const patchCampaignBody = z.object({
-  title: z.string().trim().min(1).max(200).optional(),
+  title: line(200).optional(),
   description: lines(2000).nullable().optional(),
   opens_at: isoDate.optional(),
   closes_at: isoDate.optional(),
+  allow_edits_after_start: z.boolean().optional(),
 }).strict().refine(windowOk, windowMsg);
 
 export const candidateBody = z.object({
@@ -38,7 +49,7 @@ export const candidatePatchBody = z.object({
 export const eligibleBody = z.discriminatedUnion('mode', [
   z.object({ mode: z.literal('all') }).strict(),
   z.object({ mode: z.literal('umoja') }).strict(),
-  z.object({ mode: z.literal('list'), emails: z.array(z.string().trim().max(254)).min(1).max(5000) }).strict(),
+  z.object({ mode: z.literal('list'), emails: emailList }).strict(),
 ]);
 
 export const closeBody = z.object({ reason: z.string().transform(cleanMultiline).pipe(z.string().trim().min(10, 'Give a reason of at least 10 characters').max(1000)).optional() }).strict();

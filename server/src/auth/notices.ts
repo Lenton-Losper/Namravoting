@@ -4,7 +4,6 @@ import type { Config } from '../config.js';
 export const SECRET_WARN_DAYS = 30;
 
 export type AdminNotice =
-  | { kind: 'demo_override' }
   | { kind: 'admin_by_email' }
   | { kind: 'secret_expiry'; daysLeft: number; expired: boolean };
 
@@ -18,15 +17,14 @@ export function secretDaysLeft(config: Config, now: Date = new Date()): number |
 
 /**
  * Banners for CAMPAIGN ADMINS only (returned by /api/session):
- *  - the demo membership override (DEMO_MEMBER_EMAILS) is active: some people count as Umoja members regardless of the HR list;
  *  - admins are matched by email instead of account id;
  *  - the Entra client secret expires within SECRET_WARN_DAYS days (or already has).
+ * (The demo membership override, DEMO_MEMBER_EMAILS, has no banner any more; it is still logged, see operatorWarnings.)
  */
 export function adminNotices(config: Config, now: Date = new Date()): AdminNotice[] {
   const out: AdminNotice[] = [];
   const e = config.entra;
   if (!e) return out;
-  if (e.demoMemberEmails.length > 0) out.push({ kind: 'demo_override' });
   if (e.adminOids.length === 0 && e.adminEmails.length > 0) out.push({ kind: 'admin_by_email' });
   const left = secretDaysLeft(config, now);
   if (left !== null && left <= SECRET_WARN_DAYS) out.push({ kind: 'secret_expiry', daysLeft: Math.max(left, 0), expired: left < 0 });

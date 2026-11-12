@@ -88,6 +88,42 @@ async function inDraftTx<T>(id: string, fn: (c: PoolClient) => Promise<T>): Prom
 }
 
 /**
+ * Like inDraftTx, but a campaign that was created with "Allow edits after start" can also be edited while it is OPEN (the callback
+ * gets live = true). Which fields and candidates may change in that case is decided by each route (and enforced again by the
+ * database, migration 012). Everything runs under a row lock on the campaign, which a vote also takes, so edit and vote are serialised.
+ */
+async function inEditTx<T>(id: string, fn: (c: PoolClient, live: boolean) => Promise<T>): Promise<T> {
+  return withTx(async (c) => {
+    const { rows } = await c.query('SELECT status, allow_edits_after_start FROM campaigns WHERE id = $1 FOR UPDATE', [id]);
+    const r = rows[0];
+    if (r?.status === 'draft') return fn(c, false);
+    if (r?.status === 'open' && r.allow_edits_after_start) return fn(c, true);
+    throw new HttpError(409, r?.status === 'open' ? 'This campaign was created without "Allow edits after start", so it is locked' : 'Campaign is locked: only drafts can be edited', 'locked');
+  });
+}
+
+/** Candidates of a started campaign can change only until the first vote is cast. */
+async function requireNoVotes(c: PoolClient, id: string): Promise<void> {
+  if ((await c.query('SELECT 1 FROM vote_receipts WHERE campaign_id = $1 LIMIT 1', [id])).rowCount) {
+    throw new HttpError(409, 'Candidates can no longer be changed: the first vote has been cast', 'votes_cast');
+  }
+}
+
+/** One audit entry per post-start edit. The entry is what voters and the results page show as "Edited after start". */
+type EditChange = { what: 'title' | 'description' | 'closes_at' | 'candidate_added' | 'candidate_edited' | 'candidate_removed'; name?: string; from?: string | null; to?: string | null };
+const trunc = (v: string | null | undefined) => (v == null ? null : v.length > 300 ? v.slice(0, 300) + '…' : v);
+const auditEdit = (tx: PoolClient, actor: string, id: string, changes: EditChange[]) => audit(tx, actor, 'campaign.edit_after_start', id, { changes });
+const sameInstant = (a: string | null | undefined, b: Date | null) => (a == null ? b == null : b != null && new Date(a).getTime() === b.getTime());
+
+/** Validates and de-duplicates a list of voter emails (shared by creating a campaign and by setting eligibility). */
+function cleanEmails(raw: string[]): string[] {
+  const norm = raw.map(normalizeEmail);
+  const bad = norm.filter((e) => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e));
+  if (bad.length) throw new HttpError(400, `Invalid email address(es): ${bad.slice(0, 5).join(', ')}`);
+  return [...new Set(norm)];
+}
+
+/**
  * Calls one of the SECURITY DEFINER clean-up functions (migration 005). They re-check creator + state inside the database and
  * signal with custom SQLSTATEs: NR404 -> 404 (also for "not yours", so ids are not confirmed), NR409 -> 409, NR400 -> 400.
  */
@@ -192,12 +228,15 @@ export function adminRouter(): Router {
     const u = currentUser(req);
     const b = createCampaignBody.parse(req.body);
     const token = crypto.randomBytes(24).toString('base64url');   // 32 URL-safe chars
+    const eligibility = b.eligibility ?? 'umoja';   // the mode the creator chose is what gets saved
+    const emails = eligibility === 'list' ? cleanEmails(b.emails ?? []) : [];
     const created = await withTx(async (c) => {
       const { rows } = await c.query(
-        `INSERT INTO campaigns (share_token, created_by, title, description, opens_at, closes_at)
-         VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
-        [token, u.oid, b.title, b.description ?? null, b.opens_at ?? null, b.closes_at ?? null]);
-      await audit(c, u.oid, 'campaign.create', rows[0].id, { title: b.title });
+        `INSERT INTO campaigns (share_token, created_by, title, description, opens_at, closes_at, eligibility, allow_edits_after_start)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+        [token, u.oid, b.title, b.description ?? null, b.opens_at ?? null, b.closes_at ?? null, eligibility, b.allow_edits_after_start === true]);
+      if (emails.length) await c.query('INSERT INTO eligible_voters (campaign_id, voter_email) SELECT $1, unnest($2::text[])', [rows[0].id, emails]);
+      await audit(c, u.oid, 'campaign.create', rows[0].id, { title: b.title, eligibility, allow_edits_after_start: b.allow_edits_after_start === true, ...(emails.length ? { count: emails.length } : {}) });
       return rows[0] as CampaignRow;
     });
     res.status(201).json(present(created));
@@ -215,26 +254,58 @@ export function adminRouter(): Router {
       turnout: (await getPool().query('SELECT count(*)::int AS n FROM vote_receipts WHERE campaign_id = $1', [c.id])).rows[0].n,
       umoja_active_count: await activeMemberCount(getPool()),   // count only; never the members themselves
       integrity_block: c.status === 'open' ? await openIntegrityBlock(getPool(), c.id) : null,   // SEC-16
+      edited_after_start: (await getNotices(getPool(), c.id, false)).filter((n) => n.kind === 'edited_after_start'),
     });
   });
 
   r.patch('/:id', loadOwned, async (req, res) => {
     const c = camp(res);
     const b = patchCampaignBody.parse(req.body);
-    const updated = await inDraftTx(c.id, async (tx) => {
+    const actor = currentUser(req).oid;
+    const updated = await inEditTx(c.id, async (tx, live) => {
+      if (!live) {
+        const { rows } = await tx.query(
+          `UPDATE campaigns SET
+             title = CASE WHEN $2::boolean THEN $3 ELSE title END,
+             description = CASE WHEN $4::boolean THEN $5 ELSE description END,
+             opens_at = CASE WHEN $6::boolean THEN $7::timestamptz ELSE opens_at END,
+             closes_at = CASE WHEN $8::boolean THEN $9::timestamptz ELSE closes_at END,
+             allow_edits_after_start = CASE WHEN $10::boolean THEN $11 ELSE allow_edits_after_start END
+           WHERE id = $1 RETURNING *`,
+          [c.id, b.title !== undefined, b.title ?? null, b.description !== undefined, b.description ?? null,
+           b.opens_at !== undefined, b.opens_at ?? null, b.closes_at !== undefined, b.closes_at ?? null,
+           b.allow_edits_after_start !== undefined, b.allow_edits_after_start ?? false]);
+        const row = rows[0] as CampaignRow;
+        if (row.opens_at && row.closes_at && row.closes_at <= row.opens_at) throw new HttpError(400, 'closes_at must be after opens_at');
+        await audit(tx, actor, 'campaign.update', c.id, { fields: Object.keys(b) });
+        return row;
+      }
+
+      // Open campaign with "Allow edits after start": title, description and closing time only. Everything else stays locked.
+      const cur = (await tx.query('SELECT *, clock_timestamp() AS db_now FROM campaigns WHERE id = $1', [c.id])).rows[0] as CampaignRow & { allow_edits_after_start: boolean };
+      if (b.allow_edits_after_start !== undefined && b.allow_edits_after_start !== cur.allow_edits_after_start) {
+        throw new HttpError(409, '"Allow edits after start" cannot be changed once voting has started', 'locked');
+      }
+      if (b.opens_at !== undefined && !sameInstant(b.opens_at, cur.opens_at)) throw new HttpError(409, 'The opening time cannot be changed once voting has started', 'locked');
+      const changes: EditChange[] = [];
+      if (b.title !== undefined && b.title !== cur.title) changes.push({ what: 'title', from: cur.title, to: b.title });
+      if (b.description !== undefined && (b.description ?? null) !== (cur.description ?? null)) changes.push({ what: 'description', from: trunc(cur.description), to: trunc(b.description) });
+      if (b.closes_at !== undefined && !sameInstant(b.closes_at, cur.closes_at)) {
+        if (b.closes_at !== null && new Date(b.closes_at) <= cur.db_now!) throw new HttpError(400, 'The new closing time must be in the future', 'bad_window');
+        if (b.closes_at !== null && cur.opens_at && new Date(b.closes_at) <= cur.opens_at) throw new HttpError(400, 'closes_at must be after opens_at');
+        changes.push({ what: 'closes_at', from: cur.closes_at ? cur.closes_at.toISOString() : null, to: b.closes_at });
+      }
+      if (!changes.length) return cur;   // nothing changed: nothing to record
       const { rows } = await tx.query(
         `UPDATE campaigns SET
            title = CASE WHEN $2::boolean THEN $3 ELSE title END,
            description = CASE WHEN $4::boolean THEN $5 ELSE description END,
-           opens_at = CASE WHEN $6::boolean THEN $7::timestamptz ELSE opens_at END,
-           closes_at = CASE WHEN $8::boolean THEN $9::timestamptz ELSE closes_at END
+           closes_at = CASE WHEN $6::boolean THEN $7::timestamptz ELSE closes_at END
          WHERE id = $1 RETURNING *`,
-        [c.id, b.title !== undefined, b.title ?? null, b.description !== undefined, b.description ?? null,
-         b.opens_at !== undefined, b.opens_at ?? null, b.closes_at !== undefined, b.closes_at ?? null]);
-      const row = rows[0] as CampaignRow;
-      if (row.opens_at && row.closes_at && row.closes_at <= row.opens_at) throw new HttpError(400, 'closes_at must be after opens_at');
-      await audit(tx, currentUser(req).oid, 'campaign.update', c.id, { fields: Object.keys(b) });
-      return row;
+        [c.id, changes.some((x) => x.what === 'title'), b.title ?? null, changes.some((x) => x.what === 'description'), b.description ?? null,
+         changes.some((x) => x.what === 'closes_at'), b.closes_at ?? null]);
+      await auditEdit(tx, actor, c.id, changes);
+      return rows[0] as CampaignRow;
     });
     res.json(present(updated));
   });
@@ -244,12 +315,16 @@ export function adminRouter(): Router {
     const b = candidateBody.parse({ name: req.body?.name, ...(req.body?.bio !== undefined ? { bio: req.body.bio } : {}) });
     const photo = req.file ? await savePhoto(req.file.buffer) : null;
     try {
-      const cand = await inDraftTx(c.id, async (tx) => {
+      const cand = await inEditTx(c.id, async (tx, live) => {
+        if (live) await requireNoVotes(tx, c.id);
         const { rows } = await tx.query(
           `INSERT INTO candidates (campaign_id, name, bio, photo_path, sort_order)
            VALUES ($1,$2,$3,$4,(SELECT COALESCE(max(sort_order),0)+1 FROM candidates WHERE campaign_id = $1))
            RETURNING id, name, bio, photo_path, sort_order`, [c.id, b.name, b.bio || null, photo]);
-        await audit(tx, currentUser(req).oid, 'candidate.add', c.id, { candidate_id: rows[0].id });
+        if (live) {
+          await tx.query('INSERT INTO tallies (campaign_id, candidate_id, votes) VALUES ($1, $2, 0)', [c.id, rows[0].id]);   // a started campaign has a counter per candidate
+          await auditEdit(tx, currentUser(req).oid, c.id, [{ what: 'candidate_added', name: b.name }]);
+        } else await audit(tx, currentUser(req).oid, 'candidate.add', c.id, { candidate_id: rows[0].id });
         return rows[0];
       });
       res.status(201).json({ ...cand, photo_url: photoUrl(cand), photo_path: undefined });
@@ -266,8 +341,9 @@ export function adminRouter(): Router {
     });
     const newPhoto = req.file ? await savePhoto(req.file.buffer) : null;
     try {
-      const { cand, oldPhoto } = await inDraftTx(c.id, async (tx) => {
-        const old = await tx.query('SELECT photo_path FROM candidates WHERE id = $1 AND campaign_id = $2 FOR UPDATE', [cid, c.id]);
+      const { cand, oldPhoto } = await inEditTx(c.id, async (tx, live) => {
+        if (live) await requireNoVotes(tx, c.id);
+        const old = await tx.query('SELECT name, photo_path FROM candidates WHERE id = $1 AND campaign_id = $2 FOR UPDATE', [cid, c.id]);
         if (!old.rowCount) throw notFound();
         const setPhoto = newPhoto !== null || b.removePhoto === 'true';
         const { rows } = await tx.query(
@@ -276,7 +352,10 @@ export function adminRouter(): Router {
              photo_path = CASE WHEN $6::boolean THEN $7 ELSE photo_path END
            WHERE id = $1 AND campaign_id = $2 RETURNING id, name, bio, photo_path, sort_order`,
           [cid, c.id, b.name ?? null, b.bio !== undefined, b.bio ?? null, setPhoto, newPhoto]);
-        await audit(tx, currentUser(req).oid, 'candidate.update', c.id, { candidate_id: cid });
+        if (live) {
+          const oldName = old.rows[0].name as string;
+          await auditEdit(tx, currentUser(req).oid, c.id, [{ what: 'candidate_edited', name: rows[0].name, ...(rows[0].name !== oldName ? { from: oldName, to: rows[0].name as string } : {}) }]);
+        } else await audit(tx, currentUser(req).oid, 'candidate.update', c.id, { candidate_id: cid });
         return { cand: rows[0], oldPhoto: setPhoto ? (old.rows[0].photo_path as string | null) : null };
       });
       await deletePhoto(oldPhoto);
@@ -287,10 +366,16 @@ export function adminRouter(): Router {
   r.delete('/:id/candidates/:cid', loadOwned, async (req, res) => {
     const c = camp(res);
     const { cid } = candParams.parse(req.params);
-    const photo = await inDraftTx(c.id, async (tx) => {
-      const { rows } = await tx.query('DELETE FROM candidates WHERE id = $1 AND campaign_id = $2 RETURNING photo_path', [cid, c.id]);
+    const photo = await inEditTx(c.id, async (tx, live) => {
+      if (live) {
+        await requireNoVotes(tx, c.id);
+        const n = (await tx.query('SELECT count(*)::int AS n FROM candidates WHERE campaign_id = $1', [c.id])).rows[0].n as number;
+        if (n <= 2) throw new HttpError(409, 'A running vote needs at least 2 candidates', 'needs_candidates');
+      }
+      const { rows } = await tx.query('DELETE FROM candidates WHERE id = $1 AND campaign_id = $2 RETURNING name, photo_path', [cid, c.id]);
       if (!rows.length) throw notFound();
-      await audit(tx, currentUser(req).oid, 'candidate.delete', c.id, { candidate_id: cid });
+      if (live) await auditEdit(tx, currentUser(req).oid, c.id, [{ what: 'candidate_removed', name: rows[0].name as string }]);
+      else await audit(tx, currentUser(req).oid, 'candidate.delete', c.id, { candidate_id: cid });
       return rows[0].photo_path as string | null;
     });
     await deletePhoto(photo);
@@ -301,12 +386,7 @@ export function adminRouter(): Router {
     const c = camp(res);
     const b = eligibleBody.parse(req.body);
     let emails: string[] = [];
-    if (b.mode === 'list') {
-      const norm = b.emails.map(normalizeEmail);
-      const bad = norm.filter((e) => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e));
-      if (bad.length) throw new HttpError(400, `Invalid email address(es): ${bad.slice(0, 5).join(', ')}`);
-      emails = [...new Set(norm)];
-    }
+    if (b.mode === 'list') emails = cleanEmails(b.emails);
     await inDraftTx(c.id, async (tx) => {
       await tx.query('UPDATE campaigns SET eligibility = $2 WHERE id = $1', [c.id, b.mode]);
       await tx.query('DELETE FROM eligible_voters WHERE campaign_id = $1', [c.id]);

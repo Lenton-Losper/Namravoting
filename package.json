@@ -10,7 +10,7 @@
     "dev:lan": "node scripts/dev-lan.mjs",
     "migrate": "npm run migrate -w server",
     "seed": "npm run seed -w server",
-    "test": "npm test -w server",
+    "test": "npm test -w server && npm test -w client",
     "build": "npm run build -w client && npm run build -w server",
     "db:up": "docker compose up -d --wait",
     "umoja:import": "npm run umoja:import -w server --",

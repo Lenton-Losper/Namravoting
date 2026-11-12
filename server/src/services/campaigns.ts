@@ -97,8 +97,10 @@ export async function refreshStatus(campaignId: string): Promise<void> {
 
 /** A voter-visible event in a campaign's life: a reset, or an early close. Built from the permanent audit entries. */
 export interface Notice {
-  kind: 'reset' | 'closed_early';
+  kind: 'reset' | 'closed_early' | 'edited_after_start';
   at: Date; by: string | null; reason: string;
+  /** edited_after_start: what changed (titles, descriptions, closing times and candidate names only; never anything about voters). */
+  changes?: { what: string; name?: string; from?: string | null; to?: string | null }[];
   votes_cleared?: number;
   /** Per-candidate counts before the reset. Only included for the campaign's creator. */
   candidates?: { name: string; votes: number }[];
@@ -112,7 +114,7 @@ export async function getNotices(db: Queryable, campaignId: string, withTallies:
   const { rows } = await db.query(
     `SELECT a.at, a.action, u.display_name AS by, a.details
        FROM audit_log a LEFT JOIN users u ON u.entra_oid = a.actor_oid
-      WHERE a.campaign_id = $1 AND (a.action = 'campaign.reset' OR (a.action LIKE 'campaign.close%' AND a.details->>'early' = 'true'))
+      WHERE a.campaign_id = $1 AND (a.action IN ('campaign.reset', 'campaign.edit_after_start') OR (a.action LIKE 'campaign.close%' AND a.details->>'early' = 'true'))
       ORDER BY a.seq`, [campaignId]);
   return rows.map((r) => {
     if (r.action === 'campaign.reset') {
@@ -121,6 +123,7 @@ export async function getNotices(db: Queryable, campaignId: string, withTallies:
       if (withTallies) e.candidates = (snap.candidates ?? []) as { name: string; votes: number }[];
       return e;
     }
+    if (r.action === 'campaign.edit_after_start') return { kind: 'edited_after_start', at: r.at, by: r.by ?? null, reason: '', changes: (r.details?.changes ?? []) } as Notice;
     return { kind: 'closed_early', at: r.at, by: r.by ?? null, reason: String(r.details?.why ?? '') } as Notice;
   });
 }

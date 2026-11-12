@@ -62,10 +62,10 @@ describe('SEC-11: admins by Entra object id', () => {
 });
 
 describe('operator banners reach admins only', () => {
-  it('an admin sees the demo override and the secret expiry; staff see nothing; signed-out sees nothing', async () => {
+  it('an admin sees the secret expiry (and no demo banner, even with DEMO_MEMBER_EMAILS set); staff see nothing; signed-out sees nothing', async () => {
     const admin = await signIn({ claims: { oid: ADMIN_OID } });
     const notices = (await admin.agent.get('/api/session')).body.notices as { kind: string; daysLeft?: number }[];
-    expect(notices.map((x) => x.kind).sort()).toEqual(['demo_override', 'secret_expiry']);
+    expect(notices.map((x) => x.kind).sort()).toEqual(['secret_expiry']);
     expect(notices.find((x) => x.kind === 'secret_expiry')!.daysLeft).toBeGreaterThanOrEqual(9);
     const staff = await signIn({ claims: { oid: STAFF_OID, preferred_username: 'staff@namra.org.na' } });
     expect((await staff.agent.get('/api/session')).body.notices).toEqual([]);

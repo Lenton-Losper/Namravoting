@@ -22,9 +22,9 @@ describe('SEC-07: the demo membership override cannot ride into production by ac
     expect(cfg().entra!.demoMemberEmails).toEqual([]);
     expect(cfg({ DEMO_MEMBER_EMAILS: 'a@namra.org.na', NODE_ENV: 'development' }).entra!.demoMemberEmails).toHaveLength(1);
   });
-  it('the admin banner and the log say so whenever the override is active', () => {
+  it('no banner for the override any more, but the log still says so whenever it is active', () => {
     const c = cfg({ DEMO_MEMBER_EMAILS: 'a@namra.org.na', DEMO: 'true', ADMIN_OIDS: OID, ENTRA_SECRET_EXPIRES_AT: '2099-01-01' });
-    expect(adminNotices(c)).toEqual([{ kind: 'demo_override' }]);
+    expect(adminNotices(c)).toEqual([]);   // no banner, on any page
     expect(operatorWarnings(c).map((w) => w.line).join('\n')).toMatch(/DEMO_MEMBER_EMAILS is active/);
     expect(adminNotices(cfg({ ADMIN_OIDS: OID, ENTRA_SECRET_EXPIRES_AT: '2099-01-01' }))).toEqual([]);
   });

@@ -28,7 +28,6 @@ export function parseConfig(env: NodeJS.ProcessEnv) {
     ADMIN_OIDS: z.string().optional(),
     ADMIN_EMAILS_FALLBACK: z.enum(['true', 'false']).optional(),
     ENTRA_SECRET_EXPIRES_AT: z.string().optional(),
-    DEMO_BANNER: z.enum(['true', 'false']).optional(),
     PUBLIC_BASE_URL: z.string().url().default('http://localhost:5173'),
     SESSION_SECRET: z.string().min(32, 'SESSION_SECRET must be at least 32 characters'),
     // Rotation: the previous secret is accepted for verification only; CSRF_SECRET lets the CSRF key rotate on its own (auth/keys.ts).
@@ -71,7 +70,6 @@ export function parseConfig(env: NodeJS.ProcessEnv) {
     demoUsers,
     entra,
     demo: e.DEMO === 'true',
-    demoBanner: e.DEMO_BANNER ? e.DEMO_BANNER === 'true' : e.AUTH_MODE === 'demo',
     nodeEnv: e.NODE_ENV,
     isProd: e.NODE_ENV === 'production',
     port: e.PORT,

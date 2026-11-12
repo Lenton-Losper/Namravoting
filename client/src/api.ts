@@ -44,11 +44,14 @@ export interface Campaign {
   id: string; title: string; description: string | null; status: 'draft' | 'open' | 'closed';
   opens_at: string | null; closes_at: string | null; eligibility: 'all' | 'list' | 'umoja'; results_published: boolean;
   share_token: string; share_url: string; turnout?: number; eligible_count?: number | null; archived_at?: string | null;
+  /** Title, description, closing time (and candidates until the first vote) stay editable after the campaign starts. */
+  allow_edits_after_start?: boolean;
 }
 export interface IntegrityBlock { ballots: number; receipts: number; at: string }
-export interface CampaignDetail extends Campaign { turnout: number; candidates: Candidate[]; eligible_emails: string[]; umoja_active_count: number; integrity_block?: IntegrityBlock | null }
+export interface CampaignDetail extends Campaign { turnout: number; candidates: Candidate[]; eligible_emails: string[]; umoja_active_count: number; integrity_block?: IntegrityBlock | null; edited_after_start?: Notice[] }
 /** A reset or an early close, with the reason the creator gave. Shown to voters (SEC-01). */
-export interface Notice { kind: 'reset' | 'closed_early'; at: string; by: string | null; reason: string; votes_cleared?: number; candidates?: { name: string; votes: number }[] }
+export interface EditChange { what: 'title' | 'description' | 'closes_at' | 'candidate_added' | 'candidate_edited' | 'candidate_removed'; name?: string; from?: string | null; to?: string | null }
+export interface Notice { kind: 'reset' | 'closed_early' | 'edited_after_start'; at: string; by: string | null; reason: string; votes_cleared?: number; candidates?: { name: string; votes: number }[]; changes?: EditChange[] }
 export interface ResetEntry extends Notice { votes_cleared: number }
 /** `candidates` is null while the campaign is open: per-candidate counts exist only after it has closed (SEC-01). */
 export interface Results { status: string; results_published: boolean; archived?: boolean; candidates: { id: string; name: string; votes: number }[] | null; turnout: { votes: number; eligible: number | null }; resets?: ResetEntry[]; notices?: Notice[] }

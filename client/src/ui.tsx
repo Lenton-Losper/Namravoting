@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, type KeyboardEvent, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { fmtDate, type Notice } from './api';
+import { fmtDate, type EditChange, type Notice } from './api';
 import { Icon } from './icons';
 
 export function Spinner({ label = 'Loading…' }: { label?: string }) {
@@ -84,13 +84,18 @@ export function Dialog(props: {
   hideConfirm?: boolean; confirmDisabled?: boolean; className?: string; onConfirm: () => void; onCancel: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
-  const { onCancel } = props;
+  // Callers pass a fresh arrow function (`() => setDialog(null)`) on every render. If the effect below depended on it, it would re-run on
+  // every keystroke typed into a field in the dialog and pull focus back to the dialog box, so the field lost focus after each character.
+  // The latest handler is kept in a ref instead, and the effect (focus + Escape) runs once, when the dialog opens.
+  const cancelRef = useRef(props.onCancel);
+  useEffect(() => { cancelRef.current = props.onCancel; });
   useEffect(() => {
+    const before = document.activeElement as HTMLElement | null;
     ref.current?.focus();
-    const onKey = (e: globalThis.KeyboardEvent) => { if (e.key === 'Escape') onCancel(); };
+    const onKey = (e: globalThis.KeyboardEvent) => { if (e.key === 'Escape') cancelRef.current(); };
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onCancel]);
+    return () => { window.removeEventListener('keydown', onKey); before?.focus?.(); };   // hand focus back to what opened the dialog
+  }, []);
   return (
     <div className="backdrop" onClick={props.onCancel}>
       <div className={`sheet${props.className ? ` ${props.className}` : ''}`} role="dialog" aria-modal="true" aria-label={props.title} tabIndex={-1} ref={ref} onClick={(e) => e.stopPropagation()}>
@@ -109,6 +114,19 @@ export function Dialog(props: {
   );
 }
 
+/** One post-start edit in words, e.g. "closing time changed from 12 Nov, 17:00 to 12 Nov, 18:00". Titles and candidate names are public anyway. */
+export function describeEdit(ch: EditChange): string {
+  const q = (v: string | null | undefined) => (v ? `“${v}”` : 'empty');
+  switch (ch.what) {
+    case 'title': return `title changed from ${q(ch.from)} to ${q(ch.to)}`;
+    case 'description': return 'description changed';
+    case 'closes_at': return `closing time changed from ${ch.from ? fmtDate(ch.from) : 'none'} to ${ch.to ? fmtDate(ch.to) : 'none'}`;
+    case 'candidate_added': return `candidate added: ${ch.name ?? ''}`;
+    case 'candidate_removed': return `candidate removed: ${ch.name ?? ''}`;
+    default: return ch.from && ch.to ? `candidate renamed from ${ch.from} to ${ch.to}` : `candidate edited: ${ch.name ?? ''}`;
+  }
+}
+
 /** What happened to this vote, in order: resets and early closes, each with who, when and why. Counts only, never voter data. */
 export function NoticeList({ notices, title = 'What happened during this vote' }: { notices: Notice[] | undefined; title?: string }) {
   if (!notices?.length) return null;
@@ -118,8 +136,10 @@ export function NoticeList({ notices, title = 'What happened during this vote' }
       <ul className="list">
         {notices.map((x, i) => (
           <li key={i} className="reset-item">
-            <div><strong>{fmtDate(x.at)}</strong>{x.by ? ` · ${x.by}` : ''} · {x.kind === 'reset' ? `reset: ${x.votes_cleared ?? 0} ${x.votes_cleared === 1 ? 'vote' : 'votes'} cleared` : 'closed early'}</div>
-            <div className="muted small">Reason: {x.reason}</div>
+            <div><strong>{fmtDate(x.at)}</strong>{x.by ? ` · ${x.by}` : ''} · {x.kind === 'reset' ? `reset: ${x.votes_cleared ?? 0} ${x.votes_cleared === 1 ? 'vote' : 'votes'} cleared` : x.kind === 'edited_after_start' ? 'Edited after start' : 'closed early'}</div>
+            {x.kind === 'edited_after_start'
+              ? <ul className="list small">{(x.changes ?? []).map((ch, j) => <li key={j} className="muted">{describeEdit(ch)}</li>)}</ul>
+              : <div className="muted small">Reason: {x.reason}</div>}
             {x.candidates && x.candidates.length > 0 && <div className="muted small">Before the reset: {x.candidates.map((c) => `${c.name} ${c.votes}`).join(' · ')}</div>}
           </li>
         ))}
@@ -134,10 +154,12 @@ export function NoticeBanner({ notices }: { notices: Notice[] | undefined }) {
   return (
     <div className="notice-banner" role="status">
       {notices.map((x, i) => (
-        <p key={i}>
-          <strong>This vote was {x.kind === 'reset' ? 'reset' : 'closed early'} on {fmtDate(x.at)}</strong>
-          {x.kind === 'reset' ? ' (all earlier votes were cleared and everyone may vote again)' : ''} because: {x.reason}
-        </p>
+        x.kind === 'edited_after_start'
+          ? <p key={i}><strong>This vote was edited after it started, on {fmtDate(x.at)}:</strong> {(x.changes ?? []).map(describeEdit).join('; ')}.</p>
+          : <p key={i}>
+              <strong>This vote was {x.kind === 'reset' ? 'reset' : 'closed early'} on {fmtDate(x.at)}</strong>
+              {x.kind === 'reset' ? ' (all earlier votes were cleared and everyone may vote again)' : ''} because: {x.reason}
+            </p>
       ))}
     </div>
   );

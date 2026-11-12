@@ -316,8 +316,6 @@ progress::-moz-progress-bar { background: var(--navy); border-radius: 3px; }
 .row-actions { display: flex; align-items: center; gap: 12px; justify-content: flex-end; flex-wrap: wrap; }
 .sheet-body { margin-bottom: 4px; }
 
-/* Demo deployment banner (AUTH_MODE=demo): visible on every page, including login. */
-.demo-banner { background: var(--orange-50); color: var(--orange-text); border-bottom: 2px solid var(--orange); text-align: center; font-weight: 600; font-size: 13px; padding: 8px 16px; position: relative; z-index: 40; }
 
 /* SEC-01: voter-visible notice for a reset or an early close */
 .notice-banner { border: 1px solid #b45309; background: #fffbeb; color: #78350f; border-radius: 10px; padding: 12px 16px; margin: 0 0 16px; }

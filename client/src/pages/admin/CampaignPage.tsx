@@ -27,9 +27,10 @@ function useResults(id: string, enabled: boolean, poll: boolean, version?: numbe
 }
 
 function CandidatesTab({ c }: { c: CampaignDetail }) {
+  const editable = c.status === 'draft' || (c.status === 'open' && !!c.allow_edits_after_start && c.turnout === 0);   // after the first vote the candidates are fixed
   return (
     <>
-      <SectionTitle icon="users" actions={c.status === 'draft' ? <Link className="btn btn-secondary btn-sm" to={`/admin/c/${c.id}/edit`}>Edit candidates</Link> : undefined}>Candidates</SectionTitle>
+      <SectionTitle icon="users" actions={editable ? <Link className="btn btn-secondary btn-sm" to={`/admin/c/${c.id}/edit`}>Edit candidates</Link> : undefined}>Candidates</SectionTitle>
       {c.candidates.length === 0
         ? <p className="muted">No candidates yet.</p>
         : (
@@ -182,7 +183,9 @@ function SideCard({ c, reload }: { c: CampaignDetail; reload: () => Promise<void
       {c.status === 'draft' ? (
         <>
           <SectionTitle icon="flag">Actions</SectionTitle>
-          <p className="field-helper">Starting opens the vote and locks the campaign. Details, candidates and voters can no longer be changed.</p>
+          <p className="field-helper">{c.allow_edits_after_start
+            ? 'Starting opens the vote. Who can vote locks; the title, description and closing time stay editable, and candidates until the first vote is cast.'
+            : 'Starting opens the vote and locks the campaign. Details, candidates and voters can no longer be changed.'}</p>
           <div className="stack">
             <button className="btn btn-primary" disabled={!!blockedReason} onClick={() => open('start')}>Start voting</button>
             {blockedReason && <p className="field-helper" role="note">{blockedReason}</p>}
@@ -195,6 +198,7 @@ function SideCard({ c, reload }: { c: CampaignDetail; reload: () => Promise<void
           <SectionTitle icon="link">Share</SectionTitle>
           <SharePanel c={c} compact />
           <div className="stack side-close">
+            {c.status === 'open' && c.allow_edits_after_start && <Link className="btn btn-secondary" to={`/admin/c/${c.id}/edit`}>Edit campaign</Link>}
             {c.status === 'open' && <button className="btn btn-danger" onClick={() => open('close')}>Close voting</button>}
             {c.status === 'open' && <p className="field-helper" role="note">Close the campaign first to archive or delete it.</p>}
             {c.status === 'closed' && !archived && <button className="btn btn-secondary" onClick={() => open('archive')}>Archive</button>}
@@ -209,7 +213,9 @@ function SideCard({ c, reload }: { c: CampaignDetail; reload: () => Promise<void
 
       {dialog === 'start' && (
         <Dialog title="Start voting?" confirmLabel="Start and lock" busy={busy} onConfirm={() => void run(() => post('start'), reload)} onCancel={() => setDialog(null)}>
-          <p>This <strong>locks the campaign</strong>. You will not be able to edit the details, candidates or eligible voters afterwards.</p>
+          {c.allow_edits_after_start
+            ? <p>This opens the vote and <strong>locks who can vote</strong>. You can still edit the title, description and closing time while it is open, and the candidates until the first vote is cast. Every edit is recorded and shown as “Edited after start”.</p>
+            : <p>This <strong>locks the campaign</strong>. You will not be able to edit the details, candidates or eligible voters afterwards.</p>}
         </Dialog>
       )}
       {dialog === 'close' && (
@@ -288,7 +294,7 @@ export function CampaignPage() {
             <h1 className="head-title">{c.title}</h1>
             {c.description && <p className="head-desc">{c.description}</p>}
             <div className="meta-row">
-              <span className="meta"><Icon name="flag" /> <StatusBadge status={c.status} />{c.archived_at && <span className="chip chip-outline">Archived</span>}</span>
+              <span className="meta"><Icon name="flag" /> <StatusBadge status={c.status} />{c.archived_at && <span className="chip chip-outline">Archived</span>}{c.allow_edits_after_start && c.status !== 'closed' && <span className="chip chip-outline">Edits allowed after start</span>}</span>
               <span className="meta"><Icon name="calendar" /> Opens {fmtDate(c.opens_at)}</span>
               <span className="meta"><Icon name="clock" /> Closes {fmtDate(c.closes_at)}</span>
             </div>
@@ -298,6 +304,7 @@ export function CampaignPage() {
       </section>
 
       <IntegrityBanner c={c} reload={reload} />
+      <NoticeList notices={c.edited_after_start} title="Edited after start" />
 
       <div className="cols">
         <div className="card card-pad main-col">

@@ -34,6 +34,8 @@ The rate limits are in memory, for the one container instance: they reset when i
 | `DB_SSL_CA` | Optional. A PEM (or a path to one) to trust for the database server. Without it Node's public root store is used, which is enough for Neon. TLS to any non-local database is always on and always verified, whatever the URL's `sslmode` says. |
 | Times | Every time shown or typed is Windhoek time (CAT, UTC+2), converted in `client/src/windhoek.ts`. Times are stored as UTC instants. Voting cut-offs and closing times are judged by the database clock. |
 | Request logs | The Worker's per-request log lines are switched off (`observability.logs.invocation_logs: false`): a ballot URL contains the share token and would be logged with its exact time. Errors and console output are still logged, with tokens masked and accounts shown as a short one-way tag. |
+| Allow edits after start | A per-campaign checkbox, off by default, set while the campaign is a draft. When on: title, description and closing time stay editable while it is open, and candidates can be added, edited or removed until the first vote is cast. Who can vote and the opening time stay locked. Every edit is an audit entry (`campaign.edit_after_start`) and shows as "Edited after start", with the time, on the campaign page, the ballot page and the published results. The database enforces the same limits (migration 012). |
+| DEMO banners | None. The server still logs a warning at start-up and daily while `DEMO_MEMBER_EMAILS` is set. |
 | Closing blocked | If receipts and the sum of the tallies ever disagree, the campaign is not closed (and a closed result that no longer matches its seal is not published) until the creator has looked into it and acknowledged it with a note (Results tab). |
 
 ## Deploying

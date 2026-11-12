@@ -38,7 +38,7 @@ export function mountAuth(app: Express, config: Config, entraOptions: EntraOptio
     res.set('Cache-Control', 'no-store');
     const user = getCurrentUser(req);
     // Operator banners (demo override active, secret about to expire) go to campaign admins only.
-    res.json({ user, authMode: config.authMode, demoBanner: config.demoBanner, notices: user && user.roles?.includes(ADMIN_ROLE) ? adminNotices(config) : [] });
+    res.json({ user, authMode: config.authMode, notices: user && user.roles?.includes(ADMIN_ROLE) ? adminNotices(config) : [] });
   });
 }
 
