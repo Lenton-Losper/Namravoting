@@ -1,4 +1,5 @@
 import pg from 'pg';
+import { dbClientConfig } from '../src/db.js';
 import { loadDotEnv } from '../src/env.js';
 
 loadDotEnv();
@@ -9,6 +10,6 @@ const { getConfig } = await import('../src/config.js');
 const { seedDevData } = await import('./seedLib.js');
 getConfig();
 
-const client = new pg.Client({ connectionString: url });
+const client = new pg.Client(dbClientConfig(url));
 await client.connect();
 try { await seedDevData(client, { openCampaign: false }); } finally { await client.end(); }

@@ -1,8 +1,12 @@
+import { formatWindhoek, isoToLocalInput, localInputToIso } from './windhoek';
+
 export class ApiError extends Error {
   constructor(public status: number, message: string, public code?: string) { super(message); }
 }
 
 let csrf: string | null = null;
+/** Forget the cached CSRF token: it is bound to the session, so sign-in and sign-out make it stale (SEC-15). */
+export const resetCsrf = () => { csrf = null; };
 async function csrfToken(force = false): Promise<string> {
   if (!csrf || force) csrf = ((await (await fetch('/api/csrf', { credentials: 'same-origin' })).json()) as { token: string }).token;
   return csrf;
@@ -41,7 +45,8 @@ export interface Campaign {
   opens_at: string | null; closes_at: string | null; eligibility: 'all' | 'list' | 'umoja'; results_published: boolean;
   share_token: string; share_url: string; turnout?: number; eligible_count?: number | null; archived_at?: string | null;
 }
-export interface CampaignDetail extends Campaign { turnout: number; candidates: Candidate[]; eligible_emails: string[]; umoja_active_count: number }
+export interface IntegrityBlock { ballots: number; receipts: number; at: string }
+export interface CampaignDetail extends Campaign { turnout: number; candidates: Candidate[]; eligible_emails: string[]; umoja_active_count: number; integrity_block?: IntegrityBlock | null }
 /** A reset or an early close, with the reason the creator gave. Shown to voters (SEC-01). */
 export interface Notice { kind: 'reset' | 'closed_early'; at: string; by: string | null; reason: string; votes_cleared?: number; candidates?: { name: string; votes: number }[] }
 export interface ResetEntry extends Notice { votes_cleared: number }
@@ -63,10 +68,7 @@ export interface Summary {
   closed: (SummaryCampaign & { winner: Winner | null })[];
 }
 
-export const fmtDate = (iso: string | null) => (iso ? new Date(iso).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : '—');
-export const toLocalInput = (iso: string | null) => {
-  if (!iso) return '';
-  const d = new Date(iso); const p = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
-};
-export const fromLocalInput = (v: string) => (v ? new Date(v).toISOString() : null);
+// All times are Windhoek time (CAT, UTC+2), whatever the browser's zone is (SEC-18). See windhoek.ts.
+export const fmtDate = (iso: string | null) => formatWindhoek(iso);
+export const toLocalInput = (iso: string | null) => isoToLocalInput(iso);
+export const fromLocalInput = (v: string) => localInputToIso(v);

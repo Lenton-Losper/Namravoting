@@ -2,7 +2,7 @@ import pg from 'pg';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../../src/app.js';
 import { closePool } from '../../src/db.js';
-import { applyMatches, type MatchResult } from '../../src/umoja/match.js';
+import { applyConfirmedReport, applyMatches, type MatchResult } from '../../src/umoja/match.js';
 import { importUmoja } from '../../src/umoja/import.js';
 import { parseUmojaExport } from '../../src/umoja/parse.js';
 import { ADMIN_A, S1, S2, S3, S4, TEST_APP_URL, TEST_OWNER_URL, closeOwner, login, makeCampaign, ownerDb, resetDb, setMembers } from '../helpers.js';
@@ -162,5 +162,33 @@ describe('membership by Entra account id (oid)', () => {
     await member.get(`/api/vote/${c.token}/results`).expect(200);
     const other = await login(app, noCode(S2));
     expect((await other.get(`/api/vote/${c.token}/results`)).status).toBe(403);
+  });
+});
+
+describe('SEC-22: only a human-confirmed report is applied', () => {
+  const OID_A = S1.oid; const OID_B = S2.oid;
+  const sheet = (...rows: string[]) => ['code,member_name,status,matched_email,oid,basis,candidates,other_candidates,confirm', ...rows].join('\n') + '\n';
+  it('writes the oid and email of confirmed rows only, with a counts-only audit entry and no names anywhere', async () => {
+    await setMembers([['NAM0001', true], ['NAM0002', true], ['NAM0003', true]]);
+    const csv = sheet(
+      `NAM0001,Zorblax Quentin,matched,z1@namra.org.na,${OID_A},exact_name,1,,yes`,
+      `NAM0002,Wimbleton Quentin,matched,z2@namra.org.na,${OID_B},given_surname,1,,`,           // not confirmed
+      `NAM0003,Quillon Dupe,ambiguous,,,,2,a@namra.org.na | b@namra.org.na,yes`);               // ambiguous: can never be applied
+    const s = await withClient(TEST_OWNER_URL, (c) => applyConfirmedReport(c, csv));
+    expect(s).toMatchObject({ updated: 1, ignored: 1, rejected: 1 });
+    expect(await row('NAM0001')).toMatchObject({ entra_oid: OID_A, email: 'z1@namra.org.na' });
+    expect(await row('NAM0002')).toMatchObject({ entra_oid: null, email: null });
+    expect(await row('NAM0003')).toMatchObject({ entra_oid: null, email: null });
+    const audit = (await ownerDb().query("SELECT details FROM audit_log WHERE action = 'umoja.match'")).rows;
+    expect(audit).toHaveLength(1);
+    const dump = (await ownerDb().query('SELECT t::text AS r FROM audit_log t')).rows.map((r) => r.r).join('\n') + (await ownerDb().query('SELECT t::text AS r FROM umoja_members t')).rows.map((r) => r.r).join('\n');
+    expect(dump).not.toMatch(/Zorblax|Quentin|Quillon|Dupe/);
+  });
+
+  it('an unconfirmed report applies nothing and says so', async () => {
+    await setMembers([['NAM0001', true]]);
+    await expect(withClient(TEST_OWNER_URL, (c) => applyConfirmedReport(c, sheet(`NAM0001,Z Q,matched,z@namra.org.na,${OID_A},exact_name,1,,`)))).rejects.toThrow(/No row is confirmed/);
+    expect(await row('NAM0001')).toMatchObject({ entra_oid: null });
+    expect((await ownerDb().query("SELECT count(*)::int n FROM audit_log WHERE action = 'umoja.match'")).rows[0].n).toBe(0);
   });
 });

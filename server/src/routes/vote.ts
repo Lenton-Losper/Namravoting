@@ -22,7 +22,7 @@ async function loadByToken(token: string): Promise<CampaignRow> {
   const first = (await getPool().query('SELECT id FROM campaigns WHERE share_token = $1', [token])).rows[0];
   if (!first) throw notFound();
   await refreshStatus(first.id);           // lazy auto-close
-  return (await getPool().query('SELECT * FROM campaigns WHERE id = $1', [first.id])).rows[0];
+  return (await getPool().query('SELECT *, clock_timestamp() AS db_now FROM campaigns WHERE id = $1', [first.id])).rows[0];
 }
 
 async function standing(c: CampaignRow, u: AuthUser) {
@@ -41,7 +41,7 @@ async function standing(c: CampaignRow, u: AuthUser) {
   }
   // One vote per member (SEC-03): a second account of the same member sees "already voted" too.
   const hasVoted = (await getPool().query('SELECT 1 FROM vote_receipts WHERE campaign_id = $1 AND (voter_oid = $2 OR member_key = $3)', [c.id, u.oid, memberKey])).rowCount! > 0;
-  return { eligible, notMember, hasVoted, state: voterState(c, new Date(), { eligible, notMember, hasVoted }) };
+  return { eligible, notMember, hasVoted, state: voterState(c, c.db_now ?? new Date(), { eligible, notMember, hasVoted }) };
 }
 
 export function voteRouter(): Router {
@@ -69,19 +69,18 @@ export function voteRouter(): Router {
     const stale = await getPool().query("SELECT id FROM campaigns WHERE status = 'open' AND closes_at IS NOT NULL AND closes_at <= now()");
     for (const row of stale.rows) await refreshStatus(row.id);
     const { rows } = await getPool().query(
-      `SELECT c.share_token, c.title, c.description, c.status, c.opens_at, c.closes_at, c.results_published,
+      `SELECT c.share_token, c.title, c.description, c.status, c.opens_at, c.closes_at, c.results_published, clock_timestamp() AS db_now,
               EXISTS (SELECT 1 FROM vote_receipts v WHERE v.campaign_id = c.id AND (v.voter_oid = $1 OR v.member_key = ANY($3::text[]))) AS has_voted
          FROM campaigns c
         WHERE (c.status = 'open' OR (c.status = 'closed' AND c.results_published))
           AND (c.eligibility = 'all' OR (c.eligibility = 'umoja' AND ${isSnapshotMemberSql('c.id', '$1')})
                OR (c.eligibility = 'list' AND EXISTS (SELECT 1 FROM eligible_voters e WHERE e.campaign_id = c.id AND e.voter_email = $2)))
         ORDER BY c.closes_at NULLS LAST, c.created_at DESC`, [u.oid, u.email.toLowerCase(), myKeys]);
-    const now = new Date();
     res.set('Cache-Control', 'no-store').json({
       campaigns: rows.map((c) => ({
         shareToken: c.share_token, title: c.title, description: c.description, opensAt: c.opens_at, closesAt: c.closes_at,
         resultsPublished: c.results_published,
-        voterState: voterState(c, now, { eligible: true, hasVoted: c.has_voted }),
+        voterState: voterState(c, c.db_now, { eligible: true, hasVoted: c.has_voted }),
       })),
     });
   });

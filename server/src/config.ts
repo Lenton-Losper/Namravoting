@@ -23,6 +23,8 @@ export function parseConfig(env: NodeJS.ProcessEnv) {
     ADMIN_EMAILS: z.string().optional(),
     DEMO_MEMBER_EMAILS: z.string().optional(),
     DEMO: z.enum(['true', 'false']).optional(),
+    ALLOW_DEV_AUTH: z.enum(['true', 'false']).optional(),
+    DEV_LAN: z.enum(['true', 'false']).optional(),
     ADMIN_OIDS: z.string().optional(),
     ADMIN_EMAILS_FALLBACK: z.enum(['true', 'false']).optional(),
     ENTRA_SECRET_EXPIRES_AT: z.string().optional(),
@@ -42,6 +44,11 @@ export function parseConfig(env: NodeJS.ProcessEnv) {
   const e = schema.parse(env);
   if (e.AUTH_MODE === 'dev' && e.NODE_ENV === 'production') {
     throw new Error('Refusing to start: AUTH_MODE=dev is not allowed when NODE_ENV=production');
+  }
+  // SEC-13: dev mode is an identity picker where the BROWSER claims who it is, admin included. It must be switched on on purpose,
+  // so a deployment that forgot AUTH_MODE/NODE_ENV does not silently come up as a house with no front door.
+  if (e.AUTH_MODE === 'dev' && e.ALLOW_DEV_AUTH !== 'true') {
+    throw new Error('Refusing to start: AUTH_MODE=dev (the browser picks its own identity, including admin) needs ALLOW_DEV_AUTH=true. Set AUTH_MODE=entra for anything but a developer machine');
   }
   // AUTH_MODE=demo (identity picker) is only ever allowed behind Cloudflare Access.
   if (e.AUTH_MODE === 'demo' && (!e.CF_ACCESS_TEAM_DOMAIN || !e.CF_ACCESS_AUD)) {
@@ -69,6 +76,9 @@ export function parseConfig(env: NodeJS.ProcessEnv) {
     isProd: e.NODE_ENV === 'production',
     port: e.PORT,
     authMode: e.AUTH_MODE,
+    // Dev mode listens on this machine only (set DEV_LAN=true for `npm run dev:lan`); every other mode listens on all interfaces
+    // because the Cloudflare Worker reaches the container from outside it.
+    bindHost: e.AUTH_MODE === 'dev' && e.DEV_LAN !== 'true' ? '127.0.0.1' : '0.0.0.0',
     publicBaseUrl: e.PUBLIC_BASE_URL.replace(/\/$/, ''),
     sessionSecret: e.SESSION_SECRET,
     sessionSecretPrevious: e.SESSION_SECRET_PREVIOUS ?? null,

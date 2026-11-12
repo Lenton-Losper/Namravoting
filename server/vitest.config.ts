@@ -12,6 +12,7 @@ export default defineConfig({
     env: {
       NODE_ENV: 'test',
       AUTH_MODE: 'dev',
+      ALLOW_DEV_AUTH: 'true',
       SESSION_SECRET: 'test-secret-test-secret-test-secret-test-secret',
       DATABASE_URL: 'postgres://namra_app:namra_app_dev@localhost:5433/namra_test',
       UPLOAD_DIR: path.join(os.tmpdir(), 'namra-voting-test-uploads'),

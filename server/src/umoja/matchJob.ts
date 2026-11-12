@@ -1,19 +1,26 @@
 import type pg from 'pg';
-import { applyMatches, countResults, createGraphSearch, matchMembers, reportCsv, type ApplySummary, type MatchCounts, type MatchResult } from './match.js';
+import { countResults, createGraphSearch, matchMembers, reportCsv, type MatchCounts, type MatchResult } from './match.js';
 import { parseUmojaExport } from './parse.js';
 
 export interface MatchJobDeps {
   fileText: string;
   token: string;                                  // in memory only
-  dryRun: boolean;
+  /** Ignored: matching NEVER writes to a database (SEC-22). Kept so older callers keep compiling. */
+  dryRun?: boolean;
   log: (line: string) => void;                    // PRIVACY: only ever called with counts, never a name, email or id
   writeReport: (csv: string) => void;             // the local report is the one place names/emails go
-  connect?: () => Promise<pg.Client>;             // owner-role connection, only used when not a dry run
+  /** Ignored, see dryRun. */
+  connect?: () => Promise<pg.Client>;
   fetch?: typeof fetch; sleep?: (ms: number) => Promise<void>; now?: () => number; graphBase?: string; ratePerSec?: number;
 }
 
-export interface MatchJobResult { counts: MatchCounts; applied?: ApplySummary; results: MatchResult[] }
+export interface MatchJobResult { counts: MatchCounts; results: MatchResult[] }
 
+/**
+ * Finds candidate Microsoft accounts for the members and writes the REVIEW REPORT. It does not touch the database: a person must
+ * read the report, mark the rows they have checked with `yes`, and apply those separately (`--apply-confirmed`), because a name is
+ * not an identity and a namesake would otherwise get a member's vote.
+ */
 export async function runMatchJob(d: MatchJobDeps): Promise<MatchJobResult> {
   const parsed = parseUmojaExport(d.fileText, { keepNames: true });
   const members = parsed.members.filter((m) => m.name);
@@ -26,13 +33,8 @@ export async function runMatchJob(d: MatchJobDeps): Promise<MatchJobResult> {
   d.log(`not_found: ${counts.not_found}`);
   d.log(`ambiguous: ${counts.ambiguous}`);
   d.log(`conflict: ${counts.conflict}`);
-  d.log('Local report written (names and emails are in the report file only).');
-  if (d.dryRun) { d.log('Dry run: nothing was written to any database.'); return { counts, results }; }
-  if (!d.connect) throw new Error('A database connection is required when not running with --dry-run');
-  const client = await d.connect();
-  try {
-    const applied = await applyMatches(client, results);
-    d.log(`Updated ${applied.updated} members (${applied.not_in_db} matched codes were not in the table). Audit entry "umoja.match" written (counts only).`);
-    return { counts, applied, results };
-  } finally { await client.end(); }
+  d.log('Local report written (names and emails are in the report file only). Nothing was written to any database.');
+  d.log('Next: open the report, check each row, put "yes" in the confirm column of the rows that are right, then run');
+  d.log('  npm run umoja:match -- --apply-confirmed <report file>');
+  return { counts, results };
 }

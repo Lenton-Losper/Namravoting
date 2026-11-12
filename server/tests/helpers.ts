@@ -13,6 +13,20 @@ let owner: pg.Pool | undefined;
 export const ownerDb = () => (owner ??= new pg.Pool({ connectionString: TEST_OWNER_URL, max: 3 }));
 export async function closeOwner() { await owner?.end(); owner = undefined; }
 
+/**
+ * A live server-side session for a user, created straight in the database (owner role), returning the RAW session id the
+ * browser cookie would carry. The clean-up functions take this instead of an actor id (SEC-17).
+ */
+export async function sessionFor(user: AuthUser, opts: { ttlSeconds?: number; revoked?: boolean } = {}): Promise<string> {
+  const crypto = await import('node:crypto');
+  const id = crypto.randomBytes(32).toString('base64url');
+  await ownerDb().query('INSERT INTO users (entra_oid, email, display_name) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING', [user.oid, user.email, user.displayName]);
+  await ownerDb().query(
+    `INSERT INTO sessions (id_hash, user_oid, claim_admin, expires_at, revoked_at) VALUES ($1, $2, $3, now() + make_interval(secs => $4), $5)`,
+    [crypto.createHash('sha256').update(id).digest('hex'), user.oid, user.roles.includes('CampaignAdmin'), opts.ttlSeconds ?? 3600, opts.revoked ? new Date() : null]);
+  return id;
+}
+
 export async function resetDb() {
   await ownerDb().query('TRUNCATE tallies, campaign_voters, vote_receipts, eligible_voters, candidates, audit_log, campaigns, users, umoja_members CASCADE');
 }
@@ -37,12 +51,13 @@ export async function login(app: Express, user: AuthUser): Promise<Session> {
   const agent = request.agent(app);
   const token = (await agent.get('/api/csrf')).body.token as string;
   await agent.post('/api/dev/login').set('x-csrf-token', token).send(user).on('response', record).expect(200);
+  const bound = (await agent.get('/api/csrf')).body.token as string;   // SEC-15: the first token was minted before there was a session
   return {
     get: (u) => agent.get(u).on('response', record),
-    post: (u) => agent.post(u).set('x-csrf-token', token).on('response', record),
-    put: (u) => agent.put(u).set('x-csrf-token', token).on('response', record),
-    patch: (u) => agent.patch(u).set('x-csrf-token', token).on('response', record),
-    del: (u) => agent.delete(u).set('x-csrf-token', token).on('response', record),
+    post: (u) => agent.post(u).set('x-csrf-token', bound).on('response', record),
+    put: (u) => agent.put(u).set('x-csrf-token', bound).on('response', record),
+    patch: (u) => agent.patch(u).set('x-csrf-token', bound).on('response', record),
+    del: (u) => agent.delete(u).set('x-csrf-token', bound).on('response', record),
   };
 }
 

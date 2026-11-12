@@ -8,7 +8,14 @@ import type { ParsedMember } from './parse.js';
 export type MatchStatus = 'matched' | 'not_found' | 'ambiguous' | 'conflict';
 
 export interface GraphUser { id: string; displayName: string | null; givenName: string | null; surname: string | null; mail: string | null; userPrincipalName: string | null }
-export interface MatchResult { code: string; name: string; active: boolean; status: MatchStatus; oid: string | null; email: string | null; candidates: number }
+/** How the single match was made. `exact_name`: the whole display name equals the member's name; `given_surname`: first name and surname fields do. */
+export type MatchBasis = 'exact_name' | 'given_surname';
+export interface MatchResult {
+  code: string; name: string; active: boolean; status: MatchStatus; oid: string | null; email: string | null; candidates: number;
+  basis?: MatchBasis | null;
+  /** Ambiguous only: the mail addresses of the accounts that all fit the name, for the human reviewer (local report only). */
+  alternatives?: string[];
+}
 export interface MatchCounts { matched: number; not_found: number; ambiguous: number; conflict: number }
 
 // ---------------------------------------------------------------------------------------------------------------- names
@@ -35,16 +42,17 @@ function spans(tokens: string[]): Set<string> {
  * Strong match: the account's givenName equals the member's first name AND its surname equals any of the member's other
  * names (so middle names are fine); or the full displayName equals the full name. Anything weaker is not a match.
  */
-export function isStrongMatch(memberName: string, u: GraphUser): boolean {
+export function matchBasis(memberName: string, u: GraphUser): MatchBasis | null {
   const full = normalizeName(memberName);
-  if (!full) return false;
-  if (normalizeName(u.displayName) === full) return true;
+  if (!full) return null;
+  if (normalizeName(u.displayName) === full) return 'exact_name';
   const tokens = full.split(' ');
-  if (tokens.length < 2) return false;
+  if (tokens.length < 2) return null;
   const given = normalizeName(u.givenName);
   const surname = normalizeName(u.surname);
-  return given !== '' && surname !== '' && given === tokens[0] && spans(tokens.slice(1)).has(surname);
+  return given !== '' && surname !== '' && given === tokens[0] && spans(tokens.slice(1)).has(surname) ? 'given_surname' : null;
 }
+export const isStrongMatch = (memberName: string, u: GraphUser): boolean => matchBasis(memberName, u) !== null;
 
 const clean = (s: string) => s.replace(/["\\]/g, '').trim();
 
@@ -137,8 +145,8 @@ export async function matchMembers(
     }
     const hits = [...found.values()];
     const base = { code: m.code, name, active: m.active, candidates: hits.length };
-    if (hits.length === 1) results.push({ ...base, status: 'matched', oid: hits[0].id.toLowerCase(), email: emailOf(hits[0]) });
-    else results.push({ ...base, status: hits.length === 0 ? 'not_found' : 'ambiguous', oid: null, email: null });
+    if (hits.length === 1) results.push({ ...base, status: 'matched', oid: hits[0].id.toLowerCase(), email: emailOf(hits[0]), basis: matchBasis(name, hits[0]) });
+    else results.push({ ...base, status: hits.length === 0 ? 'not_found' : 'ambiguous', oid: null, email: null, basis: null, alternatives: hits.map(emailOf).filter((x): x is string => !!x).sort() });
     onProgress?.(++done, members.length);
   }
   // The same account claimed by two different codes: neither can be trusted.
@@ -162,10 +170,66 @@ const csvCell = (v: string | number): string => {
   return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 };
 
-/** The local report (gitignored data/ folder): the ONLY place names and emails are written. */
+/**
+ * The local report (gitignored data/ folder): the ONLY place names and emails are written. It is also the worksheet for the human
+ * confirmation (SEC-22): matching never writes to the database. A person reads it, puts `yes` in the `confirm` column of every
+ * row they have checked, and only those rows are applied (applyConfirmedReport).
+ */
+export const REPORT_HEADER = ['code', 'member_name', 'status', 'matched_email', 'oid', 'basis', 'candidates', 'other_candidates', 'confirm'];
 export function reportCsv(results: MatchResult[]): string {
-  const rows = results.map((r) => [r.code, r.name, r.status, r.email ?? '', r.candidates].map(csvCell).join(','));
-  return ['code,member_name,status,matched_email,candidates', ...rows].join('\n') + '\n';
+  const rows = results.map((r) => [r.code, r.name, r.status, r.email ?? '', r.oid ?? '', r.basis ?? '', r.candidates, (r.alternatives ?? []).join(' | '), ''].map(csvCell).join(','));
+  return [REPORT_HEADER.join(','), ...rows].join('\n') + '\n';
+}
+
+/** Minimal RFC-4180 reader (quoted fields, doubled quotes, newlines inside quotes). */
+function readCsv(text: string): string[][] {
+  const rows: string[][] = []; let row: string[] = []; let cur = ''; let q = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (q) { if (ch === '"') { if (text[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += ch; }
+    else if (ch === '"') q = true;
+    else if (ch === ',') { row.push(cur); cur = ''; }
+    else if (ch === '\n' || ch === '\r') { if (ch === '\r' && text[i + 1] === '\n') i++; row.push(cur); cur = ''; if (row.some((c) => c !== '')) rows.push(row); row = []; }
+    else cur += ch;
+  }
+  row.push(cur); if (row.some((c) => c !== '')) rows.push(row);
+  return rows;
+}
+
+export interface ConfirmedReport { confirmed: MatchResult[]; ignored: number; rejected: { code: string; why: string }[] }
+const YES = new Set(['yes', 'y', 'true', '1', 'confirmed']);
+const OID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const CODE_RE = /^[A-Z]{3}[0-9]{4}$/;
+
+/**
+ * Reads the reviewed report. A row counts only if a human wrote `yes` in `confirm` AND its status is `matched` AND it carries a
+ * well-formed code and account id. Ambiguous, not-found and conflicting rows are never applied, whatever the confirm column says.
+ * Two confirmed rows that claim the same account or the same code are both rejected. Names are never returned.
+ */
+export function parseConfirmedReport(csv: string): ConfirmedReport {
+  const rows = readCsv(csv.replace(/^\uFEFF/, ''));
+  const head = (rows.shift() ?? []).map((h) => h.trim().toLowerCase());
+  const col = (n: string) => head.indexOf(n);
+  for (const need of ['code', 'status', 'oid', 'confirm']) if (col(need) < 0) throw new Error(`The report has no "${need}" column. Use the file written by umoja:match.`);
+  const out: MatchResult[] = []; const rejected: { code: string; why: string }[] = []; let ignored = 0;
+  for (const r of rows) {
+    const get = (n: string) => (r[col(n)] ?? '').trim();
+    if (!YES.has(get('confirm').toLowerCase())) { ignored++; continue; }
+    const code = get('code').toUpperCase(); const oid = get('oid').toLowerCase(); const email = get('matched_email').toLowerCase() || null;
+    if (get('status') !== 'matched') { rejected.push({ code, why: 'only a matched row can be confirmed' }); continue; }
+    if (!CODE_RE.test(code)) { rejected.push({ code, why: 'not a valid employee code' }); continue; }
+    if (!OID_RE.test(oid)) { rejected.push({ code, why: 'missing or malformed account id' }); continue; }
+    out.push({ code, name: '', active: true, status: 'matched', oid, email, candidates: 1 });
+  }
+  const dupOid = new Map<string, number>(); const dupCode = new Map<string, number>();
+  for (const r of out) { dupOid.set(r.oid!, (dupOid.get(r.oid!) ?? 0) + 1); dupCode.set(r.code, (dupCode.get(r.code) ?? 0) + 1); }
+  const confirmed: MatchResult[] = [];
+  for (const r of out) {
+    if ((dupOid.get(r.oid!) ?? 0) > 1) rejected.push({ code: r.code, why: 'the same account is confirmed for more than one member' });
+    else if ((dupCode.get(r.code) ?? 0) > 1) rejected.push({ code: r.code, why: 'the same member appears twice' });
+    else confirmed.push(r);
+  }
+  return { confirmed, ignored, rejected };
 }
 
 // ---------------------------------------------------------------------------------------------------------------- database
@@ -196,4 +260,12 @@ export async function applyMatches(client: pg.Client | pg.PoolClient, results: M
     await client.query('ROLLBACK');
     throw e;
   }
+}
+
+/** Applies ONLY the rows a human confirmed in the reviewed report (SEC-22). Owner role. Refuses an empty confirmation. */
+export async function applyConfirmedReport(client: pg.Client | pg.PoolClient, csv: string): Promise<ApplySummary & { ignored: number; rejected: number }> {
+  const r = parseConfirmedReport(csv);
+  if (r.confirmed.length === 0) throw new Error(`No row is confirmed. Put "yes" in the confirm column of every row you have checked (${r.rejected.length} row(s) were rejected, ${r.ignored} not confirmed).`);
+  const summary = await applyMatches(client, r.confirmed);
+  return { ...summary, ignored: r.ignored, rejected: r.rejected.length };
 }

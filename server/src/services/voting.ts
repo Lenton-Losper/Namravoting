@@ -33,11 +33,12 @@ export async function castVote(voterOid: string, voterEmail: string, shareToken:
         // FOR SHARE: voters don't block each other, but a concurrent close or reset (FOR UPDATE) waits for in-flight votes to
         // commit, and a vote that starts after one has committed re-reads the campaign row and sees the new state.
         const camp = (await c.query(
-          'SELECT id, status, opens_at, closes_at, eligibility FROM campaigns WHERE share_token = $1 FOR SHARE', [shareToken])).rows[0];
+          'SELECT id, status, opens_at, closes_at, eligibility, clock_timestamp() AS db_now FROM campaigns WHERE share_token = $1 FOR SHARE', [shareToken])).rows[0];
         if (!camp) throw notFound();
         campaignId = camp.id;
         await testHooks.afterCampaignRead?.();
-        const now = new Date();
+        // SEC-18: the cutoff is judged by the DATABASE clock, the same one that stamps every other time, not by this container's.
+        const now: Date = camp.db_now;
 
         if (shouldAutoClose(camp, now)) return { kind: 'close_due' } as Outcome;   // closed in its own transaction below
         if (camp.status === 'closed') return { kind: 'closed' } as Outcome;

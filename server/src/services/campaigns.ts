@@ -8,10 +8,42 @@ export interface CampaignRow {
   id: string; share_token: string; created_by: string; title: string; description: string | null;
   status: Status; opens_at: Date | null; closes_at: Date | null; eligibility: 'all' | 'list' | 'umoja';
   results_published: boolean; created_at: Date; archived_at: Date | null;
+  /** The database clock when the row was read (only on queries that ask for it). */
+  db_now?: Date;
 }
 
 /** `ballots` is the sum of the candidate tallies (there is no row per ballot, SEC-02); it must equal the receipts. */
 export interface Integrity { ballots: number; receipts: number; match: boolean }
+
+/**
+ * SEC-16: receipts and the sum of the tallies must agree. If they do not, the campaign is NOT closed (and a closed one cannot be
+ * published) until an admin has looked into it and said so (`campaign.integrity.ack`, with a note). Thrown inside the closing
+ * transaction, so it rolls back; callers record the block in the audit log afterwards (recordIntegrityBlock).
+ */
+export class IntegrityBlocked extends Error {
+  constructor(public ballots: number, public receipts: number) { super(`receipts (${receipts}) and tallies (${ballots}) do not match`); }
+}
+
+/** The latest unacknowledged integrity block of a campaign, or null. */
+export async function openIntegrityBlock(db: Queryable, campaignId: string): Promise<{ ballots: number; receipts: number; at: Date } | null> {
+  const { rows } = await db.query(
+    `SELECT a.seq, a.at, a.details FROM audit_log a
+      WHERE a.campaign_id = $1 AND a.action = 'campaign.integrity.blocked'
+        AND a.seq > coalesce((SELECT max(seq) FROM audit_log WHERE campaign_id = $1 AND action = 'campaign.integrity.ack'), 0)
+      ORDER BY a.seq DESC LIMIT 1`, [campaignId]);
+  return rows[0] ? { ballots: Number(rows[0].details?.ballots ?? 0), receipts: Number(rows[0].details?.receipts ?? 0), at: rows[0].at } : null;
+}
+
+/** Writes the block to the audit log once per unacknowledged episode (a page view must not be able to flood it). */
+export async function recordIntegrityBlock(campaignId: string, actorOid: string | null, e: IntegrityBlocked, attempt: 'manual' | 'auto'): Promise<void> {
+  const db = getPool();
+  if (await openIntegrityBlock(db, campaignId)) return;
+  await audit(db, actorOid, 'campaign.integrity.blocked', campaignId, { ballots: e.ballots, receipts: e.receipts, attempt });
+  console.error(`[integrity] campaign=${campaignId} receipts=${e.receipts} tallies=${e.ballots}: closing is blocked until an admin acknowledges it`);
+}
+
+export const integrityMessage = (e: IntegrityBlocked) =>
+  `Receipts (${e.receipts}) and tallies (${e.ballots}) do not match, so the campaign was NOT closed. Investigate (see the audit log), then acknowledge to allow closing.`;
 
 export interface CloseOptions {
   /** Closed by hand before closes_at: needs a reason, which is shown to voters. */
@@ -26,28 +58,40 @@ export interface CloseOptions {
 export async function closeInTx(
   db: Queryable, campaignId: string, actorOid: string | null, reason: 'manual' | 'auto', opts: CloseOptions = {},
 ): Promise<Integrity> {
-  await db.query("UPDATE campaigns SET status = 'closed' WHERE id = $1 AND status = 'open'", [campaignId]);
-  await restampTallies(db, campaignId);   // every tally row now carries this transaction's id, not a voter's
+  // The caller holds the campaign row FOR UPDATE, so no vote can land between these counts and the status change.
   const ballots = await tallySum(db, campaignId);
   const receipts = (await db.query('SELECT count(*)::int AS n FROM vote_receipts WHERE campaign_id = $1', [campaignId])).rows[0].n as number;
   const integrity = { ballots, receipts, match: ballots === receipts };
+  let acknowledged = false;
+  if (!integrity.match) {
+    // acknowledged = an admin has acknowledged the latest block; nothing is blocked yet on the very first attempt
+    const everBlocked = (await db.query("SELECT 1 FROM audit_log WHERE campaign_id = $1 AND action = 'campaign.integrity.blocked' LIMIT 1", [campaignId])).rowCount! > 0;
+    acknowledged = everBlocked && !(await openIntegrityBlock(db, campaignId));
+    if (!acknowledged) throw new IntegrityBlocked(ballots, receipts);
+  }
+  await db.query("UPDATE campaigns SET status = 'closed' WHERE id = $1 AND status = 'open'", [campaignId]);
+  await restampTallies(db, campaignId);   // every tally row now carries this transaction's id, not a voter's
   const tallies = (await db.query(
     `SELECT k.id AS candidate_id, k.name, coalesce(t.votes, 0)::int AS votes
        FROM candidates k LEFT JOIN tallies t ON t.candidate_id = k.id AND t.campaign_id = k.campaign_id
       WHERE k.campaign_id = $1 ORDER BY k.sort_order, k.name`, [campaignId])).rows;
   await audit(db, actorOid, integrity.match ? 'campaign.close' : 'campaign.close.INTEGRITY_MISMATCH', campaignId,
-    { reason, ...integrity, tallies, ...(opts.early ? { early: true, why: opts.why ?? '' } : {}) });
+    { reason, ...integrity, tallies, ...(acknowledged ? { acknowledged: true } : {}), ...(opts.early ? { early: true, why: opts.why ?? '' } : {}) });
   return integrity;
 }
 
 /** Lazy auto-close (replaces a cron job): closes the campaign if closes_at has passed. */
 export async function refreshStatus(campaignId: string): Promise<void> {
   // Cheap read first (SEC-08): every page load calls this, and a write transaction with a row lock per call is a free load generator.
-  const peek = (await getPool().query('SELECT status, opens_at, closes_at FROM campaigns WHERE id = $1', [campaignId])).rows[0];
-  if (!peek || !shouldAutoClose(peek, new Date())) return;
+  const peek = (await getPool().query('SELECT status, opens_at, closes_at, clock_timestamp() AS db_now FROM campaigns WHERE id = $1', [campaignId])).rows[0];
+  if (!peek || !shouldAutoClose(peek, peek.db_now)) return;   // database time (SEC-18)
   await withTx(async (c) => {
-    const { rows } = await c.query('SELECT status, opens_at, closes_at FROM campaigns WHERE id = $1 FOR UPDATE', [campaignId]);
-    if (rows[0] && shouldAutoClose(rows[0], new Date())) await closeInTx(c, campaignId, null, 'auto');
+    const { rows } = await c.query('SELECT status, opens_at, closes_at, clock_timestamp() AS db_now FROM campaigns WHERE id = $1 FOR UPDATE', [campaignId]);
+    if (rows[0] && shouldAutoClose(rows[0], rows[0].db_now)) await closeInTx(c, campaignId, null, 'auto');
+  }).catch(async (e) => {
+    // A mismatch keeps the campaign open (voting is already shut by its closing time); record it once and carry on.
+    if (e instanceof IntegrityBlocked) { await recordIntegrityBlock(campaignId, null, e, 'auto'); return; }
+    throw e;
   });
 }
 

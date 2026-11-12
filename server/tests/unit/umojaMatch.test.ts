@@ -184,15 +184,15 @@ describe('the job: privacy of console output and the report', () => {
     const text = [...lines, ...out].join('\n');
     for (const secret of ['Zorblax', 'Quentin', 'Wimbleton', 'Nobodyhome', 'Dupe', 'Twin', '@namra.org.na', DIR[0].id, 'TOKEN-123', 'NAM000']) expect(text, `console/log leaked ${secret}`).not.toContain(secret);
     expect(lines).toEqual(expect.arrayContaining(['matched: 1', 'not_found: 2', 'ambiguous: 1', 'conflict: 0']));
-    expect(csv.split('\n')[0]).toBe('code,member_name,status,matched_email,candidates');
-    expect(csv).toContain('NAM0001,Zorblax Quentin Wimbleton,matched,zorblax.wimbleton@namra.org.na,1');
-    expect(csv).toContain('NAM0003,Quillon Dupe,ambiguous,,2');
+    expect(csv.split('\n')[0]).toBe('code,member_name,status,matched_email,oid,basis,candidates,other_candidates,confirm');
+    expect(csv).toMatch(/NAM0001,Zorblax Quentin Wimbleton,matched,zorblax\.wimbleton@namra\.org\.na,[0-9a-f-]{36},(exact_name|given_surname),1,,\n/);   // the confirm column starts empty
+    expect(csv).toMatch(/NAM0003,Quillon Dupe,ambiguous,,,,2,[^,\n]+@namra\.org\.na \| [^,\n]+@namra\.org\.na,\n/);   // the reviewer sees who fits
     expect(csv).not.toContain('TOKEN-123');
   });
 
-  it('--dry-run never opens a database connection', async () => {
+  it('matching never opens a database connection, whatever the flags say (SEC-22)', async () => {
     const connect = vi.fn();
-    await runMatchJob({ fileText: FILE, token: 't', dryRun: true, log: () => {}, writeReport: () => {}, connect, fetch: fakeGraph(DIR), sleep: noSleep, now: () => 0 });
+    await runMatchJob({ fileText: FILE, token: 't', dryRun: false, log: () => {}, writeReport: () => {}, connect, fetch: fakeGraph(DIR), sleep: noSleep, now: () => 0 });
     expect(connect).not.toHaveBeenCalled();
   });
 

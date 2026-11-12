@@ -374,17 +374,33 @@ describe('next and forged identity', () => {
   });
 });
 
-describe('sign out', () => {
-  it('clears the app session and redirects to Microsoft sign-out, returning to the site root', async () => {
+describe('sign out (SEC-14: POST + CSRF, never a GET)', () => {
+  it('POST /api/logout revokes the session on the server and returns the Microsoft sign-out address, returning to the site root', async () => {
     const { agent, callback } = await signIn();
     expect((await agent.get('/api/session')).body.user).not.toBeNull();
     const copied = sessionCookie(callback)!.split(';')[0];                      // a copy of the cookie, as an attacker might hold
-    const r = await agent.get('/auth/logout').expect(302);
-    expect((await request(app).get('/api/session').set('Cookie', copied)).body.user).toBeNull();   // SEC-06: logout revokes it server-side
-    const u = new URL(r.headers.location);
+    const s = await asSession(agent);
+    const r = await s.post('/api/logout').expect(200);
+    const u = new URL(r.body.redirect);
     expect(u.origin + u.pathname).toBe(`${idp.base}/${TENANT}/oauth2/v2.0/logout`);
     expect(u.searchParams.get('post_logout_redirect_uri')).toBe('https://app.test/');
     expect((r.headers['set-cookie'] as unknown as string[]).some((c) => /namra_session=;/.test(c))).toBe(true);
     expect((await agent.get('/api/session')).body.user).toBeNull();
+    expect((await request(app).get('/api/session').set('Cookie', copied)).body.user).toBeNull();   // SEC-06: the copied cookie is dead too
+  });
+
+  it('a GET to /auth/logout (an image tag on another site) signs nobody out; it just lands on the site root', async () => {
+    const { agent } = await signIn();
+    const r = await agent.get('/auth/logout').expect(302);
+    expect(r.headers.location).toBe('/');
+    expect((r.headers['set-cookie'] as unknown as string[] | undefined) ?? []).toEqual([]);
+    expect((await agent.get('/api/session')).body.user).not.toBeNull();
+  });
+
+  it('POST /api/logout without a valid CSRF token is refused and the session stays', async () => {
+    const { agent } = await signIn();
+    await agent.post('/api/logout').expect(403);
+    await agent.post('/api/logout').set('x-csrf-token', 'a.b').expect(403);
+    expect((await agent.get('/api/session')).body.user).not.toBeNull();
   });
 });

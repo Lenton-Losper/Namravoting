@@ -4,7 +4,7 @@ import { createApp } from '../../src/app.js';
 import { closePool } from '../../src/db.js';
 import { readPhoto } from '../../src/services/images.js';
 import { testHooks } from '../../src/services/voting.js';
-import { ADMIN_A, ADMIN_B, S1, S2, TEST_APP_URL, closeOwner, login, ownerDb, png, resetDb, type Session } from '../helpers.js';
+import { ADMIN_A, ADMIN_B, S1, S2, TEST_APP_URL, closeOwner, login, ownerDb, png, resetDb, sessionFor, type Session } from '../helpers.js';
 
 const app = createApp();
 const TITLE = 'Cleanup Vote 2026';
@@ -225,16 +225,17 @@ describe('the app role cannot delete directly; only the SECURITY DEFINER functio
 
   it('called directly (bypassing the API), delete_archived_campaign still refuses: not archived, not the creator', async () => {
     const A = await login(app, ADMIN_A);
+    const sA = await sessionFor(ADMIN_A); const sB = await sessionFor(ADMIN_B);   // live sessions: the actor comes from the session, not from an argument (SEC-17)
     const closed = await fixture(A, 'closed');
-    await expect(appRole.query('SELECT delete_archived_campaign($1, $2)', [closed.id, ADMIN_A.oid])).rejects.toMatchObject({ code: 'NR409' });
+    await expect(appRole.query('SELECT delete_archived_campaign($1, $2)', [closed.id, sA])).rejects.toMatchObject({ code: 'NR409' });
     const archived = await fixture(A, 'archived', 'Archived two');
-    await expect(appRole.query('SELECT delete_archived_campaign($1, $2)', [archived.id, ADMIN_B.oid])).rejects.toMatchObject({ code: 'NR404' });
-    await expect(appRole.query('SELECT delete_archived_campaign($1, $2)', ['00000000-0000-4000-8000-000000000000', ADMIN_A.oid])).rejects.toMatchObject({ code: 'NR404' });
-    await expect(appRole.query('SELECT delete_draft_campaign($1, $2)', [closed.id, ADMIN_A.oid])).rejects.toMatchObject({ code: 'NR409' });
+    await expect(appRole.query('SELECT delete_archived_campaign($1, $2)', [archived.id, sB])).rejects.toMatchObject({ code: 'NR404' });
+    await expect(appRole.query('SELECT delete_archived_campaign($1, $2)', ['00000000-0000-4000-8000-000000000000', sA])).rejects.toMatchObject({ code: 'NR404' });
+    await expect(appRole.query('SELECT delete_draft_campaign($1, $2)', [closed.id, sA])).rejects.toMatchObject({ code: 'NR409' });
     expect(await exists(closed.id)).toBe(true);
     expect(await exists(archived.id)).toBe(true);
     // POSITIVE CONTROL: the same call with the right actor on the archived campaign works.
-    const out = (await appRole.query('SELECT delete_archived_campaign($1, $2) AS r', [archived.id, ADMIN_A.oid])).rows[0].r;
+    const out = (await appRole.query('SELECT delete_archived_campaign($1, $2) AS r', [archived.id, sA])).rows[0].r;
     expect(out).toMatchObject({ ballots: 0, receipts: 0, candidates: 2 });
     expect(await exists(archived.id)).toBe(false);
   });
@@ -338,8 +339,8 @@ describe('reset votes', () => {
     expect(await rowCount('vote_receipts', f.id)).toBe(1);
     expect((await audits(f.id, 'campaign.reset')).length).toBe(0);
     // the database re-checks the reason too
-    await expect(appRole.query('SELECT reset_campaign_votes($1, $2, $3)', [f.id, ADMIN_A.oid, 'too short'])).rejects.toMatchObject({ code: 'NR400' });
-    await expect(appRole.query('SELECT reset_campaign_votes($1, $2, $3)', [f.id, ADMIN_B.oid, REASON])).rejects.toMatchObject({ code: 'NR404' });
+    await expect(appRole.query('SELECT reset_campaign_votes($1, $2, $3)', [f.id, await sessionFor(ADMIN_A), 'too short'])).rejects.toMatchObject({ code: 'NR400' });
+    await expect(appRole.query('SELECT reset_campaign_votes($1, $2, $3)', [f.id, await sessionFor(ADMIN_B), REASON])).rejects.toMatchObject({ code: 'NR404' });
     expect(await rowCount('ballots', f.id)).toBe(1);
   });
 
@@ -347,7 +348,7 @@ describe('reset votes', () => {
     const A = await login(app, ADMIN_A);
     const arch = await fixture(A, 'archived');
     expect((await A.post(`/api/campaigns/${arch.id}/reset`).send(resetBody()).expect(409)).body.code).toBe('archived');
-    await expect(appRole.query('SELECT reset_campaign_votes($1, $2, $3)', [arch.id, ADMIN_A.oid, REASON])).rejects.toMatchObject({ code: 'NR409' });
+    await expect(appRole.query('SELECT reset_campaign_votes($1, $2, $3)', [arch.id, await sessionFor(ADMIN_A), REASON])).rejects.toMatchObject({ code: 'NR409' });
     const draft = await fixture(A, 'draft', 'Draft one');
     expect((await A.post(`/api/campaigns/${draft.id}/reset`).send(resetBody({ confirm_title: 'Draft one' })).expect(409)).body.code).toBe('not_started');
     // after unarchiving it works (POSITIVE CONTROL)

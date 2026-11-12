@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { api, type User } from '../api';
+import { api, resetCsrf, type User } from '../api';
 import { useAuth } from '../auth';
 import { safeNext as validateNext } from '../safeNext';
 import { Wordmark } from '../icons';
@@ -71,6 +71,7 @@ function DevPicker() {
     setError(null);
     try {
       await api('POST', '/api/dev/login', u);
+      resetCsrf();                                  // the CSRF token is bound to the session: fetch a new one
       await refresh();
       nav(safeNext ?? (u.roles.includes('CampaignAdmin') ? '/admin' : '/votes'), { replace: true });
     } catch (e) { setError((e as Error).message); }

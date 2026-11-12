@@ -1,6 +1,7 @@
 import type { ErrorRequestHandler, RequestHandler } from 'express';
 import { ZodError } from 'zod';
 import multer from 'multer';
+import { routeLabel, scrub } from './logSafe.js';
 
 export class HttpError extends Error {
   constructor(public status: number, message: string, public code?: string) { super(message); }
@@ -22,7 +23,8 @@ export const errorHandler: ErrorRequestHandler = (err, req, res, _next) => {
     return;
   }
   if ((err as { type?: string }).type === 'entity.parse.failed') { res.status(400).json({ error: 'Malformed JSON' }); return; }
-  // Log only method + path + message. Never request bodies (vote routes must not leak ballots).
-  console.error(`[error] ${req.method} ${req.path}: ${(err as Error)?.message ?? 'unknown'}`);
+  // Log only method + route pattern + a scrubbed message. Never request bodies (vote routes must not leak ballots), never the
+  // share token that is part of the URL (SEC-19).
+  console.error(`[error] ${req.method} ${routeLabel(req)}: ${scrub(String((err as Error)?.message ?? 'unknown')).slice(0, 300)}`);
   res.status(500).json({ error: 'Internal server error' });
 };

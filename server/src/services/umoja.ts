@@ -1,5 +1,6 @@
 import type { Queryable } from '../db.js';
 import { getConfig } from '../config.js';
+import { idTag } from '../logSafe.js';
 
 /** Why a caller is (not) an active Umoja member. Only `member` grants access; the others are for server logs only. */
 export type UmojaReason = 'member' | 'no_code' | 'unknown_code' | 'inactive';
@@ -41,7 +42,7 @@ export async function umojaStanding(db: Queryable, voterOid: string, campaign: {
   if (active) return { reason: 'member', memberKey: `code:${active.member_code}` };
   const r = rows[0];
   if (r && r.email && demoMemberEmails().includes(String(r.email).toLowerCase())) {
-    console.warn(`[umoja] member via DEMO_MEMBER_EMAILS user=${voterOid}`);
+    console.warn(`[umoja] member via DEMO_MEMBER_EMAILS user=${idTag(voterOid)}`);
     return { reason: 'member', memberKey: `email:${String(r.email).toLowerCase()}` };
   }
   if (deciding.length > 0) return { reason: 'inactive', memberKey: null };
@@ -92,7 +93,7 @@ export async function liveMemberKey(db: Queryable, voterOid: string): Promise<st
   return rows[0] ? `code:${rows[0].employee_code}` : null;
 }
 
-/** Server-side log line so admins can help a member who was turned away. The voter never sees the reason. */
+/** Server-side log line so admins can help a member who was turned away. The voter never sees the reason. The account is a short one-way tag (SEC-19). */
 export function logNotMember(reason: Exclude<UmojaReason, 'member'>, campaignId: string, voterOid: string): void {
-  console.warn(`[umoja] not_member reason=${reason} campaign=${campaignId} user=${voterOid}`);
+  console.warn(`[umoja] not_member reason=${reason} campaign=${campaignId} user=${idTag(voterOid)}`);
 }

@@ -9,6 +9,7 @@ import { safeNext } from './safeNext.js';
 import { signingKey, verifyKeys } from './keys.js';
 import { createSession, endSession, rolesFor, sessionUser } from './sessions.js';
 import { sign, verify } from './signing.js';
+import { cleanLine } from '../domain/text.js';
 import { ADMIN_ROLE, type AuthUser } from './types.js';
 
 /**
@@ -105,7 +106,7 @@ export function mountEntra(app: Express, config: Config, opts: EntraOptions = {}
       const claimAdmin = roles.includes(ADMIN_ROLE);
       const user: AuthUser = {
         oid: oid.toLowerCase(), email,
-        displayName: String(claims.name ?? graph.displayName ?? email).slice(0, 120) || email,
+        displayName: cleanLine(String(claims.name ?? graph.displayName ?? email)).trim().slice(0, 120) || email,   // SEC-21
         roles: [],
         employeeCode: graph.employeeCode,
       };
@@ -120,12 +121,17 @@ export function mountEntra(app: Express, config: Config, opts: EntraOptions = {}
     }
   });
 
-  // Clear the app session, then end the Microsoft session and come back to the site root.
-  app.get('/auth/logout', async (req: Request, res: Response) => {
+  /**
+   * Sign out (SEC-14): POST + CSRF, so a page on another site cannot sign a visitor out with an image tag. It revokes the app
+   * session on the server, then tells the browser to go through Microsoft's sign-out and come back to the site root.
+   */
+  app.post('/api/logout', async (req: Request, res: Response) => {
     await endSession(req, res, config);
     res.set('Cache-Control', 'no-store');
-    res.redirect(oidc.buildEndSessionUrl(oc, { post_logout_redirect_uri: siteRoot, client_id: e.clientId }).href);
+    res.json({ redirect: oidc.buildEndSessionUrl(oc, { post_logout_redirect_uri: siteRoot, client_id: e.clientId }).href });
   });
+  // A GET never signs anyone out. Old bookmarks and links simply land on the site root.
+  app.get('/auth/logout', (_req: Request, res: Response) => { res.set('Cache-Control', 'no-store'); res.redirect('/'); });
 }
 
 /** Drops expired pending-flow cookies and, past MAX_PENDING_FLOWS, the oldest ones, so repeated taps can't grow the Cookie header. */

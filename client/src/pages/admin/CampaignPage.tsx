@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { api, fmtDate, type CampaignDetail, type Results, type SealCheck } from '../../api';
+import { api, fmtDate, fromLocalInput, type CampaignDetail, type Results, type SealCheck } from '../../api';
 import { Icon } from '../../icons';
 import { SharePanel } from '../../share';
 import { BackLink, Dialog, ErrorBox, Field, NoticeList, ResultsChart, SectionTitle, Spinner, StatusBadge, Tabs, Thumb, TurnoutBar, initials } from '../../ui';
@@ -60,6 +60,28 @@ function EligibilityTab({ c }: { c: CampaignDetail }) {
         </Field>
       )}
     </>
+  );
+}
+
+/** SEC-16: receipts and tallies disagree, so closing is blocked until the creator has investigated and says so. */
+function IntegrityBanner({ c, reload }: { c: CampaignDetail; reload: () => Promise<void> }) {
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const b = c.integrity_block;
+  if (!b) return null;
+  async function ack() {
+    setBusy(true); setErr(null);
+    try { await api('POST', `/api/campaigns/${c.id}/integrity/acknowledge`, { note: note.trim() }); setNote(''); await reload(); } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
+  }
+  return (
+    <section className="admin-banner admin-banner-danger" role="alert">
+      <p><strong>Closing is blocked: receipts ({b.receipts}) and tallies ({b.ballots}) do not match.</strong> Something changed the vote data outside the app. Look into it (the audit log has the details) before you go on.</p>
+      <label>What did you find? <span className="field-helper">At least 10 characters. It is kept in the audit log and sealed with the result.</span>
+        <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} maxLength={1000} /></label>
+      <ErrorBox message={err} />
+      <button className="btn btn-danger btn-sm" disabled={busy || note.trim().length < 10} onClick={() => void ack()}>I investigated: allow closing</button>
+    </section>
   );
 }
 
@@ -151,7 +173,7 @@ function SideCard({ c, reload }: { c: CampaignDetail; reload: () => Promise<void
     catch (e) { setError((e as Error).message); setDialog(null); } finally { setBusy(false); }
   }
   const post = (path: string, body?: unknown) => api('POST', `/api/campaigns/${c.id}/${path}`, body);
-  const earlyClose = c.status === 'open' && !!c.closes_at && new Date(c.closes_at).getTime() > Date.now();
+  const earlyClose = c.status === 'open' && !!c.closes_at && new Date(c.closes_at).getTime() > Date.now();   // a plain instant comparison: no time zone involved
   const titleOk = typed === c.title;
   const reasonOk = reason.trim().length >= 10;
 
@@ -227,14 +249,14 @@ function SideCard({ c, reload }: { c: CampaignDetail; reload: () => Promise<void
       )}
       {dialog === 'reset' && (
         <Dialog title="Reset votes?" confirmLabel="Reset votes" danger busy={busy} confirmDisabled={!titleOk || !reasonOk}
-          onConfirm={() => void run(() => post('reset', { confirm_title: typed, reason: reason.trim(), closes_at: closes ? new Date(closes).toISOString() : null }), reload)} onCancel={() => setDialog(null)}>
+          onConfirm={() => void run(() => post('reset', { confirm_title: typed, reason: reason.trim(), closes_at: fromLocalInput(closes) }), reload)} onCancel={() => setDialog(null)}>
           <p className="confirm-warning">All {c.turnout} {c.turnout === 1 ? 'vote' : 'votes'} will be deleted. Everyone will be able to vote again. This can't be undone.</p>
           <div className="stack">
             <label>Type the campaign title to confirm<span className="field-helper">{c.title}</span>
               <input value={typed} onChange={(e) => setTyped(e.target.value)} autoComplete="off" spellCheck={false} /></label>
             <label>Reason<span className="field-helper">At least 10 characters. It is kept in the reset history, visible with the results.</span>
               <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={3} maxLength={1000} /></label>
-            <label>New closing time <span className="field-helper">Optional. Needed if the closing time has already passed.</span>
+            <label>New closing time <span className="field-helper">Optional. Windhoek time (CAT). Needed if the closing time has already passed.</span>
               <input type="datetime-local" value={closes} onChange={(e) => setCloses(e.target.value)} /></label>
           </div>
         </Dialog>
@@ -274,6 +296,8 @@ export function CampaignPage() {
           <div className="id-chip"><div className="field-label">Campaign ID</div><div className="id-value">{c.id.slice(0, 8).toUpperCase()}</div></div>
         </div>
       </section>
+
+      <IntegrityBanner c={c} reload={reload} />
 
       <div className="cols">
         <div className="card card-pad main-col">

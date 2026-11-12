@@ -13,6 +13,6 @@ try {
 const app = createApp();
 logOperatorWarnings(config);
 setInterval(() => logOperatorWarnings(getConfig()), 24 * 3600 * 1000).unref();   // keeps the secret-expiry warning in the logs every day
-app.listen(config.port, '0.0.0.0', () => {
-  console.log(`NamRA voting API listening on 0.0.0.0:${config.port} (auth=${config.authMode}, env=${config.nodeEnv})`);
+app.listen(config.port, config.bindHost, () => {
+  console.log(`NamRA voting API listening on ${config.bindHost}:${config.port} (auth=${config.authMode}, env=${config.nodeEnv})`);
 });

@@ -12,12 +12,15 @@ import { getPool, withTx } from '../db.js';
 import { HttpError, notFound } from '../errors.js';
 import { ADMIN_ROLE, currentUser, getCurrentUser, isAdmin, requireUser } from '../auth/index.js';
 import { clientIp } from '../auth/limits.js';
+import { sessionRawId } from '../auth/sessions.js';
 import { normalizeEmail } from '../domain/eligibility.js';
 import {
-  candParams, candidateBody, candidatePatchBody, closeBody, createCampaignBody, eligibleBody, idParams, patchCampaignBody, permanentDeleteBody, resetBody,
+  ackBody, candParams, candidateBody, candidatePatchBody, closeBody, createCampaignBody, eligibleBody, idParams, patchCampaignBody, permanentDeleteBody, resetBody,
 } from '../domain/validation.js';
 import { audit } from '../services/audit.js';
-import { closeInTx, getNotices, getResults, getTurnout, refreshStatus, verifySeal, type CampaignRow } from '../services/campaigns.js';
+import {
+  closeInTx, getNotices, getResults, getTurnout, IntegrityBlocked, integrityMessage, openIntegrityBlock, recordIntegrityBlock, refreshStatus, verifySeal, type CampaignRow,
+} from '../services/campaigns.js';
 import { deletePhoto, MAX_UPLOAD_BYTES, savePhoto } from '../services/images.js';
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_UPLOAD_BYTES, files: 1, fields: 5, fieldSize: 4096 } });
@@ -93,6 +96,7 @@ async function callCleanup(sql: string, params: unknown[], conflictMessage: (sta
     return (await getPool().query(sql, params)).rows[0].result as Record<string, any>;
   } catch (e) {
     const code = (e as { code?: string }).code;
+    if (code === 'NR401') throw new HttpError(401, 'Not signed in');
     if (code === 'NR404') throw notFound();
     if (code === 'NR400') throw new HttpError(400, (e as Error).message, 'invalid');
     if (code === 'NR409') {
@@ -210,6 +214,7 @@ export function adminRouter(): Router {
       eligible_emails: el.rows.map((x) => x.voter_email),
       turnout: (await getPool().query('SELECT count(*)::int AS n FROM vote_receipts WHERE campaign_id = $1', [c.id])).rows[0].n,
       umoja_active_count: await activeMemberCount(getPool()),   // count only; never the members themselves
+      integrity_block: c.status === 'open' ? await openIntegrityBlock(getPool(), c.id) : null,   // SEC-16
     });
   });
 
@@ -316,7 +321,7 @@ export function adminRouter(): Router {
     await inDraftTx(c.id, async (tx) => {
       const n = (await tx.query('SELECT count(*)::int AS n FROM candidates WHERE campaign_id = $1', [c.id])).rows[0].n;
       if (n < 2) throw new HttpError(409, 'At least 2 candidates are required to start', 'needs_candidates');
-      const fresh = (await tx.query('SELECT eligibility, closes_at FROM campaigns WHERE id = $1', [c.id])).rows[0];
+      const fresh = (await tx.query('SELECT eligibility, closes_at, (closes_at <= clock_timestamp()) AS closes_in_past FROM campaigns WHERE id = $1', [c.id])).rows[0];
       if (fresh.eligibility === 'umoja' && (await activeMemberCount(tx)) < 1) {
         throw new HttpError(409, 'There are no active Umoja members loaded (run the Umoja import first)', 'needs_voters');
       }
@@ -324,7 +329,7 @@ export function adminRouter(): Router {
         const e = (await tx.query('SELECT count(*)::int AS n FROM eligible_voters WHERE campaign_id = $1', [c.id])).rows[0].n;
         if (e < 1) throw new HttpError(409, 'The eligible voter list is empty', 'needs_voters');
       }
-      if (fresh.closes_at && fresh.closes_at <= new Date()) throw new HttpError(409, 'closes_at is in the past', 'bad_window');
+      if (fresh.closes_in_past) throw new HttpError(409, 'closes_at is in the past', 'bad_window');
       await tx.query("UPDATE campaigns SET status = 'open' WHERE id = $1", [c.id]);
       await createTallies(tx, c.id);                                  // one counter per candidate (SEC-02)
       const frozen = fresh.eligibility === 'umoja' ? await snapshotVoters(tx, c.id) : 0;   // the voter list is frozen now (SEC-05)
@@ -341,11 +346,17 @@ export function adminRouter(): Router {
     const c = camp(res);
     const b = closeBody.parse(req.body ?? {});
     const integrity = await withTx(async (tx) => {
-      const { rows } = await tx.query('SELECT status, closes_at FROM campaigns WHERE id = $1 FOR UPDATE', [c.id]);
+      const { rows } = await tx.query('SELECT status, (closes_at > clock_timestamp()) AS early FROM campaigns WHERE id = $1 FOR UPDATE', [c.id]);
       if (rows[0]?.status !== 'open') throw new HttpError(409, 'Only an open campaign can be closed', 'not_open');
-      const early = rows[0].closes_at !== null && rows[0].closes_at.getTime() > Date.now();
+      const early = rows[0].early === true;   // before the planned closing time, by the database clock (SEC-18)
       if (early && !b.reason) throw new HttpError(400, 'Closing before the planned closing time needs a reason of at least 10 characters', 'reason_required');
       return closeInTx(tx, c.id, currentUser(req).oid, 'manual', early ? { early: true, why: b.reason } : {});
+    }).catch(async (e) => {
+      if (e instanceof IntegrityBlocked) {   // SEC-16: receipts != tallies: not closed, recorded, and the admin is told why
+        await recordIntegrityBlock(c.id, currentUser(req).oid, e, 'manual');
+        throw new HttpError(409, integrityMessage(e), 'integrity_mismatch');
+      }
+      throw e;
     });
     res.json({ status: 'closed', integrity });
   });
@@ -355,7 +366,7 @@ export function adminRouter(): Router {
   /** Draft: hard delete (campaign, candidates, eligibility rows) and its photo files. Creator only. */
   r.delete('/:id', loadOwned, async (req, res) => {
     const c = camp(res);
-    const out = await callCleanup('SELECT delete_draft_campaign($1, $2) AS result', [c.id, currentUser(req).oid],
+    const out = await callCleanup('SELECT delete_draft_campaign($1, $2) AS result', [c.id, sessionRawId(req)],
       (status) => status === 'open'
         ? { message: 'Close the campaign first', code: 'open_campaign' }
         : { message: 'Only a draft can be deleted. Archive a closed campaign instead.', code: 'not_draft' }, c.id);
@@ -401,7 +412,7 @@ export function adminRouter(): Router {
       `SELECT 1 FROM audit_log WHERE campaign_id = $1 AND action = 'results.export_csv'
           AND seq > coalesce((SELECT max(seq) FROM audit_log WHERE campaign_id = $1 AND action LIKE 'campaign.close%'), 0) LIMIT 1`, [c.id]);
     if (!exported.rowCount) throw new HttpError(409, 'Export the results (CSV) before deleting permanently, so a copy of the result exists outside the system.', 'export_first');
-    const out = await callCleanup('SELECT delete_archived_campaign($1, $2) AS result', [c.id, currentUser(req).oid],
+    const out = await callCleanup('SELECT delete_archived_campaign($1, $2) AS result', [c.id, sessionRawId(req)],
       () => ({ message: 'Archive the campaign first. Only archived campaigns can be deleted permanently.', code: 'not_archived' }), c.id);
     await removePhotos(out.photos);
     res.json({ deleted: true, ballots_removed: out.ballots, receipts_removed: out.receipts });
@@ -414,7 +425,7 @@ export function adminRouter(): Router {
     if (c.archived_at) throw new HttpError(409, 'Unarchive the campaign before resetting it', 'archived');
     if (c.status === 'draft') throw new HttpError(409, 'A draft has no votes to reset', 'not_started');
     if (b.confirm_title !== c.title) throw new HttpError(400, 'The title you typed does not match', 'title_mismatch');
-    const out = await callCleanup('SELECT reset_campaign_votes($1, $2, $3, $4) AS result', [c.id, currentUser(req).oid, b.reason, b.closes_at ?? null],
+    const out = await callCleanup('SELECT reset_campaign_votes($1, $2, $3, $4) AS result', [c.id, sessionRawId(req), b.reason, b.closes_at ?? null],
       (status, archived) => archived ? { message: 'Unarchive the campaign before resetting it', code: 'archived' }
         : status === 'draft' ? { message: 'A draft has no votes to reset', code: 'not_started' } : { message: 'This campaign cannot be reset right now', code: 'conflict' }, c.id);
     res.json({ status: 'open', votes_cleared: out.votes_cleared });
@@ -441,11 +452,33 @@ export function adminRouter(): Router {
     res.set('Cache-Control', 'no-store').json(await verifySeal(getPool(), camp(res).id));
   });
 
+  /**
+   * SEC-16: "I investigated": lifts the integrity block so the campaign can be closed (the sealed entry then records that the
+   * mismatch was acknowledged, and by whom). Needs a note of at least 10 characters.
+   */
+  r.post('/:id/integrity/acknowledge', loadOwned, async (req, res) => {
+    const c = camp(res);
+    const b = ackBody.parse(req.body);
+    await withTx(async (tx) => {
+      const { rows } = await tx.query('SELECT status FROM campaigns WHERE id = $1 FOR UPDATE', [c.id]);
+      if (rows[0]?.status !== 'open') throw new HttpError(409, 'Only an open campaign can have an integrity block', 'not_open');
+      const block = await openIntegrityBlock(tx, c.id);
+      if (!block) throw new HttpError(409, 'There is no integrity problem to acknowledge', 'no_integrity_block');
+      await audit(tx, currentUser(req).oid, 'campaign.integrity.ack', c.id, { note: b.note, ballots: block.ballots, receipts: block.receipts });
+    });
+    res.json({ acknowledged: true });
+  });
+
   r.post('/:id/publish', loadOwned, async (req, res) => {
     const c = camp(res);
     await withTx(async (tx) => {
       const { rows } = await tx.query('SELECT status FROM campaigns WHERE id = $1 FOR UPDATE', [c.id]);
       if (rows[0]?.status !== 'closed') throw new HttpError(409, 'Results can only be published after the campaign is closed', 'not_closed');
+      // SEC-16: a result that no longer matches its seal (changed counters, receipts, or audit chain) is not published.
+      const seal = await verifySeal(tx, c.id);
+      if (seal.sealed && (!seal.chain_ok || seal.tallies_match === false || seal.receipts_match === false)) {
+        throw new HttpError(409, 'The result no longer matches what was sealed when the campaign closed. Run "Verify results integrity" and investigate before publishing.', 'integrity_failed');
+      }
       await tx.query('UPDATE campaigns SET results_published = true WHERE id = $1', [c.id]);
       await audit(tx, currentUser(req).oid, 'results.publish', c.id);
     });

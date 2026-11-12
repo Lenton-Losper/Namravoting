@@ -10,7 +10,7 @@ process.loadEnvFile(new URL('../.env', import.meta.url));
 const db = new URL(process.env.DATABASE_URL); db.hostname = 'host.docker.internal';
 const sh = (...a) => spawnSync('docker', a, { encoding: 'utf8' });
 sh('rm', '-f', 'nv-fwd');
-const run = sh('run', '-d', '--name', 'nv-fwd', '-p', '8098:8080', '-e', 'NODE_ENV=development', '-e', 'AUTH_MODE=dev', '-e', 'PORT=8080', '-e', 'UPLOAD_DIR=/tmp/uploads',
+const run = sh('run', '-d', '--name', 'nv-fwd', '-p', '8098:8080', '-e', 'NODE_ENV=development', '-e', 'AUTH_MODE=dev', '-e', 'ALLOW_DEV_AUTH=true', '-e', 'DEV_LAN=true', '-e', 'PORT=8080', '-e', 'UPLOAD_DIR=/tmp/uploads',
   '-e', `DATABASE_URL=${db}`, '-e', `SESSION_SECRET=${process.env.SESSION_SECRET}`, '-e', 'PUBLIC_BASE_URL=https://fwd.example.dev', 'namra-voting-demo:local');
 if (run.status !== 0) { console.error(run.stderr); process.exit(1); }
 

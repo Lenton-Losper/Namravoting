@@ -37,7 +37,8 @@ const run = (name, args, env = {}) => {
 };
 
 const procs = [
-  run('server', ['run', 'dev', '-w', 'server'], { PUBLIC_BASE_URL: url }),
+  // The LAN script is the explicit opt-in to the dev identity picker AND to listening beyond localhost.
+  run('server', ['run', 'dev', '-w', 'server'], { PUBLIC_BASE_URL: url, ALLOW_DEV_AUTH: 'true', DEV_LAN: 'true' }),
   run('client', ['run', 'dev', '-w', 'client', '--', '--host', '0.0.0.0', '--port', String(PORT), '--strictPort']),
 ];
 

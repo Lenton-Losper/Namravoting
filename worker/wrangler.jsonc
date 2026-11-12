@@ -43,5 +43,7 @@
     "CF_ACCESS_TEAM_DOMAIN": "yellow-flower-4592.cloudflareaccess.com",
     "SLEEP_AFTER_MINUTES": "60"
   },
-  "observability": { "enabled": true, "head_sampling_rate": 1 }
+  // SEC-19: no per-request log lines. They would record every ballot URL (it contains the share token) with its exact time, and
+  // vote timing is something we deliberately do not keep. Errors and console output are still logged.
+  "observability": { "enabled": true, "head_sampling_rate": 1, "logs": { "invocation_logs": false } }
 }

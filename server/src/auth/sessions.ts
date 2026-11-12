@@ -21,10 +21,15 @@ const MAX_SESSIONS_PER_USER = 10;
 
 const hashId = (id: string) => crypto.createHash('sha256').update(id).digest('hex');
 
-type WithSession = Request & { sessionUser?: AuthUser | null; sessionIdHash?: string | null };
+type WithSession = Request & { sessionUser?: AuthUser | null; sessionIdHash?: string | null; sessionId?: string | null };
 
 /** The signed-in user for this request (set by sessionLoader), or null. */
 export const sessionUser = (req: Request): AuthUser | null => (req as WithSession).sessionUser ?? null;
+/**
+ * The raw session id of this request. The database functions that delete or reset a campaign take it instead of an actor id and
+ * look up whose live session it is (migration 011), so the actor is never something the caller can simply claim.
+ */
+export const sessionRawId = (req: Request): string | null => (req as WithSession).sessionId ?? null;
 /** Hash of this request's session id: the identity a CSRF token can be bound to. */
 export const sessionKeyOf = (req: Request): string | null => (req as WithSession).sessionIdHash ?? null;
 
@@ -40,7 +45,7 @@ export function rolesFor(config: Config, a: { claimAdmin: boolean; oid: string; 
 export function sessionLoader(config: Config): RequestHandler {
   return async (req, _res, next) => {
     const w = req as WithSession;
-    w.sessionUser = null; w.sessionIdHash = null;
+    w.sessionUser = null; w.sessionIdHash = null; w.sessionId = null;
     try {
       const raw = readCookie(req, SESSION_COOKIE);
       const id = raw ? verifyValue(verifyKeys(config, 'session'), raw) : null;
@@ -52,7 +57,7 @@ export function sessionLoader(config: Config): RequestHandler {
             WHERE s.id_hash = $1 AND s.revoked_at IS NULL AND s.expires_at > now()`, [h]);
         const r = rows[0];
         if (r) {
-          w.sessionIdHash = h;
+          w.sessionIdHash = h; w.sessionId = id;
           w.sessionUser = {
             oid: r.entra_oid, email: r.email, displayName: r.display_name, employeeCode: r.employee_code ?? null,
             roles: rolesFor(config, { claimAdmin: r.claim_admin, oid: r.entra_oid, email: r.email }),
@@ -93,4 +98,18 @@ export async function endSession(req: Request, res: Response, config: Config): P
 /** Sign out everywhere (all sessions of one account), e.g. when someone leaves or is demoted. */
 export async function revokeAllSessions(oid: string): Promise<number> {
   return (await getPool().query('UPDATE sessions SET revoked_at = now() WHERE user_oid = $1 AND revoked_at IS NULL', [oid])).rowCount ?? 0;
+}
+
+/**
+ * AUTH_MODE=demo has no login and no cookie (the Cloudflare Access JWT is the identity), but the database functions still want a
+ * live session. So each verified demo identity gets one deterministic session row: its id is an HMAC of the account id under the
+ * session key, so it cannot be guessed, and it is refreshed on use.
+ */
+export async function ensureDemoSession(req: Request, config: Config, u: { oid: string; roles: string[] }): Promise<void> {
+  const id = crypto.createHmac('sha256', signingKey(config, 'session')).update('demo-session:' + u.oid).digest('base64url');
+  await getPool().query(
+    `INSERT INTO sessions (id_hash, user_oid, claim_admin, expires_at) VALUES ($1, $2, $3, now() + interval '12 hours')
+     ON CONFLICT (id_hash) DO UPDATE SET expires_at = now() + interval '12 hours', revoked_at = NULL, claim_admin = EXCLUDED.claim_admin`,
+    [hashId(id), u.oid, u.roles.includes(ADMIN_ROLE)]);
+  (req as WithSession).sessionId = id;
 }

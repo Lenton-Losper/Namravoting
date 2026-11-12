@@ -33,7 +33,6 @@ export function mountAuth(app: Express, config: Config, entraOptions: EntraOptio
   } else {
     // Microsoft Entra ID sign-in (/auth/login, /auth/callback, /auth/logout) + the same signed session cookie as dev.
     mountEntra(app, config, entraOptions);
-    app.post('/api/logout', async (req, res) => { await endSession(req, res, config); res.status(204).end(); });
   }
   app.get('/api/session', (req, res) => {
     res.set('Cache-Control', 'no-store');

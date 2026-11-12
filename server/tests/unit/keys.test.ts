@@ -4,7 +4,7 @@ import { signingKey, verifyKeys } from '../../src/auth/keys.js';
 import { sign, signValue, verify, verifyValue } from '../../src/auth/signing.js';
 
 const A = 'a'.repeat(40); const B = 'b'.repeat(40); const C = 'c'.repeat(40);
-const cfg = (extra: Record<string, string> = {}) => parseConfig({ NODE_ENV: 'test', AUTH_MODE: 'dev', SESSION_SECRET: A, DATABASE_URL: 'postgres://x@localhost/x', ...extra } as NodeJS.ProcessEnv);
+const cfg = (extra: Record<string, string> = {}) => parseConfig({ NODE_ENV: 'test', AUTH_MODE: 'dev', ALLOW_DEV_AUTH: 'true', SESSION_SECRET: A, DATABASE_URL: 'postgres://x@localhost/x', ...extra } as NodeJS.ProcessEnv);
 
 describe('SEC-06: one key per purpose, derived from the secrets', () => {
   it('session, sign-in-flow and CSRF keys differ, so a value signed for one purpose never verifies as another', () => {

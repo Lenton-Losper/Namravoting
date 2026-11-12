@@ -77,7 +77,7 @@ describe('config', () => {
     expect(() => parseConfig({ ...ok, NODE_ENV: 'production', AUTH_MODE: 'dev' })).toThrow(/AUTH_MODE=dev/);
   });
   it('allows dev outside production and rejects short secrets', () => {
-    expect(parseConfig({ ...ok, NODE_ENV: 'development', AUTH_MODE: 'dev' }).authMode).toBe('dev');
+    expect(parseConfig({ ...ok, NODE_ENV: 'development', AUTH_MODE: 'dev', ALLOW_DEV_AUTH: 'true' }).authMode).toBe('dev');
     expect(() => parseConfig({ ...ok, SESSION_SECRET: 'short' })).toThrow();
   });
 });

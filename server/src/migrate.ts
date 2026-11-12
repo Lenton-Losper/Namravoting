@@ -2,12 +2,13 @@ import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
+import { dbClientConfig } from './db.js';
 
 const dir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../migrations');
 
 /** Applies numbered .sql files in order, each in its own transaction, tracked in schema_migrations. */
 export async function migrate(ownerUrl: string, appDbPassword: string, log = console.log): Promise<void> {
-  const client = new pg.Client({ connectionString: ownerUrl });
+  const client = new pg.Client(dbClientConfig(ownerUrl));
   await client.connect();
   try {
     await client.query(

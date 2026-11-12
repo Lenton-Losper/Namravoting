@@ -29,8 +29,8 @@ function DetailsSection({ c, onSaved }: { c: CampaignDetail; onSaved: () => void
       </div>
       <SectionTitle icon="calendar">Voting window</SectionTitle>
       <div className="field-grid">
-        <label>Opens at<span className="field-helper">Optional.</span><input type="datetime-local" value={opens} onChange={(e) => setOpens(e.target.value)} /></label>
-        <label>Closes at<span className="field-helper">Optional. Closes automatically.</span><input type="datetime-local" value={closes} onChange={(e) => setCloses(e.target.value)} /></label>
+        <label>Opens at<span className="field-helper">Optional. Windhoek time (CAT).</span><input type="datetime-local" value={opens} onChange={(e) => setOpens(e.target.value)} /></label>
+        <label>Closes at<span className="field-helper">Optional. Windhoek time (CAT). Closes automatically.</span><input type="datetime-local" value={closes} onChange={(e) => setCloses(e.target.value)} /></label>
       </div>
       <ErrorBox message={error} />
       <div className="form-actions"><button className="btn btn-secondary">Save details</button>{msg && <span className="ok">{msg}</span>}</div>

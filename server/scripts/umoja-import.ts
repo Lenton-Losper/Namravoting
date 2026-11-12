@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import pg from 'pg';
+import { dbClientConfig } from '../src/db.js';
 import { loadDotEnv } from '../src/env.js';
 import { assertImportAllowed } from '../src/umoja/guard.js';
 import { importUmoja } from '../src/umoja/import.js';
@@ -40,7 +41,7 @@ try {
 
   const url = process.env.MIGRATE_DATABASE_URL;
   if (!url) { console.error('MIGRATE_DATABASE_URL (owner role) is required, see .env.example'); process.exit(1); }
-  const client = new pg.Client({ connectionString: url });
+  const client = new pg.Client(dbClientConfig(url));
   await client.connect();
   try {
     const s = await importUmoja(client, parsed);

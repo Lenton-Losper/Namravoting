@@ -36,7 +36,7 @@ describe('AUTH_MODE=entra configuration', () => {
   });
 
   it('other modes do not need ENTRA_* settings', () => {
-    expect(parseConfig({ ...base, NODE_ENV: 'development', AUTH_MODE: 'dev' }).entra).toBeNull();
+    expect(parseConfig({ ...base, NODE_ENV: 'development', AUTH_MODE: 'dev', ALLOW_DEV_AUTH: 'true' }).entra).toBeNull();
   });
 });
 

@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import type { Express, NextFunction, Request, Response } from 'express';
 import type { Config, DemoProfile } from '../config.js';
 import { getPool } from '../db.js';
+import { ensureDemoSession } from './sessions.js';
 import type { AuthUser } from './types.js';
 
 /**
@@ -57,7 +58,7 @@ export function mount(app: Express, config: Config): void {
     const email = res.locals.accessEmail as string | null | undefined;
     if (!email) { next(); return; }   // identity-less token (e.g. a service token): signed out, protected routes answer 401
     const user = demoUserFor(email, config.demoUsers);
-    syncUser(user).then(() => { (req as WithDemoUser).demoUser = user; next(); }, next);
+    syncUser(user).then(() => ensureDemoSession(req, config, user)).then(() => { (req as WithDemoUser).demoUser = user; next(); }, next);
   });
   // Access owns sign-out (/cdn-cgi/access/logout); the app has no session to clear.
   app.post('/api/logout', (_req, res) => { res.status(204).end(); });

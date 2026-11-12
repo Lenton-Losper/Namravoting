@@ -2,6 +2,7 @@
 // Usage: npm run demo:db -w server          (reads DEMO_OWNER_DATABASE_URL, DEMO_DATABASE_URL, DEMO_APP_DB_PASSWORD from .env)
 // Photos for the seeded candidates go to R2 (STORAGE=r2). Never touches the real Umoja list or anything under data/.
 import pg from 'pg';
+import { dbClientConfig } from '../src/db.js';
 import { loadDotEnv } from '../src/env.js';
 
 loadDotEnv();
@@ -20,7 +21,7 @@ const { migrate } = await import('../src/migrate.js');
 const { seedDevData } = await import('./seedLib.js');
 
 await migrate(owner, appPassword);
-const client = new pg.Client({ connectionString: owner });
+const client = new pg.Client(dbClientConfig(owner));
 await client.connect();
 try { await seedDevData(client, { openCampaign: true }); } finally { await client.end(); }
 console.log('Demo database ready.');

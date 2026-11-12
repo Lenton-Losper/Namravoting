@@ -27,7 +27,7 @@ describe('toContainerRequest', () => {
   it('does not follow redirects and tells the app the public origin', () => {
     const r = toContainerRequest(new Request('https://x.workers.dev/', { headers: { 'x-forwarded-host': 'already.set' } }));
     expect(r.redirect).toBe('manual');
-    expect(r.headers.get('x-forwarded-host')).toBe('already.set');
+    expect(r.headers.get('x-forwarded-host')).toBe('x.workers.dev');   // SEC-25: a client-supplied value is replaced, not kept
     const r2 = toContainerRequest(new Request('https://x.workers.dev/p'));
     expect(r2.headers.get('x-forwarded-host')).toBe('x.workers.dev');
     expect(r2.headers.get('x-forwarded-proto')).toBe('https');

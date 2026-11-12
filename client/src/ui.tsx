@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, type KeyboardEvent, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import type { Notice } from './api';
+import { fmtDate, type Notice } from './api';
 import { Icon } from './icons';
 
 export function Spinner({ label = 'Loading…' }: { label?: string }) {
@@ -118,7 +118,7 @@ export function NoticeList({ notices, title = 'What happened during this vote' }
       <ul className="list">
         {notices.map((x, i) => (
           <li key={i} className="reset-item">
-            <div><strong>{new Date(x.at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}</strong>{x.by ? ` · ${x.by}` : ''} · {x.kind === 'reset' ? `reset: ${x.votes_cleared ?? 0} ${x.votes_cleared === 1 ? 'vote' : 'votes'} cleared` : 'closed early'}</div>
+            <div><strong>{fmtDate(x.at)}</strong>{x.by ? ` · ${x.by}` : ''} · {x.kind === 'reset' ? `reset: ${x.votes_cleared ?? 0} ${x.votes_cleared === 1 ? 'vote' : 'votes'} cleared` : 'closed early'}</div>
             <div className="muted small">Reason: {x.reason}</div>
             {x.candidates && x.candidates.length > 0 && <div className="muted small">Before the reset: {x.candidates.map((c) => `${c.name} ${c.votes}`).join(' · ')}</div>}
           </li>
@@ -135,7 +135,7 @@ export function NoticeBanner({ notices }: { notices: Notice[] | undefined }) {
     <div className="notice-banner" role="status">
       {notices.map((x, i) => (
         <p key={i}>
-          <strong>This vote was {x.kind === 'reset' ? 'reset' : 'closed early'} on {new Date(x.at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}</strong>
+          <strong>This vote was {x.kind === 'reset' ? 'reset' : 'closed early'} on {fmtDate(x.at)}</strong>
           {x.kind === 'reset' ? ' (all earlier votes were cleared and everyone may vote again)' : ''} because: {x.reason}
         </p>
       ))}

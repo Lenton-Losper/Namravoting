@@ -26,6 +26,35 @@ Sessions are stored in the `sessions` table (a hash of the random session id, ne
 cookie stops working at once. Roles are recomputed on every request, so removing someone from `ADMIN_OIDS` takes effect immediately.
 The rate limits are in memory, for the one container instance: they reset when it restarts.
 
+## Other settings and behaviours
+
+| Setting / behaviour | What it does |
+|---|---|
+| `ALLOW_DEV_AUTH` | Must be `true` for `AUTH_MODE=dev` (the identity picker, where the browser chooses its own identity, admin included). `npm run dev` sets it. Never allowed with `NODE_ENV=production`. Dev mode listens on 127.0.0.1 only; `npm run dev:lan` also sets `DEV_LAN=true`. |
+| `DB_SSL_CA` | Optional. A PEM (or a path to one) to trust for the database server. Without it Node's public root store is used, which is enough for Neon. TLS to any non-local database is always on and always verified, whatever the URL's `sslmode` says. |
+| Times | Every time shown or typed is Windhoek time (CAT, UTC+2), converted in `client/src/windhoek.ts`. Times are stored as UTC instants. Voting cut-offs and closing times are judged by the database clock. |
+| Request logs | The Worker's per-request log lines are switched off (`observability.logs.invocation_logs: false`): a ballot URL contains the share token and would be logged with its exact time. Errors and console output are still logged, with tokens masked and accounts shown as a short one-way tag. |
+| Closing blocked | If receipts and the sum of the tallies ever disagree, the campaign is not closed (and a closed result that no longer matches its seal is not published) until the creator has looked into it and acknowledged it with a note (Results tab). |
+
+## Deploying
+
+`node scripts/cf-deploy.mjs` reads `worker/wrangler.jsonc` to find the auth mode and then requires and sends only the secrets that mode
+needs (`entra`: `ENTRA_CLIENT_SECRET`; `demo`: `CF_ACCESS_AUD`, `DEMO_USERS`). It refuses to deploy a config that is not
+`NODE_ENV=production` or that would run the dev identity picker, and it never generates a secret: a missing `DEMO_SESSION_SECRET` is an
+error that tells you how to make one (a new value signs everyone out, so a person has to choose it). Optional `SESSION_SECRET_PREVIOUS`
+and `CSRF_SECRET` are sent when present in `.env`.
+
+## Matching Umoja members to Microsoft accounts
+
+A name is not an identity, so matching is two steps and never writes to a database by itself:
+
+1. `npm run umoja:match -- <HR export>` looks members up in Graph (device-code sign-in as you) and writes `data/umoja-match-report.csv`
+   (gitignored: it is the only place names and emails are written). Each row shows the account found, how it matched (`exact_name` or
+   `given_surname`) and, for ambiguous rows, every account that fits.
+2. Open the report, check each row, and put `yes` in the `confirm` column of the rows that are right. Then
+   `npm run umoja:match -- --apply-confirmed data/umoja-match-report.csv` writes the account id and email of the confirmed rows only.
+   Ambiguous, not-found and conflicting rows can never be applied, even if marked `yes`.
+
 ## When sign-in stops working
 
 A failed token exchange is logged with its Microsoft error code. `AADSTS7000222` (secret expired) and `AADSTS7000215` (secret invalid)

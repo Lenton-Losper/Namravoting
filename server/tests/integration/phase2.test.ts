@@ -4,7 +4,7 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../../src/app.js';
 import { closePool } from '../../src/db.js';
 import { revokeAllSessions } from '../../src/auth/sessions.js';
-import { ADMIN_A, S1, TEST_OWNER_URL, closeOwner, login, makeCampaign, ownerDb, resetDb } from '../helpers.js';
+import { ADMIN_A, S1, TEST_OWNER_URL, closeOwner, login, makeCampaign, ownerDb, resetDb, sessionFor } from '../helpers.js';
 
 const app = createApp();
 beforeEach(resetDb);
@@ -59,7 +59,8 @@ describe('SEC-06: server-side sessions', () => {
     const agent = request.agent(app);
     const token = (await agent.get('/api/csrf')).body.token as string;
     const first = await agent.post('/api/dev/login').set('x-csrf-token', token).send(S1).expect(200);
-    const second = await agent.post('/api/dev/login').set('x-csrf-token', token).send(S1).expect(200);
+    const bound = (await agent.get('/api/csrf')).body.token as string;       // SEC-15: tokens are bound to the session
+    const second = await agent.post('/api/dev/login').set('x-csrf-token', bound).send(S1).expect(200);
     const idOf = (r: request.Response) => decodeURIComponent(((r.headers['set-cookie'] as unknown as string[]).find((c) => c.startsWith('namra_session='))!).split(';')[0].split('=')[1]).split('.')[0];
     expect(idOf(first)).not.toBe(idOf(second));
     const rows = (await ownerDb().query('SELECT revoked_at FROM sessions ORDER BY created_at')).rows;
@@ -143,7 +144,7 @@ describe('SEC-04: a permanent delete needs a copy of the result first', () => {
     const db = new pg.Client({ connectionString: 'postgres://namra_app:namra_app_dev@localhost:5433/namra_test' });
     await db.connect();
     try {
-      await expect(db.query('SELECT delete_archived_campaign($1, $2)', [c.id, S1.oid])).rejects.toThrow(/campaign not found/);
+      await expect(db.query('SELECT delete_archived_campaign($1, $2)', [c.id, await sessionFor(S1)])).rejects.toThrow(/campaign not found/);
     } finally { await db.end(); }
     void TEST_OWNER_URL;
   });

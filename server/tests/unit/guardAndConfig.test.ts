@@ -31,7 +31,7 @@ describe('umoja import guard', () => {
   });
 });
 
-const base = { SESSION_SECRET: 'x'.repeat(40), DATABASE_URL: 'postgres://a@localhost/x' };
+const base = { SESSION_SECRET: 'x'.repeat(40), DATABASE_URL: 'postgres://a@localhost/x', ALLOW_DEV_AUTH: 'true' };
 
 describe('production auth and storage rules', () => {
   it('AUTH_MODE=dev is still refused in production', () => {
