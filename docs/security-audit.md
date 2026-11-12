@@ -12,36 +12,36 @@
 
 ## 0. Fix status
 
-Updated as each phase lands. The detailed findings below are the original audit text and are not rewritten.
+Updated as each phase lands (P1 = Phase 1, and so on). The detailed findings below are the original audit text and are not rewritten. Nothing has been deployed.
 
 | ID | Status | Commit | Notes |
 |---|---|---|---|
 | SEC-01 | ✅ fixed | `cee80e3` | Turnout only while open; early close and reset need a reason, shown to voters and in published results; reset-round counts withheld until close; live per-candidate polling removed. |
-| SEC-02 | ✅ fixed | `cee80e3` | Per-candidate tallies replace the ballots table (migration 007). Tally rows re-stamped after each vote and at close so no xmin matches a receipt. A shuffled/encrypted ballot box was not needed. |
+| SEC-02 | ✅ fixed | `cee80e3` | Per-candidate tallies replace the ballots table (migration 007). Tally rows re-stamped after each vote and at close so no xmin matches a receipt. A shuffled/encrypted ballot box was not needed. Residual: dead row versions in the heap/WAL are visible only to a database superuser. |
 | SEC-03 | ✅ fixed | `cee80e3` | Receipts carry member_key (oid-match, then employee code, then demo email) with UNIQUE (campaign, member_key) (migration 008). |
-| SEC-04 | ◐ partly fixed | `cee80e3` | Done: final tallies sealed in a hash-chained audit entry, verify function, admin "Verify results integrity", sealed entry survives permanent delete. Remaining (Phase 2): export before permanent delete. |
+| SEC-04 | ✅ fixed | `cee80e3`, `61ef519` | Final tallies sealed in a hash-chained audit entry, verify function and admin "Verify results integrity", sealed entry survives permanent delete (P1). Permanent delete needs a results CSV exported after close; the CSV carries the seal fingerprint (P2). Not built: a second approver (there are no co-admins yet). |
 | SEC-05 | ✅ fixed | `cee80e3` | campaign_voters snapshot (identities only) taken at start; eligibility checked against it (migration 009). |
-| SEC-06 | ☐ open |  | Phase 2. |
+| SEC-06 | ✅ fixed | `61ef519` | Server-side sessions (migration 010): random id, hash in the database, logout/revoke really invalidate, new id per sign-in, admin sessions 4 h, roles read live; separate HKDF keys for session, sign-in flow and CSRF; optional SESSION_SECRET_PREVIOUS and CSRF_SECRET for rotation. |
 | SEC-07 | ✅ fixed | `cee80e3` | Production refuses DEMO_MEMBER_EMAILS without DEMO=true; admin banner and log line while active. wrangler.jsonc now sets DEMO=true for the current demo deployment. |
-| SEC-08 | ☐ open |  | Phase 2. |
+| SEC-08 | ✅ fixed | `61ef519` | Admin limiter before the admin gate, denial audit entries de-duplicated, per-address limits on /auth/* and /api/csrf, read limiter on voter GETs, lazy close takes no lock unless due. Limits are in memory (one instance). |
 | SEC-09 | ✅ fixed | `cee80e3` | Dockerfile on node:22-bookworm-slim (tag; not pinned by digest). |
 | SEC-10 | ☑ accepted (owner decision) |  | Accepted by the owner (2026-11-12): no credential rotation or token scoping. |
 | SEC-11 | ✅ fixed | `cee80e3` | ADMIN_OIDS added; email matching is the documented fallback (off once ADMIN_OIDS is set). The deployed config still uses ADMIN_EMAILS until ADMIN_OIDS is set (docs/operations.md). |
-| SEC-12 | ☐ open |  | Phase 3. |
-| SEC-13 | ☐ open |  | Phase 3. |
-| SEC-14 | ☐ open |  | Phase 3. |
-| SEC-15 | ☐ open |  | Phase 3. |
-| SEC-16 | ☐ open |  | Phase 3. |
-| SEC-17 | ☐ open |  | Phase 3. |
-| SEC-18 | ☐ open |  | Phase 3. |
-| SEC-19 | ☐ open |  | Phase 3. |
-| SEC-20 | ☐ open |  | Phase 3. |
-| SEC-21 | ☐ open |  | Phase 3. |
-| SEC-22 | ☐ open |  | Phase 3. |
-| SEC-23 | ☐ open |  | Phase 3. |
-| SEC-24 | ☑ accepted (owner decision) |  | Owner decision (2026-11-12): the repository stays public for now. |
-| SEC-25 | ☐ open |  | Phase 3. |
-| SEC-26 | ☐ open |  | Phase 3. |
+| SEC-12 | ✅ fixed | `61ef519` | The sign-in-flow cookie is signed with its own key, so it cannot verify as a session; the session payload is no longer a signed blob at all. |
+| SEC-13 | ✅ fixed | `5784b7d` | AUTH_MODE=dev needs ALLOW_DEV_AUTH=true (never with NODE_ENV=production) and listens on 127.0.0.1 unless DEV_LAN=true. |
+| SEC-14 | ✅ fixed | `5784b7d` | Logout is POST /api/logout with CSRF; GET /auth/logout signs nobody out. |
+| SEC-15 | ✅ fixed | `5784b7d` | CSRF token HMAC covers the session id hash. AUTH_MODE=demo has no sessions, so its CSRF token stays unbound (Cloudflare Access gates it). |
+| SEC-16 | ✅ fixed | `5784b7d` | Receipts != tallies: close is refused (manual and automatic), recorded once, creator acknowledges with a note, the seal records it; a closed result that no longer matches its seal cannot be published. |
+| SEC-17 | ✅ fixed | `5784b7d` | Clean-up functions take a live session id and derive the actor (NR401 without one), search_path pg_catalog first, PUBLIC revoked; a trigger enforces the campaign state machine for the app role (migration 011). Admin status itself is still decided by the app. |
+| SEC-18 | ✅ fixed | `5784b7d` | Cut-offs, closing and start checks use the database clock; every time shown or typed is Windhoek time (CAT) via client/src/windhoek.ts; stored as UTC instants. |
+| SEC-19 | ✅ fixed | `5784b7d` | Error logs use the route pattern and a scrubbed message; accounts appear as a 10-character one-way tag. Worker per-request logs switched off in wrangler.jsonc (takes effect at the next deploy). |
+| SEC-20 | ✅ fixed | `5784b7d` | Pixel count (12 MP) and side length (8000) are read from the header before decoding; animated images refused; two decodes at a time. |
+| SEC-21 | ✅ fixed | `5784b7d` | Bidi, zero-width and control characters stripped from titles, descriptions, names, bios, reasons and display names (NFC-normalised). |
+| SEC-22 | ✅ fixed | `5784b7d` | umoja:match never writes; the report has oid/basis/other candidates and an empty confirm column; only rows marked yes are applied (--apply-confirmed); ambiguous and not-found rows can never be applied. |
+| SEC-23 | ✅ fixed | `5784b7d` | cf-deploy.mjs reads the auth mode from wrangler.jsonc, requires and sends only that mode's secrets, refuses dev/non-production config, never generates a secret. |
+| SEC-24 | ☑ accepted (owner decision) |  | Owner decision (2026-11-12): the repository stays public for now. (It was made public before the audit; the audit report itself was pushed while the repo was public.) |
+| SEC-25 | ✅ fixed | `5784b7d` | The Worker deletes client X-Forwarded-*, Forwarded, X-Real-IP and sets its own (client address from CF-Connecting-IP). |
+| SEC-26 | ✅ fixed | `5784b7d` | Remote databases: explicit ssl { rejectUnauthorized: true, servername }, URL ssl parameters stripped, optional DB_SSL_CA. Verified against Neon: the handshake succeeds with Node's default trust store. |
 
 ---
 
