@@ -1,3 +1,4 @@
+import logo from './assets/namra-logo.jpg';
 import type { ReactNode } from 'react';
 
 /** Small inline outline icons (no dependency). All are decorative; the parent control carries the accessible name. */
@@ -34,12 +35,12 @@ export function Icon({ name, size = 16 }: { name: string; size?: number }) {
 
 /**
  * Wordmark: "NamRA | Voting".
- * TODO: replace the "NamRA" text below with the official NamRA SVG logo (keep the white variant for the navy bar).
+ * The official NamRA mark (client/src/assets/namra-logo.jpg, used as supplied) sits on a small white rounded backing, so it stays visible on the navy bar.
  */
 export function Wordmark({ dark = false }: { dark?: boolean }) {
   return (
     <span className={`wordmark${dark ? ' wordmark-dark' : ''}`}>
-      <span className="wordmark-logo">NamRA</span>
+      <span className="wordmark-logo"><img src={logo} alt="NamRA" width={32} height={32} decoding="async" /></span>
       <span className="wordmark-sep" aria-hidden="true" />
       <span className="wordmark-sub">Voting</span>
     </span>

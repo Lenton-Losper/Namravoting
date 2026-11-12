@@ -1,6 +1,7 @@
 import ExcelJS from 'exceljs';
 import PDFDocument from 'pdfkit';
 import type { Queryable } from '../db.js';
+import { NAMRA_LOGO_JPEG } from './logo.js';
 import { getNotices, getResults, verifySeal, type CampaignRow } from './campaigns.js';
 
 /**
@@ -138,7 +139,7 @@ export async function buildXlsx(d: ExportData): Promise<Buffer> {
   return Buffer.from(await wb.xlsx.writeBuffer());
 }
 
-/** The header is text until the logo file exists in the project. */
+/** The header carries the official NamRA mark (services/logo.ts) and the text "NamRA | Voting". */
 export async function buildPdf(d: ExportData, opts: { compress?: boolean } = {}): Promise<Buffer> {
   const doc = new PDFDocument({ size: 'A4', margin: 50, compress: opts.compress ?? true, info: { Title: `Results: ${d.title}`.slice(0, 200), Author: 'NamRA Voting', Creator: 'NamRA Voting' } });
   const chunks: Buffer[] = [];
@@ -147,7 +148,10 @@ export async function buildPdf(d: ExportData, opts: { compress?: boolean } = {})
   const ensure = (h: number) => { if (doc.y + h > bottom()) doc.addPage(); };
 
   doc.rect(0, 0, doc.page.width, 56).fill('#14254a');
-  doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(18).text('NamRA | Voting', L, 19, { width: W });
+  // the official mark, as supplied, on a white rounded backing so it shows on the navy bar
+  doc.roundedRect(L, 8, 40, 40, 6).fill('#ffffff');
+  doc.save(); doc.roundedRect(L + 2, 10, 36, 36, 5).clip(); doc.image(NAMRA_LOGO_JPEG, L + 2, 10, { width: 36, height: 36 }); doc.restore();
+  doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(18).text('NamRA | Voting', L + 52, 19, { width: W - 52 });
   doc.fillColor('#000000').y = 78;
 
   doc.font('Helvetica-Bold').fontSize(20).text(d.title, L, doc.y, { width: W });
