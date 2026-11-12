@@ -1,5 +1,5 @@
 import type { Queryable } from '../db.js';
-import { withTx } from '../db.js';
+import { getPool, withTx } from '../db.js';
 import { shouldAutoClose, type Status } from '../domain/status.js';
 import { audit } from './audit.js';
 import { restampTallies, tallySum } from './tallies.js';
@@ -42,6 +42,9 @@ export async function closeInTx(
 
 /** Lazy auto-close (replaces a cron job): closes the campaign if closes_at has passed. */
 export async function refreshStatus(campaignId: string): Promise<void> {
+  // Cheap read first (SEC-08): every page load calls this, and a write transaction with a row lock per call is a free load generator.
+  const peek = (await getPool().query('SELECT status, opens_at, closes_at FROM campaigns WHERE id = $1', [campaignId])).rows[0];
+  if (!peek || !shouldAutoClose(peek, new Date())) return;
   await withTx(async (c) => {
     const { rows } = await c.query('SELECT status, opens_at, closes_at FROM campaigns WHERE id = $1 FOR UPDATE', [campaignId]);
     if (rows[0] && shouldAutoClose(rows[0], new Date())) await closeInTx(c, campaignId, null, 'auto');

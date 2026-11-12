@@ -29,10 +29,15 @@ export function parseConfig(env: NodeJS.ProcessEnv) {
     DEMO_BANNER: z.enum(['true', 'false']).optional(),
     PUBLIC_BASE_URL: z.string().url().default('http://localhost:5173'),
     SESSION_SECRET: z.string().min(32, 'SESSION_SECRET must be at least 32 characters'),
+    // Rotation: the previous secret is accepted for verification only; CSRF_SECRET lets the CSRF key rotate on its own (auth/keys.ts).
+    SESSION_SECRET_PREVIOUS: z.string().min(32, 'SESSION_SECRET_PREVIOUS must be at least 32 characters').optional(),
+    CSRF_SECRET: z.string().min(32, 'CSRF_SECRET must be at least 32 characters').optional(),
     DATABASE_URL: z.string().min(1),
     UPLOAD_DIR: z.string().default('./uploads'),
     VOTE_RATE_LIMIT_PER_MIN: z.coerce.number().int().positive().default(10),
     ADMIN_RATE_LIMIT_PER_MIN: z.coerce.number().int().positive().default(60),
+    READ_RATE_LIMIT_PER_MIN: z.coerce.number().int().positive().default(120),
+    AUTH_RATE_LIMIT_PER_MIN: z.coerce.number().int().positive().default(30),
   });
   const e = schema.parse(env);
   if (e.AUTH_MODE === 'dev' && e.NODE_ENV === 'production') {
@@ -66,6 +71,8 @@ export function parseConfig(env: NodeJS.ProcessEnv) {
     authMode: e.AUTH_MODE,
     publicBaseUrl: e.PUBLIC_BASE_URL.replace(/\/$/, ''),
     sessionSecret: e.SESSION_SECRET,
+    sessionSecretPrevious: e.SESSION_SECRET_PREVIOUS ?? null,
+    csrfSecret: e.CSRF_SECRET ?? null,
     databaseUrl: e.DATABASE_URL,
     uploadDir: path.resolve(e.UPLOAD_DIR),
     storage: e.STORAGE,
@@ -73,6 +80,8 @@ export function parseConfig(env: NodeJS.ProcessEnv) {
     access: e.AUTH_MODE === 'demo' ? { teamDomain: e.CF_ACCESS_TEAM_DOMAIN!, aud: e.CF_ACCESS_AUD! } : null,
     voteRateLimit: e.VOTE_RATE_LIMIT_PER_MIN,
     adminRateLimit: e.ADMIN_RATE_LIMIT_PER_MIN,
+    readRateLimit: e.READ_RATE_LIMIT_PER_MIN,
+    authRateLimit: e.AUTH_RATE_LIMIT_PER_MIN,
   };
 }
 export interface EntraConfig {

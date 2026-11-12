@@ -38,6 +38,8 @@ npm test      # needs the Docker DB running; rebuilds the namra_test database fr
 - Casting a vote is one transaction (lock the campaign row `FOR SHARE`, re-check open and eligible, insert receipt, increment one tally). A close or reset takes `FOR UPDATE` on the same row, so it waits for votes in flight. Duplicate gives 409.
 - A composite foreign key makes a tally's candidate belong to the same campaign. A trigger blocks candidate changes after start, and another stops the app role from changing a counter by anything other than +1.
 - The server connects as `namra_app`: INSERT/UPDATE/SELECT on `tallies` (counters only grow by one), INSERT/SELECT on `audit_log`, `vote_receipts`, `campaign_voters`. The owner role is used only by `migrate`/`seed` and the import scripts.
+- Sessions are server-side (`sessions` table, SHA-256 of a random id): logout revokes them, admin sessions last 4 h, roles are read live. Signing keys are derived per purpose (session, sign-in flow, CSRF).
+- A permanent delete needs the results CSV to have been exported after close; the CSV carries the seal fingerprint.
 - Vote routes never log bodies; the audit log never records candidate ids for votes.
 
 ## Swapping in Entra ID

@@ -6,7 +6,8 @@ import { getPool, UNIQUE_VIOLATION } from '../db.js';
 import { normalizeEmployeeCode } from '../domain/employeeCode.js';
 import { cookieOptions, readCookie } from './cookies.js';
 import { safeNext } from './safeNext.js';
-import { clearSession, getCurrentUser, setSession } from './devAuth.js';
+import { signingKey, verifyKeys } from './keys.js';
+import { createSession, endSession, rolesFor, sessionUser } from './sessions.js';
 import { sign, verify } from './signing.js';
 import { ADMIN_ROLE, type AuthUser } from './types.js';
 
@@ -58,11 +59,11 @@ export function mountEntra(app: Express, config: Config, opts: EntraOptions = {}
     const nonce = oidc.randomNonce();
     const next = safeNext(typeof req.query.next === 'string' ? req.query.next : null);
     // Already signed in (valid session): there is nothing to sign in to. Go straight to the target, no second Microsoft round trip.
-    const current = getCurrentUser(req);
+    const current = sessionUser(req);
     if (current) { res.set('Cache-Control', 'no-store'); return res.redirect(next ?? (current.roles.includes(ADMIN_ROLE) ? '/admin' : '/votes')); }
     pruneFlows(req, res);
     const payload: AuthState = { s: state, n: nonce, v: verifier, next, exp: Date.now() + AUTH_TTL_MS };
-    res.cookie(AUTH_COOKIE_PREFIX + state, sign(config.sessionSecret, payload), authCookie({ maxAge: AUTH_TTL_MS }));
+    res.cookie(AUTH_COOKIE_PREFIX + state, sign(signingKey(config, 'authflow'), payload), authCookie({ maxAge: AUTH_TTL_MS }));
     res.set('Cache-Control', 'no-store');
     res.redirect(oidc.buildAuthorizationUrl(oc, {
       redirect_uri: e.redirectUri, scope: SCOPE, response_type: 'code', state, nonce, prompt: 'select_account',
@@ -76,7 +77,7 @@ export function mountEntra(app: Express, config: Config, opts: EntraOptions = {}
     if (stateParam) res.clearCookie(AUTH_COOKIE_PREFIX + stateParam, authCookie());   // single use, whatever happens next
     res.set('Cache-Control', 'no-store');
     try {
-      const st = raw ? verify<AuthState>(config.sessionSecret, raw) : null;
+      const st = raw ? verify<AuthState>(verifyKeys(config, 'authflow'), raw) : null;
       if (!st || typeof st.exp !== 'number' || st.exp < Date.now()) throw reject('missing or expired auth cookie');
       if (st.s !== stateParam) throw reject('state does not match its cookie');
       if (typeof req.query.error === 'string') throw reject(`provider error ${req.query.error.slice(0, 40)}`);
@@ -99,16 +100,18 @@ export function mountEntra(app: Express, config: Config, opts: EntraOptions = {}
 
       const graph = await readGraphProfile(graphBase, tokens.access_token, fetch);
       const roles = Array.isArray(claims.roles) ? (claims.roles as unknown[]) : [];
-      // Admin = the app role in the token, or the account id in ADMIN_OIDS (SEC-11). Email only as a documented fallback.
-      const admin = roles.includes(ADMIN_ROLE) || e.adminOids.includes(oid.toLowerCase()) || (e.adminEmailsAllowed && e.adminEmails.includes(email));
+      // Admin = the app role in the token, or the account id in ADMIN_OIDS (SEC-11); email only as a documented fallback.
+      // The session stores only what the IdP asserted; roles are recomputed on every request (auth/sessions.ts).
+      const claimAdmin = roles.includes(ADMIN_ROLE);
       const user: AuthUser = {
         oid: oid.toLowerCase(), email,
         displayName: String(claims.name ?? graph.displayName ?? email).slice(0, 120) || email,
-        roles: admin ? [ADMIN_ROLE] : [],
+        roles: [],
         employeeCode: graph.employeeCode,
       };
       await upsertUser(user);
-      setSession(res, config, user);
+      await createSession(req, res, config, { oid: user.oid, email, claimAdmin });
+      const admin = rolesFor(config, { claimAdmin, oid: user.oid, email }).length > 0;
       res.redirect(st.next ?? (admin ? '/admin' : '/votes'));
     } catch (err) {
       // Log the reason (never tokens or secrets); the browser only learns that sign-in failed.
@@ -118,8 +121,8 @@ export function mountEntra(app: Express, config: Config, opts: EntraOptions = {}
   });
 
   // Clear the app session, then end the Microsoft session and come back to the site root.
-  app.get('/auth/logout', (_req: Request, res: Response) => {
-    clearSession(res, config);
+  app.get('/auth/logout', async (req: Request, res: Response) => {
+    await endSession(req, res, config);
     res.set('Cache-Control', 'no-store');
     res.redirect(oidc.buildEndSessionUrl(oc, { post_logout_redirect_uri: siteRoot, client_id: e.clientId }).href);
   });

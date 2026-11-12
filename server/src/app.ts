@@ -6,6 +6,8 @@ import helmet from 'helmet';
 import { getConfig } from './config.js';
 import { accessGate, createAccessVerifier, type AccessVerifier } from './auth/access.js';
 import { mountAuth } from './auth/index.js';
+import { authLimiter, csrfLimiter } from './auth/limits.js';
+import { sessionLoader } from './auth/sessions.js';
 import type { EntraOptions } from './auth/entra.js';
 import { csrfProtection, mountCsrf } from './auth/csrf.js';
 import { errorHandler, notFoundHandler } from './errors.js';
@@ -37,6 +39,9 @@ export function createApp(opts: { accessVerifier?: AccessVerifier; entra?: Entra
   }));   // helmet also sets X-Content-Type-Options: nosniff
 
   app.use(express.json({ limit: '100kb' }));
+  app.use('/auth', authLimiter(config));          // SEC-08: sign-in endpoints are throttled per client address
+  app.use('/api/csrf', csrfLimiter(config));
+  if (config.authMode !== 'demo') app.use(['/api', '/auth'], sessionLoader(config));   // server-side sessions (SEC-06)
   mountCsrf(app, config);
   app.use('/api', csrfProtection(config));
   mountAuth(app, config, opts.entra);

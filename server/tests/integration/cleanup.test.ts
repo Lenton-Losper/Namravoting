@@ -177,6 +177,7 @@ describe('permanent delete', () => {
     await A.post(`/api/campaigns/${f.id}/archive`).expect(200);
     expect(await rowCount('ballots', f.id)).toBe(2);
 
+    await A.get(`/api/campaigns/${f.id}/results.csv`).expect(200);                 // a copy of the result must exist first (SEC-04)
     const r = await A.post(`/api/campaigns/${f.id}/permanent-delete`).send({ confirm_title: TITLE }).expect(200);
     expect(r.body).toEqual({ deleted: true, ballots_removed: 2, receipts_removed: 2 });
     for (const t of ['ballots', 'vote_receipts', 'candidates', 'eligible_voters']) expect(await rowCount(t, f.id), t).toBe(0);

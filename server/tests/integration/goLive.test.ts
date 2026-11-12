@@ -73,6 +73,18 @@ describe('operator banners reach admins only', () => {
   });
 });
 
+describe('SEC-12: a signed sign-in-flow cookie is not a session', () => {
+  it('renaming the namra_auth_<state> cookie to namra_session gives no user and no access', async () => {
+    const login = await request(app).get('/auth/login');
+    const flow = (login.headers['set-cookie'] as unknown as string[]).find((c) => c.startsWith('namra_auth_'))!;
+    const value = flow.split(';')[0].split('=').slice(1).join('=');
+    const r = await request(app).get('/api/session').set('Cookie', `namra_session=${value}`);
+    expect(r.body.user).toBeNull();
+    await request(app).get('/api/vote').set('Cookie', `namra_session=${value}`).expect(401);
+    await request(app).get('/api/campaigns/mine').set('Cookie', `namra_session=${value}`).expect(401);
+  });
+});
+
 describe('a failed token exchange because of the client secret', () => {
   it('AADSTS7000222 logs a clear "client secret expired" error line and the user still just sees signin_failed', async () => {
     const err = vi.spyOn(console, 'error').mockImplementation(() => undefined);

@@ -1,39 +1,18 @@
-import crypto from 'node:crypto';
-import type { Express, Request, Response } from 'express';
 import { z } from 'zod';
+import type { Express } from 'express';
 import type { Config } from '../config.js';
 import { getPool, UNIQUE_VIOLATION } from '../db.js';
 import { HttpError } from '../errors.js';
 import { ADMIN_ROLE, type AuthUser } from './types.js';
 import { DEV_USERS } from './devUsers.js';
-import { cookieOptions, readCookie } from './cookies.js';
-import { sign, verify } from './signing.js';
-import { getConfig } from '../config.js';
+import { createSession, endSession, rolesFor } from './sessions.js';
 import { normalizeEmployeeCode } from '../domain/employeeCode.js';
 
-const COOKIE = 'namra_session';
-const TTL_MS = 8 * 60 * 60 * 1000;
-
-interface SessionPayload extends AuthUser { exp: number }
-
-/** Reads the signed, HttpOnly session cookie. Returns null if absent, tampered or expired. */
-export function getCurrentUser(req: Request): AuthUser | null {
-  const raw = readCookie(req, COOKIE);
-  if (!raw) return null;
-  const p = verify<SessionPayload>(getConfig().sessionSecret, raw);
-  if (!p || typeof p.exp !== 'number' || p.exp < Date.now()) return null;
-  return { oid: p.oid, email: p.email, displayName: p.displayName, roles: p.roles, employeeCode: p.employeeCode ?? null };
-}
-
-export function setSession(res: Response, config: Config, user: AuthUser): void {
-  const payload: SessionPayload = { ...user, exp: Date.now() + TTL_MS };
-  res.cookie(COOKIE, sign(config.sessionSecret, payload), cookieOptions(config, { httpOnly: true, maxAge: TTL_MS }));
-}
-
-export function clearSession(res: Response, config: Config): void {
-  res.clearCookie(COOKIE, cookieOptions(config, { httpOnly: true }));
-}
-
+/**
+ * AUTH_MODE=dev: a local identity picker. The client asserts who it is (including the admin role), so this must never be
+ * reachable outside a developer machine: config.ts refuses it when NODE_ENV=production.
+ * Sessions are the same server-side sessions as in entra mode (auth/sessions.ts).
+ */
 const loginBody = z.object({
   oid: z.string().uuid(),
   email: z.string().email().max(254),
@@ -44,32 +23,31 @@ const loginBody = z.object({
 }).strict();
 
 export function mount(app: Express, config: Config): void {
-  // Dev-only identity picker. Only mounted when AUTH_MODE=dev (config refuses dev+production).
+  // Dev-only identity picker. Only mounted when AUTH_MODE=dev.
   app.get('/api/dev/users', (_req, res) => { res.json({ users: DEV_USERS }); });
 
   app.post('/api/dev/login', async (req, res) => {
     const b = loginBody.parse(req.body);
     const employeeCode = normalizeEmployeeCode(b.employeeCode);   // malformed -> null
+    const email = b.email.toLowerCase();
     try {
       await getPool().query(
         `INSERT INTO users (entra_oid, email, display_name, employee_code) VALUES ($1, $2, $3, $4)
          ON CONFLICT (entra_oid) DO UPDATE SET email = EXCLUDED.email, display_name = EXCLUDED.display_name, employee_code = EXCLUDED.employee_code`,
-        [b.oid, b.email.toLowerCase(), b.displayName, employeeCode],
+        [b.oid, email, b.displayName, employeeCode],
       );
     } catch (e) {
       if ((e as { code?: string }).code === UNIQUE_VIOLATION) throw new HttpError(409, 'Email already belongs to another user');
       throw e;
     }
-    const user: AuthUser = { oid: b.oid, email: b.email.toLowerCase(), displayName: b.displayName, roles: b.roles, employeeCode };
-    setSession(res, config, user);
+    const claimAdmin = b.roles.includes(ADMIN_ROLE);
+    await createSession(req, res, config, { oid: b.oid, email, claimAdmin });
+    const user: AuthUser = { oid: b.oid, email, displayName: b.displayName, roles: rolesFor(config, { claimAdmin, oid: b.oid, email }), employeeCode };
     res.json({ user });
   });
 
-  app.post('/api/logout', (_req, res) => {
-    clearSession(res, config);
+  app.post('/api/logout', async (req, res) => {
+    await endSession(req, res, config);
     res.status(204).end();
   });
 }
-
-/** Exported for tests only. */
-export const _internal = { COOKIE, randomId: () => crypto.randomUUID() };

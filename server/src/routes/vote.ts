@@ -4,6 +4,7 @@ import { getConfig } from '../config.js';
 import { getPool } from '../db.js';
 import { HttpError, notFound } from '../errors.js';
 import { currentUser, getCurrentUser, requireUser, type AuthUser } from '../auth/index.js';
+import { clientIp } from '../auth/limits.js';
 import { voterState } from '../domain/status.js';
 import { tokenParams, voteBody } from '../domain/validation.js';
 import { getNotices, getResetHistory, getResults, refreshStatus, type CampaignRow } from '../services/campaigns.js';
@@ -46,6 +47,14 @@ async function standing(c: CampaignRow, u: AuthUser) {
 export function voteRouter(): Router {
   const r = Router();
   r.use(requireUser);
+
+  // GET routes (ballot page, My votes, results): each runs a lazy-close check and several queries, so they are throttled too.
+  const readLimiter = rateLimit({
+    windowMs: 60_000, limit: getConfig().readRateLimit, standardHeaders: 'draft-7', legacyHeaders: false,
+    keyGenerator: (req) => getCurrentUser(req as Request)?.oid ?? ipKeyGenerator(clientIp(req as Request)),
+    message: { error: 'Too many requests' },
+  });
+  r.use((req, res, next) => (req.method === 'GET' ? readLimiter(req, res, next) : next()));
 
   const voteLimiter = rateLimit({
     windowMs: 60_000, limit: getConfig().voteRateLimit, standardHeaders: 'draft-7', legacyHeaders: false,

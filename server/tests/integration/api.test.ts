@@ -261,14 +261,17 @@ describe('authorisation', () => {
     await request(app).get('/api/vote/' + 'A'.repeat(32)).expect(401);
   });
 
-  it('non-admin cannot forge the admin role (tampered session cookie is ignored)', async () => {
+  it('non-admin cannot forge the admin role (a forged or edited session cookie is ignored; roles are not in the cookie at all)', async () => {
     const agent = request.agent(app);
     const t = (await agent.get('/api/csrf')).body.token;
     const r = await agent.post('/api/dev/login').set('x-csrf-token', t).send(S1).expect(200);
     const cookie = (r.headers['set-cookie'] as unknown as string[]).find((c) => c.startsWith('namra_session='))!;
-    const [body] = decodeURIComponent(cookie.split(';')[0].split('=')[1]).split('.');
-    const forged = Buffer.from(JSON.stringify({ ...JSON.parse(Buffer.from(body, 'base64url').toString()), roles: ['CampaignAdmin'] })).toString('base64url');
+    const value = decodeURIComponent(cookie.split(';')[0].split('=')[1]);
+    expect(value).not.toContain('CampaignAdmin');
+    expect(() => JSON.parse(Buffer.from(value.split('.')[0], 'base64url').toString())).toThrow();   // an opaque random id, not a JSON payload
+    const forged = Buffer.from(JSON.stringify({ oid: ADMIN_A.oid, email: ADMIN_A.email, roles: ['CampaignAdmin'], exp: Date.now() + 1e9 })).toString('base64url');
     await request(app).get('/api/campaigns/mine').set('Cookie', `namra_session=${forged}.AAAA`).expect(401);
+    await request(app).get('/api/campaigns/mine').set('Cookie', `namra_session=${value.slice(0, -2)}xx`).expect(401);   // edited mac
   });
 
   it('every admin mutation writes an audit entry', async () => {

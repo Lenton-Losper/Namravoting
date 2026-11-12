@@ -240,6 +240,7 @@ describe('SEC-05 + SEC-04: frozen voter list and a sealed, hash-chained result',
   it('a permanent delete keeps the sealed result in the audit log, and verification says so', async () => {
     const c = await closedCampaign();
     await c.admin.post(`/api/campaigns/${c.id}/archive`).expect(200);
+    await c.admin.get(`/api/campaigns/${c.id}/results.csv`).expect(200);
     await c.admin.post(`/api/campaigns/${c.id}/permanent-delete`).send({ confirm_title: 'Sealed vote' }).expect(200);
     const sealed = (await ownerDb().query("SELECT details FROM audit_log WHERE campaign_id = $1 AND action = 'campaign.close'", [c.id])).rows;
     expect(sealed).toHaveLength(1);

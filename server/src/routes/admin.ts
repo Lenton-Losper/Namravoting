@@ -11,6 +11,7 @@ import { getConfig } from '../config.js';
 import { getPool, withTx } from '../db.js';
 import { HttpError, notFound } from '../errors.js';
 import { ADMIN_ROLE, currentUser, getCurrentUser, isAdmin, requireUser } from '../auth/index.js';
+import { clientIp } from '../auth/limits.js';
 import { normalizeEmail } from '../domain/eligibility.js';
 import {
   candParams, candidateBody, candidatePatchBody, closeBody, createCampaignBody, eligibleBody, idParams, patchCampaignBody, permanentDeleteBody, resetBody,
@@ -21,11 +22,26 @@ import { deletePhoto, MAX_UPLOAD_BYTES, savePhoto } from '../services/images.js'
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_UPLOAD_BYTES, files: 1, fields: 5, fieldSize: 4096 } });
 
-/** Admin gate: role check; failures are audit-logged. */
+/**
+ * Denials are audit-logged, but a client in a loop must not be able to fill the audit log (SEC-08): the same denial by the
+ * same user is written once per 10 minutes (the request itself is still refused every time, and is rate limited).
+ */
+const deniedSeen = new Map<string, number>();
+const DENIED_WINDOW_MS = 10 * 60_000;
+function shouldAuditDenied(key: string): boolean {
+  const now = Date.now();
+  if (deniedSeen.size > 5000) for (const [k, t] of deniedSeen) if (now - t > DENIED_WINDOW_MS) deniedSeen.delete(k);
+  const last = deniedSeen.get(key);
+  if (last !== undefined && now - last < DENIED_WINDOW_MS) return false;
+  deniedSeen.set(key, now);
+  return true;
+}
+
+/** Admin gate: role check; failures are audit-logged (once per user and request per 10 minutes). */
 const requireAdmin: RequestHandler = async (req, res, next) => {
   const u = currentUser(req);
   if (!isAdmin(u)) {
-    await audit(getPool(), u.oid, 'authz.denied', null, { reason: 'not_admin', method: req.method, path: req.path });
+    if (shouldAuditDenied(`${u.oid}|not_admin|${req.method} ${req.path}`)) await audit(getPool(), u.oid, 'authz.denied', null, { reason: 'not_admin', method: req.method, path: req.path });
     res.status(403).json({ error: 'Forbidden' });
     return;
   }
@@ -35,7 +51,7 @@ const requireAdmin: RequestHandler = async (req, res, next) => {
 /** Per-user admin rate limit (falls back to IP if somehow unauthenticated). */
 const adminLimiter = () => rateLimit({
   windowMs: 60_000, limit: getConfig().adminRateLimit, standardHeaders: 'draft-7', legacyHeaders: false,
-  keyGenerator: (req) => getCurrentUser(req as Request)?.oid ?? ipKeyGenerator(req.ip ?? ''),
+  keyGenerator: (req) => getCurrentUser(req as Request)?.oid ?? ipKeyGenerator(clientIp(req as Request)),
   message: { error: 'Too many requests' },
 });
 
@@ -50,7 +66,7 @@ const loadOwned: RequestHandler = async (req, res, next) => {
   const { rows } = await getPool().query('SELECT * FROM campaigns WHERE id = $1', [id]);
   const c = rows[0] as CampaignRow | undefined;
   if (!c || c.created_by !== u.oid) {
-    await audit(getPool(), u.oid, 'authz.denied', id, { reason: 'not_owner', method: req.method, path: req.path });
+    if (shouldAuditDenied(`${u.oid}|not_owner|${req.method} ${req.path}`)) await audit(getPool(), u.oid, 'authz.denied', id, { reason: 'not_owner', method: req.method, path: req.path });
     next(notFound());
     return;
   }
@@ -104,7 +120,7 @@ const csvCell = (v: string) => { const s = /^[=+\-@\t\r]/.test(v) ? "'" + v : v;
 
 export function adminRouter(): Router {
   const r = Router();
-  r.use(requireUser, requireAdmin, adminLimiter());
+  r.use(requireUser, adminLimiter(), requireAdmin);   // the limiter runs first, so a non-admin cannot hammer the admin gate (SEC-08)
 
   r.get('/mine', async (req, res) => {
     const u = currentUser(req);
@@ -379,6 +395,12 @@ export function adminRouter(): Router {
     const b = permanentDeleteBody.parse(req.body);
     if (!c.archived_at || c.status !== 'closed') throw new HttpError(409, 'Archive the campaign first. Only archived campaigns can be deleted permanently.', 'not_archived');
     if (b.confirm_title !== c.title) throw new HttpError(400, 'The title you typed does not match', 'title_mismatch');
+    // A permanent delete destroys the only copy of the counters and receipts, so a CSV of the sealed result must have been
+    // downloaded after the campaign closed (SEC-04). The sealed entry itself stays in the audit log.
+    const exported = await getPool().query(
+      `SELECT 1 FROM audit_log WHERE campaign_id = $1 AND action = 'results.export_csv'
+          AND seq > coalesce((SELECT max(seq) FROM audit_log WHERE campaign_id = $1 AND action LIKE 'campaign.close%'), 0) LIMIT 1`, [c.id]);
+    if (!exported.rowCount) throw new HttpError(409, 'Export the results (CSV) before deleting permanently, so a copy of the result exists outside the system.', 'export_first');
     const out = await callCleanup('SELECT delete_archived_campaign($1, $2) AS result', [c.id, currentUser(req).oid],
       () => ({ message: 'Archive the campaign first. Only archived campaigns can be deleted permanently.', code: 'not_archived' }), c.id);
     await removePhotos(out.photos);
@@ -462,7 +484,9 @@ export function adminRouter(): Router {
     const c = camp(res);
     if (c.status !== 'closed') throw new HttpError(409, 'CSV export is only available after the campaign is closed', 'not_closed');
     const results = await getResults(getPool(), c.id);
-    const lines = ['candidate,votes', ...results.candidates.map((x) => `${csvCell(x.name)},${x.votes}`), `Total ballots,${results.turnout.votes}`];
+    const seal = await verifySeal(getPool(), c.id);   // the fingerprint ties this file to the sealed audit entry (SEC-04)
+    const lines = ['candidate,votes', ...results.candidates.map((x) => `${csvCell(x.name)},${x.votes}`), `Total ballots,${results.turnout.votes}`,
+      ...(seal.sealed && seal.seal_hash ? [`Sealed at,${new Date(seal.sealed_at!).toISOString()}`, `Seal fingerprint,${seal.seal_hash}`] : [])];
     await audit(getPool(), currentUser(req).oid, 'results.export_csv', c.id);
     res.type('text/csv').set('Content-Disposition', 'attachment; filename="results.csv"').set('Cache-Control', 'private, no-store').send(lines.join('\r\n') + '\r\n');
   });

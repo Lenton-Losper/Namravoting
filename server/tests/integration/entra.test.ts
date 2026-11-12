@@ -365,18 +365,22 @@ describe('next and forged identity', () => {
   it('a tampered session cookie is not a login', async () => {
     const { callback } = await signIn({ claims: { preferred_username: ADMIN_EMAIL } });
     const c = sessionCookie(callback)!.split(';')[0];
-    const [body, mac] = decodeURIComponent(c.split('=')[1]).split('.');
-    const p = JSON.parse(Buffer.from(body, 'base64url').toString()); p.email = 'someone.else@namra.org.na';
-    const forged = `${Buffer.from(JSON.stringify(p)).toString('base64url')}.${mac}`;
-    expect((await request(app).get('/api/session').set('Cookie', `namra_session=${encodeURIComponent(forged)}`)).body.user).toBeNull();
+    const [id, mac] = decodeURIComponent(c.split('=')[1]).split('.');
+    const other = `${id.slice(0, -1)}${id.endsWith('A') ? 'B' : 'A'}.${mac}`;      // another id with the old mac
+    expect((await request(app).get('/api/session').set('Cookie', `namra_session=${encodeURIComponent(other)}`)).body.user).toBeNull();
+    expect((await request(app).get('/api/session').set('Cookie', `namra_session=${encodeURIComponent(id + '.' + mac.slice(0, -1) + 'x')}`)).body.user).toBeNull();
+    // control: the real cookie works
+    expect((await request(app).get('/api/session').set('Cookie', `namra_session=${encodeURIComponent(id + '.' + mac)}`)).body.user).not.toBeNull();
   });
 });
 
 describe('sign out', () => {
   it('clears the app session and redirects to Microsoft sign-out, returning to the site root', async () => {
-    const { agent } = await signIn();
+    const { agent, callback } = await signIn();
     expect((await agent.get('/api/session')).body.user).not.toBeNull();
+    const copied = sessionCookie(callback)!.split(';')[0];                      // a copy of the cookie, as an attacker might hold
     const r = await agent.get('/auth/logout').expect(302);
+    expect((await request(app).get('/api/session').set('Cookie', copied)).body.user).toBeNull();   // SEC-06: logout revokes it server-side
     const u = new URL(r.headers.location);
     expect(u.origin + u.pathname).toBe(`${idp.base}/${TENANT}/oauth2/v2.0/logout`);
     expect(u.searchParams.get('post_logout_redirect_uri')).toBe('https://app.test/');

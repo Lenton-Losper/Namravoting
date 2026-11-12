@@ -9,6 +9,7 @@ import { getConfig, type Config } from '../config.js';
 import * as devAuth from './devAuth.js';
 import * as demoAuth from './demoAuth.js';
 import { mountEntra, type EntraOptions } from './entra.js';
+import { endSession, sessionUser } from './sessions.js';
 import { adminNotices } from './notices.js';
 
 import { ADMIN_ROLE, type AuthUser } from './types.js';
@@ -16,7 +17,7 @@ export { ADMIN_ROLE, type AuthUser };
 
 /** The one interface the rest of the app uses to learn who is calling. */
 export function getCurrentUser(req: Request): AuthUser | null {
-  return getConfig().authMode === 'demo' ? demoAuth.getCurrentUser(req) : devAuth.getCurrentUser(req);
+  return getConfig().authMode === 'demo' ? demoAuth.getCurrentUser(req) : sessionUser(req);
 }
 
 export const isAdmin = (u: AuthUser): boolean => u.roles.includes(ADMIN_ROLE);
@@ -32,7 +33,7 @@ export function mountAuth(app: Express, config: Config, entraOptions: EntraOptio
   } else {
     // Microsoft Entra ID sign-in (/auth/login, /auth/callback, /auth/logout) + the same signed session cookie as dev.
     mountEntra(app, config, entraOptions);
-    app.post('/api/logout', (_req, res) => { devAuth.clearSession(res, config); res.status(204).end(); });
+    app.post('/api/logout', async (req, res) => { await endSession(req, res, config); res.status(204).end(); });
   }
   app.get('/api/session', (req, res) => {
     res.set('Cache-Control', 'no-store');

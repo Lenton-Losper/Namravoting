@@ -17,6 +17,8 @@ export default defineConfig({
       UPLOAD_DIR: path.join(os.tmpdir(), 'namra-voting-test-uploads'),
       VOTE_RATE_LIMIT_PER_MIN: '10000',
       ADMIN_RATE_LIMIT_PER_MIN: '10000',
+      READ_RATE_LIMIT_PER_MIN: '100000',
+      AUTH_RATE_LIMIT_PER_MIN: '100000',
       PUBLIC_BASE_URL: 'http://localhost:5173',
     },
   },

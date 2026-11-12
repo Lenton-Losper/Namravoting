@@ -219,7 +219,8 @@ function SideCard({ c, reload }: { c: CampaignDetail; reload: () => Promise<void
       {dialog === 'permanent' && (
         <Dialog title="Delete permanently?" confirmLabel="Delete permanently" danger busy={busy} confirmDisabled={!titleOk}
           onConfirm={() => void run(() => post('permanent-delete', { confirm_title: typed }), () => nav('/admin', { replace: true }))} onCancel={() => setDialog(null)}>
-          <p className="confirm-warning">This deletes the campaign, its {c.turnout} recorded {c.turnout === 1 ? 'vote' : 'votes'}, candidates and photos for good. This can't be undone. (A record of the deletion stays in the audit log.)</p>
+          <p className="confirm-warning">This deletes the campaign, its {c.turnout} recorded {c.turnout === 1 ? 'vote' : 'votes'}, candidates and photos for good. This can't be undone. (The sealed result and a record of the deletion stay in the audit log.)</p>
+          <p className="field-helper">You must have exported the results (CSV, Results tab) after the campaign closed, so a copy of the result exists outside the system.</p>
           <label>Type the campaign title to confirm<span className="field-helper">{c.title}</span>
             <input value={typed} onChange={(e) => setTyped(e.target.value)} autoComplete="off" spellCheck={false} /></label>
         </Dialog>
