@@ -30,13 +30,19 @@ describe('happy path', () => {
       await s.post(`/api/vote/${c.token}`).send({ candidateId: pick }).expect(201);
     }
 
+    // SEC-01: while the campaign is open even the creator sees turnout only, never per-candidate counts
+    const live = (await admin.get(`/api/campaigns/${c.id}/results`).expect(200)).body;
+    expect(live.candidates).toBeNull();
+    expect(live.turnout.votes).toBe(3);
+    expect(JSON.stringify(live)).not.toMatch(/"votes":s*[12].*"name"/);
+
+    const closed = (await admin.post(`/api/campaigns/${c.id}/close`).expect(200)).body;
     const res = (await admin.get(`/api/campaigns/${c.id}/results`).expect(200)).body;
     const votes = Object.fromEntries(res.candidates.map((x: { id: string; votes: number }) => [x.id, x.votes]));
     expect(votes[a]).toBe(2);
     expect(votes[b]).toBe(1);
     expect(res.turnout.votes).toBe(3);
 
-    const closed = (await admin.post(`/api/campaigns/${c.id}/close`).expect(200)).body;
     expect(closed.integrity).toEqual({ ballots: 3, receipts: 3, match: true });
     expect(await count('ballots', c.id)).toBe(await count('vote_receipts', c.id));
     const log = await ownerDb().query("SELECT details FROM audit_log WHERE campaign_id = $1 AND action = 'campaign.close'", [c.id]);
@@ -126,6 +132,7 @@ describe('load', () => {
     expect(rs.filter((r) => r.status !== 201).map((r) => r.status)).toEqual([]);
     expect(await count('vote_receipts', c.id)).toBe(40);
     expect(await count('ballots', c.id)).toBe(40);
+    await admin.post(`/api/campaigns/${c.id}/close`).expect(200);
     const res = (await admin.get(`/api/campaigns/${c.id}/results`)).body;
     expect(res.candidates.map((x: { votes: number }) => x.votes)).toEqual([30, 10]);
   });
@@ -194,14 +201,14 @@ describe('vote rules', () => {
     await s.post(`/api/vote/${c1.token}`).send({ candidateId: c1.candidates[0] }).expect(201);
   });
 
-  it('DB itself rejects a ballot whose candidate belongs to another campaign', async () => {
+  it('DB itself rejects a tally row whose candidate belongs to another campaign', async () => {
     const admin = await login(app, ADMIN_A);
     const c1 = await makeCampaign(admin, 2, 'One');
     const c2 = await makeCampaign(admin, 2, 'Two');
     const db = new pg.Client({ connectionString: TEST_APP_URL });
     await db.connect();
     try {
-      await expect(db.query('INSERT INTO ballots (campaign_id, candidate_id) VALUES ($1, $2)', [c1.id, c2.candidates[0]])).rejects.toThrow(/foreign key/);
+      await expect(db.query('INSERT INTO tallies (campaign_id, candidate_id) VALUES ($1, $2)', [c1.id, c2.candidates[0]])).rejects.toThrow(/foreign key/);
     } finally { await db.end(); }
   });
 
@@ -365,12 +372,26 @@ describe('locking after start', () => {
 });
 
 describe('ballot secrecy (schema)', () => {
-  it('ballots contain nothing that identifies the voter', async () => {
-    const cols = await ownerDb().query("SELECT column_name, data_type FROM information_schema.columns WHERE table_name = 'ballots' ORDER BY column_name");
-    expect(cols.rows.map((r) => r.column_name)).toEqual(['campaign_id', 'candidate_id', 'id']);
-    expect(cols.rows.some((r) => /timestamp|inet|voter|user|oid|email|ip/.test(r.column_name + r.data_type))).toBe(false);
+  it('SEC-02: there is no row per vote: no ballots table, and a tally row holds only counts', async () => {
+    expect((await ownerDb().query("SELECT to_regclass('public.ballots') AS t")).rows[0].t).toBeNull();
+    const cols = await ownerDb().query("SELECT column_name FROM information_schema.columns WHERE table_name = 'tallies' ORDER BY column_name");
+    expect(cols.rows.map((r) => r.column_name)).toEqual(['campaign_id', 'candidate_id', 'votes']);
     const receipts = await ownerDb().query("SELECT column_name FROM information_schema.columns WHERE table_name = 'vote_receipts' ORDER BY column_name");
-    expect(receipts.rows.map((r) => r.column_name)).toEqual(['campaign_id', 'voter_oid']);
+    expect(receipts.rows.map((r) => r.column_name)).toEqual(['campaign_id', 'member_key', 'voter_oid']);   // no candidate, no timestamp
+  });
+
+  it('SEC-02 regression: no tally row shares its hidden xmin with any receipt (the old ballots/receipts join is dead)', async () => {
+    const a = await login(app, ADMIN_A);
+    const c = await makeCampaign(a, 3);
+    await a.post(`/api/campaigns/${c.id}/start`).expect(200);
+    for (const [i, u] of [S1, S2, S3, S4].entries()) await (await login(app, u)).post(`/api/vote/${c.token}`).send({ candidateId: c.candidates[i % 3] }).expect(201);
+    const t = await ownerDb().query('SELECT DISTINCT xmin::text AS x FROM tallies WHERE campaign_id = $1', [c.id]);
+    expect(t.rowCount, 'every tally row carries the same re-stamped xmin').toBe(1);
+    const r = await ownerDb().query('SELECT xmin::text AS x FROM vote_receipts WHERE campaign_id = $1', [c.id]);
+    expect(r.rowCount).toBe(4);
+    expect(r.rows.map((x) => x.x)).not.toContain(t.rows[0].x);
+    const joined = await ownerDb().query('SELECT 1 FROM vote_receipts r JOIN tallies y ON y.campaign_id = r.campaign_id AND y.xmin::text = r.xmin::text WHERE r.campaign_id = $1', [c.id]);
+    expect(joined.rowCount).toBe(0);
   });
 
   it('audit log never contains candidate ids or vote data after voting', async () => {
@@ -384,7 +405,7 @@ describe('ballot secrecy (schema)', () => {
     expect(rows.rowCount).toBe(0);
   });
 
-  it('app DB role cannot UPDATE/DELETE ballots or audit_log, nor touch receipts', async () => {
+  it('app DB role cannot UPDATE/DELETE audit_log or receipts, cannot delete tallies, and can only add one vote at a time', async () => {
     const a = await login(app, ADMIN_A);
     const c = await makeCampaign(a, 2);
     await a.post(`/api/campaigns/${c.id}/start`).expect(200);
@@ -394,11 +415,14 @@ describe('ballot secrecy (schema)', () => {
     await db.connect();
     try {
       for (const sql of [
-        'UPDATE ballots SET candidate_id = candidate_id', 'DELETE FROM ballots', 'TRUNCATE ballots',
+        'DELETE FROM tallies', 'TRUNCATE tallies',
         'UPDATE audit_log SET action = action', 'DELETE FROM audit_log',
         'UPDATE vote_receipts SET voter_oid = voter_oid', 'DELETE FROM vote_receipts',
       ]) await expect(db.query(sql), sql).rejects.toThrow(/permission denied/);
-      expect((await db.query('SELECT count(*)::int AS n FROM ballots')).rows[0].n).toBe(1);
+      await expect(db.query('UPDATE tallies SET votes = votes + 2')).rejects.toThrow(/one vote at a time/);
+      await expect(db.query('UPDATE tallies SET votes = 0')).rejects.toThrow(/one vote at a time/);
+      await db.query('UPDATE tallies SET votes = votes');                                        // re-stamp (unchanged) is allowed
+      expect((await db.query('SELECT coalesce(sum(votes), 0)::int AS n FROM tallies')).rows[0].n).toBe(1);
     } finally { await db.end(); }
   });
 });

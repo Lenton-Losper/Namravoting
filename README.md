@@ -30,13 +30,15 @@ npm test      # needs the Docker DB running; rebuilds the namra_test database fr
 
 ## How the secrecy and integrity rules are enforced
 
-- `ballots` has only `id` (random uuid), `campaign_id`, `candidate_id`. No voter, timestamp or IP. `vote_receipts` has no candidate and no timestamp.
-- One vote per person: primary key on `vote_receipts (campaign_id, voter_oid)`.
-- Casting a vote is one `SERIALIZABLE` transaction (re-check open and eligible, insert receipt, insert ballot), retried up to 3 times on serialization failure. Duplicate gives 409.
-- A composite foreign key makes a ballot's candidate belong to the same campaign. A trigger blocks candidate changes after start.
-- The server connects as `namra_app`: INSERT/SELECT only on `ballots`, `audit_log`, `vote_receipts`. The owner role is used only by `migrate`/`seed`.
+- **No row per vote** (SEC-02). There is no `ballots` table. Each candidate has one counter row in `tallies`; casting a vote does `votes = votes + 1` in the same transaction as the voter's receipt. `vote_receipts` has no candidate and no timestamp. Because the vote transaction writes the receipt and one counter, Postgres' hidden `xmin` of the counter row would match the voter's receipt, so every tally row of the campaign is re-stamped in a separate transaction right after the vote (and at close): all rows then share one `xmin` that belongs to no voter. A test asserts that no tally row shares an `xmin` with any receipt.
+- **One vote per member** (SEC-03), not per account. Each receipt carries `member_key` (`code:<employee code>` for Umoja campaigns, resolved from the matched Entra account first, then the employee code, then the demo override; `oid:<account>` otherwise) with a unique constraint `(campaign_id, member_key)`. `voter_oid` stays the primary key for "have I voted".
+- **Nobody sees per-candidate counts while a campaign is open** (SEC-01), not even the creator: the results endpoint returns turnout only until the campaign is closed. Closing before the planned closing time and resetting both need a reason; both are shown to voters on the ballot page and in the published results.
+- **The voter list is frozen at start** (SEC-05): `campaign_voters` holds identities only (employee code, matched account id, active flag). A later import or re-match cannot change who may vote.
+- **The result is sealed** (SEC-04): close writes the final tallies, the turnout and the receipts = tallies check into `audit_log`, which is hash-chained (each row stores the previous row's hash; `audit_chain_verify()` walks it). "Verify results integrity" on a closed campaign checks the chain, the seal and that counters and receipts still match it. A permanent delete keeps the sealed entry.
+- Casting a vote is one transaction (lock the campaign row `FOR SHARE`, re-check open and eligible, insert receipt, increment one tally). A close or reset takes `FOR UPDATE` on the same row, so it waits for votes in flight. Duplicate gives 409.
+- A composite foreign key makes a tally's candidate belong to the same campaign. A trigger blocks candidate changes after start, and another stops the app role from changing a counter by anything other than +1.
+- The server connects as `namra_app`: INSERT/UPDATE/SELECT on `tallies` (counters only grow by one), INSERT/SELECT on `audit_log`, `vote_receipts`, `campaign_voters`. The owner role is used only by `migrate`/`seed` and the import scripts.
 - Vote routes never log bodies; the audit log never records candidate ids for votes.
-- Close writes a `count(ballots) = count(vote_receipts)` integrity result to `audit_log` (`campaign.close`, or `campaign.close.INTEGRITY_MISMATCH`).
 
 ## Swapping in Entra ID
 

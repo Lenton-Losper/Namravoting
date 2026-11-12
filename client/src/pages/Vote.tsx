@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { api, ApiError, fmtDate, type Results } from '../api';
+import { api, ApiError, fmtDate, type Notice, type Results } from '../api';
 import { Icon } from '../icons';
 import { closesIn, useNow } from '../time';
-import { BackLink, Dialog, ErrorBox, ResetHistory, ResultsChart, Spinner, Thumb, initials } from '../ui';
+import { BackLink, Dialog, ErrorBox, NoticeBanner, NoticeList, ResultsChart, Spinner, Thumb, initials } from '../ui';
 
 type VoterState = 'can_vote' | 'already_voted' | 'not_eligible' | 'not_member' | 'not_open' | 'closed';
 interface Info {
   title: string; description: string | null; opensAt: string | null; closesAt: string | null; resultsPublished: boolean;
-  voterState: VoterState; candidates: { id: string; name: string; bio: string | null; photoUrl: string | null }[];
+  voterState: VoterState; notices?: Notice[]; candidates: { id: string; name: string; bio: string | null; photoUrl: string | null }[];
 }
 
 function StateCard({ icon, title, children }: { icon: string; title: string; children?: ReactNode }) {
@@ -25,7 +25,7 @@ function PublishedResults({ token }: { token: string }) {
   const [r, setR] = useState<(Results & { title: string }) | null>(null);
   useEffect(() => { api<Results & { title: string }>('GET', `/api/vote/${token}/results`).then(setR).catch(() => undefined); }, [token]);
   if (!r) return null;
-  return <section className="card card-pad"><h2>Results</h2><ResultsChart candidates={r.candidates} turnout={r.turnout} /><ResetHistory resets={r.resets} /></section>;
+  return <section className="card card-pad"><h2>Results</h2>{r.candidates && <ResultsChart candidates={r.candidates} turnout={r.turnout} />}<NoticeList notices={r.notices} /></section>;
 }
 
 export function VotePage() {
@@ -119,6 +119,7 @@ export function VotePage() {
         </div>
       </section>
       <ErrorBox message={error} />
+      <NoticeBanner notices={info.notices} />
 
       {done && <StateCard icon="check" title="Your vote has been recorded"><p className="muted">Thank you for voting. Your choice is secret and cannot be changed.</p></StateCard>}
       {!done && info.voterState === 'already_voted' && <StateCard icon="check" title="You have already voted"><p className="muted">Your vote was recorded. Each person can vote once.</p></StateCard>}

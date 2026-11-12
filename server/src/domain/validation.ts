@@ -37,6 +37,7 @@ export const eligibleBody = z.discriminatedUnion('mode', [
   z.object({ mode: z.literal('list'), emails: z.array(z.string().trim().max(254)).min(1).max(5000) }).strict(),
 ]);
 
+export const closeBody = z.object({ reason: z.string().trim().min(10, 'Give a reason of at least 10 characters').max(1000).optional() }).strict();
 export const voteBody = z.object({ candidateId: uuid }).strict();
 export const idParams = z.object({ id: uuid });
 export const candParams = z.object({ id: uuid, cid: uuid });

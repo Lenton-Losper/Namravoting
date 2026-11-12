@@ -31,7 +31,9 @@ async function fixture(admin: Session, stage: Stage, title = TITLE): Promise<Fx>
   return { id: c.id, token: c.share_token, cands: [a.id, b.id], photos };
 }
 
-const rowCount = async (table: string, id: string, col = 'campaign_id') => (await ownerDb().query(`SELECT count(*)::int n FROM ${table} WHERE ${col} = $1`, [id])).rows[0].n as number;
+/** 'ballots' = the sum of the candidate tallies (no row per ballot, SEC-02). */
+const rowCount = async (table: string, id: string, col = 'campaign_id') => (await ownerDb().query(
+  table === 'ballots' ? 'SELECT coalesce(sum(votes), 0)::int n FROM tallies WHERE campaign_id = $1' : `SELECT count(*)::int n FROM ${table} WHERE ${col} = $1`, [id])).rows[0].n as number;
 const exists = async (id: string) => (await rowCount('campaigns', id, 'id')) === 1;
 const audits = async (id: string, action: string) => (await ownerDb().query('SELECT * FROM audit_log WHERE campaign_id = $1 AND action = $2 ORDER BY id', [id, action])).rows;
 const photosPresent = async (f: Fx) => (await Promise.all(f.photos.map((p) => readPhoto(p)))).map((b) => b !== null);
@@ -192,17 +194,19 @@ describe('permanent delete', () => {
 });
 
 describe('the app role cannot delete directly; only the SECURITY DEFINER functions can, and they re-check everything', () => {
-  it('namra_app has no DELETE or UPDATE on ballots, vote_receipts, audit_log, campaigns, umoja_members', async () => {
+  it('namra_app has no DELETE on tallies, vote_receipts, audit_log, campaigns, umoja_members and no UPDATE on the last four', async () => {
     const A = await login(app, ADMIN_A);
     await fixture(A, 'archived');
-    for (const t of ['ballots', 'vote_receipts', 'audit_log', 'campaigns', 'umoja_members']) {
+    for (const t of ['tallies', 'vote_receipts', 'audit_log', 'campaigns', 'umoja_members']) {
       await expect(appRole.query(`DELETE FROM ${t}`), `DELETE ${t}`).rejects.toThrow(/permission denied/);
     }
-    for (const t of ['ballots', 'vote_receipts', 'audit_log']) {
+    for (const t of ['vote_receipts', 'audit_log']) {
       const p = (await ownerDb().query("SELECT has_table_privilege('namra_app', $1, 'DELETE') d, has_table_privilege('namra_app', $1, 'UPDATE') u, has_table_privilege('namra_app', $1, 'TRUNCATE') t", [t])).rows[0];
       expect(p, t).toEqual({ d: false, u: false, t: false });
     }
-    await expect(appRole.query('TRUNCATE ballots')).rejects.toThrow(/permission denied/);
+    await expect(appRole.query('TRUNCATE tallies')).rejects.toThrow(/permission denied/);
+    const tp = (await ownerDb().query("SELECT has_table_privilege('namra_app', 'tallies', 'DELETE') d, has_table_privilege('namra_app', 'tallies', 'TRUNCATE') t")).rows[0];
+    expect(tp).toEqual({ d: false, t: false });
   });
 
   it('the functions are owned by the owner role, executable by namra_app and NOT by PUBLIC', async () => {
@@ -298,10 +302,12 @@ describe('reset votes', () => {
     const raw = JSON.stringify(a);
     expect(raw).not.toContain(S1.oid); expect(raw).not.toContain(S2.oid); expect(raw).not.toContain(S1.email);
 
-    // creator's Results tab: who, when, why, and the per-candidate snapshot
+    // creator's Results tab: who, when, why. The per-candidate snapshot is withheld while the campaign is open (SEC-01):
+    // otherwise a reset would be a way to peek at the tallies of the round it throws away.
     const h = (await A.get(`/api/campaigns/${f.id}/results`).expect(200)).body.resets;
     expect(h).toHaveLength(1);
-    expect(h[0]).toMatchObject({ by: 'Alice Admin', reason: REASON, votes_cleared: 2, candidates: [{ name: 'Alpha Person', votes: 2 }, { name: 'Bravo Person', votes: 0 }] });
+    expect(h[0]).toMatchObject({ by: 'Alice Admin', reason: REASON, votes_cleared: 2 });
+    expect(h[0].candidates).toBeUndefined();
     expect(new Date(h[0].at).getTime()).toBeGreaterThan(Date.now() - 60_000);
 
     // a second reset appends; voters who can see the published results see the history (without per-candidate counts)

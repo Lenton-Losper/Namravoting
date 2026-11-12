@@ -2,7 +2,8 @@ import { DEADLOCK, getPool, SERIALIZATION_FAILURE, UNIQUE_VIOLATION, withTx } fr
 import { HttpError, notFound } from '../errors.js';
 import { isVotingWindowOpen, shouldAutoClose } from '../domain/status.js';
 import { refreshStatus } from './campaigns.js';
-import { logNotMember, umojaReason } from './umoja.js';
+import { restampAfterVote } from './tallies.js';
+import { logNotMember, umojaStanding } from './umoja.js';
 
 /** Test seam: lets a test force a specific interleaving (e.g. a close landing right after the status read). Empty in production. */
 export const testHooks: { afterCampaignRead?: () => Promise<void> } = {};
@@ -12,12 +13,15 @@ export const notMemberMessage = 'This vote is for Umoja members only';
 type Outcome = { kind: 'recorded' } | { kind: 'closed' } | { kind: 'close_due' } | { kind: 'not_open' } | { kind: 'not_eligible' } | { kind: 'not_member' };
 
 /**
- * Casts a ballot. One SERIALIZABLE transaction:
- *   re-check open + eligible -> INSERT receipt -> INSERT ballot (candidate must belong to campaign) -> COMMIT.
- * Any failure rolls everything back. Serialization failures are retried up to 3 times.
+ * Casts a ballot. One transaction (READ COMMITTED; the locks below do the ordering):
+ *   lock the campaign row FOR SHARE -> re-check open + eligible -> INSERT receipt (one per MEMBER, SEC-03) -> votes = votes + 1
+ *   on the candidate's tally row (a candidate of another campaign matches no row and rolls the receipt back) -> COMMIT.
+ * A close or reset takes FOR UPDATE on the same campaign row, so it waits for votes in flight and a vote that arrives after it
+ * sees the new state. Any failure rolls everything back. Deadlocks are retried up to 3 times.
  *
- * SECRECY: this function never logs, audits or returns the candidate id. The receipt and the ballot are
- * written in the same transaction but share no column, no timestamp and no ordering key.
+ * SECRECY (SEC-02): no row is written per vote, only a counter is incremented. This function never logs, audits or returns
+ * the candidate id. After the commit all tally rows are re-stamped (services/tallies.ts) so their hidden xmin does not
+ * match the voter's receipt.
  */
 export async function castVote(voterOid: string, voterEmail: string, shareToken: string, candidateId: string): Promise<void> {
   let outcome: Outcome | undefined;
@@ -26,9 +30,8 @@ export async function castVote(voterOid: string, voterEmail: string, shareToken:
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
       outcome = await withTx(async (c) => {
-        // FOR SHARE: voters don't block each other, but a concurrent close (which takes FOR UPDATE) waits for
-        // in-flight votes to commit, and a vote that raced a committed close fails with 40001 and retries into
-        // "closed". So no ballot can be committed after the close transaction has counted receipts/ballots.
+        // FOR SHARE: voters don't block each other, but a concurrent close or reset (FOR UPDATE) waits for in-flight votes to
+        // commit, and a vote that starts after one has committed re-reads the campaign row and sees the new state.
         const camp = (await c.query(
           'SELECT id, status, opens_at, closes_at, eligibility FROM campaigns WHERE share_token = $1 FOR SHARE', [shareToken])).rows[0];
         if (!camp) throw notFound();
@@ -40,27 +43,29 @@ export async function castVote(voterOid: string, voterEmail: string, shareToken:
         if (camp.status === 'closed') return { kind: 'closed' } as Outcome;
         if (!isVotingWindowOpen(camp, now)) return { kind: 'not_open' } as Outcome;
 
+        let memberKey = `oid:${voterOid}`;
         if (camp.eligibility === 'list') {
           const e = await c.query('SELECT 1 FROM eligible_voters WHERE campaign_id = $1 AND voter_email = $2', [camp.id, voterEmail.toLowerCase()]);
           if (e.rowCount === 0) return { kind: 'not_eligible' } as Outcome;
         }
-
         if (camp.eligibility === 'umoja') {
-          // Same check as the ballot page (services/umoja.ts), against users.employee_code set at login.
-          const reason = await umojaReason(c, voterOid);
-          if (reason !== 'member') { logNotMember(reason, camp.id, voterOid); return { kind: 'not_member' } as Outcome; }
+          // Same check as the ballot page (services/umoja.ts), against the list frozen when the campaign started.
+          const s = await umojaStanding(c, voterOid, camp);
+          if (s.reason !== 'member' || !s.memberKey) {
+            if (s.reason !== 'member') logNotMember(s.reason, camp.id, voterOid);
+            return { kind: 'not_member' } as Outcome;
+          }
+          memberKey = s.memberKey;
         }
 
-        // No SELECT on vote_receipts here on purpose: reading it would make every concurrent voter
-        // conflict with every other under SERIALIZABLE (relation-level predicate locks on small tables).
-        // The primary key is the authority; a duplicate surfaces as 23505 (or 40001 -> retry -> 23505).
-        await c.query('INSERT INTO vote_receipts (campaign_id, voter_oid) VALUES ($1, $2)', [camp.id, voterOid]);
+        // The primary key (account) and the unique (campaign, member) constraint are the authority for "one vote": a duplicate
+        // surfaces as 23505, whether it is the same account twice or a second account of the same member.
+        await c.query('INSERT INTO vote_receipts (campaign_id, voter_oid, member_key) VALUES ($1, $2, $3)', [camp.id, voterOid, memberKey]);
 
-        const cand = await c.query('SELECT 1 FROM candidates WHERE id = $1 AND campaign_id = $2', [candidateId, camp.id]);
-        if (cand.rowCount === 0) throw new HttpError(400, 'Candidate does not belong to this campaign', 'invalid_candidate');
-        await c.query('INSERT INTO ballots (campaign_id, candidate_id) VALUES ($1, $2)', [camp.id, candidateId]);
+        const t = await c.query('UPDATE tallies SET votes = votes + 1 WHERE campaign_id = $1 AND candidate_id = $2', [camp.id, candidateId]);
+        if (t.rowCount === 0) throw new HttpError(400, 'Candidate does not belong to this campaign', 'invalid_candidate');
         return { kind: 'recorded' } as Outcome;
-      }, 'SERIALIZABLE');
+      });
       break;
     } catch (e) {
       const code = (e as { code?: string }).code;
@@ -79,11 +84,11 @@ export async function castVote(voterOid: string, voterEmail: string, shareToken:
   }
 
   if (outcome?.kind === 'close_due' && campaignId) {
-    await refreshStatus(campaignId);               // atomic: status + receipts=ballots check + audit in one transaction
+    await refreshStatus(campaignId);               // atomic: status + receipts = tallies check + audit in one transaction
     throw new HttpError(409, 'Voting has closed', 'closed');
   }
   switch (outcome?.kind) {
-    case 'recorded': return;
+    case 'recorded': await restampAfterVote(campaignId!); return;
     case 'closed': throw new HttpError(409, 'Voting has closed', 'closed');
     case 'not_open': throw new HttpError(409, 'Voting is not open yet', 'not_open');
     case 'not_member': throw new HttpError(403, notMemberMessage, 'not_member');

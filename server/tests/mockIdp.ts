@@ -14,6 +14,8 @@ export interface Scenario {
   claims?: Record<string, unknown>;    // overrides; a value of undefined removes the claim
   graph?: Record<string, unknown> | { __status: number };   // /me response
   signWithOtherKey?: boolean;
+  /** Make the token endpoint answer with an OAuth error (e.g. the AADSTS7000222 expired-secret response). */
+  tokenError?: { error: string; error_description: string; status?: number };
 }
 
 export interface MockIdp {
@@ -43,6 +45,7 @@ export async function startMockIdp(o: { tenant: string; clientId: string; secret
       const secretOk = p.get('client_secret') === o.secret || basic.endsWith(`:${encodeURIComponent(o.secret)}`) || basic.endsWith(`:${o.secret}`);
       const sc = scenarios.get(p.get('code') ?? '');
       const challenge = crypto.createHash('sha256').update(p.get('code_verifier') ?? '').digest('base64url');
+      if (sc?.tokenError) { send(sc.tokenError.status ?? 401, { error: sc.tokenError.error, error_description: sc.tokenError.error_description, error_codes: [] }); return; }
       if (!secretOk || p.get('grant_type') !== 'authorization_code' || p.get('redirect_uri') !== o.redirectUri || !sc || challenge !== sc.codeChallenge) {
         send(400, { error: 'invalid_grant', error_description: 'mock IdP: secret, redirect_uri, code or PKCE verifier did not match' }); return;
       }

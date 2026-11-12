@@ -42,8 +42,15 @@ export interface Campaign {
   share_token: string; share_url: string; turnout?: number; eligible_count?: number | null; archived_at?: string | null;
 }
 export interface CampaignDetail extends Campaign { turnout: number; candidates: Candidate[]; eligible_emails: string[]; umoja_active_count: number }
-export interface ResetEntry { at: string; by: string | null; reason: string; votes_cleared: number; candidates?: { name: string; votes: number }[] }
-export interface Results { status: string; results_published: boolean; archived?: boolean; candidates: { id: string; name: string; votes: number }[]; turnout: { votes: number; eligible: number | null }; resets?: ResetEntry[] }
+/** A reset or an early close, with the reason the creator gave. Shown to voters (SEC-01). */
+export interface Notice { kind: 'reset' | 'closed_early'; at: string; by: string | null; reason: string; votes_cleared?: number; candidates?: { name: string; votes: number }[] }
+export interface ResetEntry extends Notice { votes_cleared: number }
+/** `candidates` is null while the campaign is open: per-candidate counts exist only after it has closed (SEC-01). */
+export interface Results { status: string; results_published: boolean; archived?: boolean; candidates: { id: string; name: string; votes: number }[] | null; turnout: { votes: number; eligible: number | null }; resets?: ResetEntry[]; notices?: Notice[] }
+export interface SealCheck {
+  chain_ok: boolean; chain_checked: number; sealed: boolean; sealed_at: string | null; seal_hash: string | null; seal_seq: number | null;
+  tallies_match: boolean | null; receipts_match: boolean | null; sealed_tallies: { name: string; votes: number }[]; sealed_turnout: number | null;
+}
 
 export interface SummaryCampaign {
   id: string; title: string; status: 'draft' | 'open' | 'closed'; created_at: string; opens_at: string | null; closes_at: string | null;

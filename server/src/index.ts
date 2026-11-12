@@ -1,5 +1,6 @@
 import { createApp } from './app.js';
 import { describeConfigError, getConfig } from './config.js';
+import { logOperatorWarnings } from './auth/notices.js';
 
 let config;
 try {
@@ -10,6 +11,8 @@ try {
   process.exit(1);
 }
 const app = createApp();
+logOperatorWarnings(config);
+setInterval(() => logOperatorWarnings(getConfig()), 24 * 3600 * 1000).unref();   // keeps the secret-expiry warning in the logs every day
 app.listen(config.port, '0.0.0.0', () => {
   console.log(`NamRA voting API listening on 0.0.0.0:${config.port} (auth=${config.authMode}, env=${config.nodeEnv})`);
 });

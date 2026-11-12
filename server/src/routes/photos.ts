@@ -1,4 +1,4 @@
-import { isActiveMemberSql } from '../services/umoja.js';
+import { isSnapshotMemberSql } from '../services/umoja.js';
 import { Router } from 'express';
 import { z } from 'zod';
 import { getPool } from '../db.js';
@@ -16,7 +16,7 @@ export function photosRouter(): Router {
     const { rows } = await getPool().query(
       `SELECT c.photo_path, k.status, k.created_by,
               (k.eligibility = 'all'
-               OR (k.eligibility = 'umoja' AND ${isActiveMemberSql('$3')})
+               OR (k.eligibility = 'umoja' AND ${isSnapshotMemberSql('k.id', '$3')})
                OR (k.eligibility = 'list' AND EXISTS (SELECT 1 FROM eligible_voters e WHERE e.campaign_id = k.id AND e.voter_email = $2))) AS eligible
          FROM candidates c JOIN campaigns k ON k.id = c.campaign_id WHERE c.id = $1`, [cid, me.email.toLowerCase(), me.oid]);
     const row = rows[0];

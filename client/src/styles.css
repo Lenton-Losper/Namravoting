@@ -318,3 +318,16 @@ progress::-moz-progress-bar { background: var(--navy); border-radius: 3px; }
 
 /* Demo deployment banner (AUTH_MODE=demo): visible on every page, including login. */
 .demo-banner { background: var(--orange-50); color: var(--orange-text); border-bottom: 2px solid var(--orange); text-align: center; font-weight: 600; font-size: 13px; padding: 8px 16px; position: relative; z-index: 40; }
+
+/* SEC-01: voter-visible notice for a reset or an early close */
+.notice-banner { border: 1px solid #b45309; background: #fffbeb; color: #78350f; border-radius: 10px; padding: 12px 16px; margin: 0 0 16px; }
+.notice-banner p { margin: 0; }
+.notice-banner p + p { margin-top: 8px; }
+.seal-panel { border: 1px solid var(--border, #d0d7de); border-radius: 10px; padding: 12px 16px; margin-top: 16px; }
+.seal-panel .ok { color: #166534; }
+.seal-panel .bad { color: #b91c1c; font-weight: 600; }
+.seal-panel code { word-break: break-all; font-size: 0.8em; }
+
+.admin-banners { max-width: 1100px; margin: 12px auto 0; padding: 0 16px; display: grid; gap: 8px; }
+.admin-banner { border: 1px solid #b45309; background: #fffbeb; color: #78350f; border-radius: 10px; padding: 10px 14px; font-size: 0.92rem; }
+.admin-banner-danger { border-color: #b91c1c; background: #fef2f2; color: #7f1d1d; font-weight: 600; }

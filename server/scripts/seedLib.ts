@@ -53,6 +53,9 @@ export async function seedDevData(client: pg.Client, opts: { openCampaign: boole
     }
     if (status === 'open') {
       await client.query("UPDATE campaigns SET status = 'open' WHERE id = $1", [camp.rows[0].id]);   // owner role: the lock trigger only guards candidates
+      // What /start does: one counter per candidate, and the frozen voter list (new campaigns default to Umoja-only).
+      await client.query('INSERT INTO tallies (campaign_id, candidate_id, votes) SELECT campaign_id, id, 0 FROM candidates WHERE campaign_id = $1', [camp.rows[0].id]);
+      await client.query('INSERT INTO campaign_voters (campaign_id, member_code, entra_oid, active) SELECT $1, employee_code, entra_oid, active FROM umoja_members', [camp.rows[0].id]);
       await client.query("INSERT INTO audit_log (actor_oid, action, campaign_id, details) VALUES ($1, 'campaign.start', $2, $3)", [admin.oid, camp.rows[0].id, JSON.stringify({ candidates: CANDIDATES.length, seeded: true })]);
     }
     console.log(`Created ${status} campaign "${title}" with ${CANDIDATES.length} candidates.`);

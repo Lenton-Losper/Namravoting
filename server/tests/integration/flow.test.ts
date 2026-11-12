@@ -231,7 +231,7 @@ describe('ballot secrecy walk', () => {
       expect(hasVoter && hasCandidate, `${r.url} mixes a voter identifier with a candidate id`).toBe(false);
     }
     // and the database agrees: no column links them
-    const dump = JSON.stringify((await ownerDb().query('SELECT * FROM ballots')).rows);
+    const dump = JSON.stringify((await ownerDb().query('SELECT * FROM tallies')).rows);
     expect(voterIds.some((id) => dump.includes(id))).toBe(false);
     void anonymous; void request;
   });

@@ -139,7 +139,7 @@ describe('membership by Entra account id (oid)', () => {
     const r = await s.post(`/api/vote/${c.token}?oid=${S1.oid}`).set('x-oid', S1.oid).send({ candidateId: c.candidates[0], ...forged });
     expect([400, 403]).toContain(r.status);
     expect((await s.get(`/api/vote?oid=${S1.oid}`).set('x-oid', S1.oid).expect(200)).body.campaigns).toEqual([]);
-    expect((await ownerDb().query('SELECT count(*)::int n FROM ballots')).rows[0].n).toBe(0);
+    expect((await ownerDb().query('SELECT coalesce(sum(votes), 0)::int n FROM tallies')).rows[0].n).toBe(0);
   });
 
   it('the employee-code path still works alongside it (for when IT fills in employeeId)', async () => {

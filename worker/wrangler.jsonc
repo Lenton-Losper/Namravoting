@@ -35,6 +35,11 @@
     "ADMIN_EMAILS": "lenton.losper@namra.org.na",
     "DEMO_MEMBER_EMAILS": "lenton.losper@namra.org.na",
     "DEMO_BANNER": "true",
+    // Required while DEMO_MEMBER_EMAILS is set: the app refuses to start in production with the override unless DEMO=true.
+    "DEMO": "true",
+    // Set these (docs/operations.md): admins by Entra object id, and the date the Entra client secret expires.
+    // "ADMIN_OIDS": "",
+    // "ENTRA_SECRET_EXPIRES_AT": "2027-01-31",
     "CF_ACCESS_TEAM_DOMAIN": "yellow-flower-4592.cloudflareaccess.com",
     "SLEEP_AFTER_MINUTES": "60"
   },

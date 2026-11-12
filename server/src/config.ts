@@ -22,6 +22,10 @@ export function parseConfig(env: NodeJS.ProcessEnv) {
     ENTRA_REDIRECT_URI: z.string().optional(),
     ADMIN_EMAILS: z.string().optional(),
     DEMO_MEMBER_EMAILS: z.string().optional(),
+    DEMO: z.enum(['true', 'false']).optional(),
+    ADMIN_OIDS: z.string().optional(),
+    ADMIN_EMAILS_FALLBACK: z.enum(['true', 'false']).optional(),
+    ENTRA_SECRET_EXPIRES_AT: z.string().optional(),
     DEMO_BANNER: z.enum(['true', 'false']).optional(),
     PUBLIC_BASE_URL: z.string().url().default('http://localhost:5173'),
     SESSION_SECRET: z.string().min(32, 'SESSION_SECRET must be at least 32 characters'),
@@ -45,10 +49,16 @@ export function parseConfig(env: NodeJS.ProcessEnv) {
     throw new Error('Refusing to start: set a real SESSION_SECRET in production');
   }
   const entra = e.AUTH_MODE === 'entra' ? parseEntra(e) : null;
+  // SEC-07: the demo membership override must never ride along into a real election by accident. In production it needs an
+  // explicit DEMO=true; the admin banner (auth/notices.ts) shows it whenever it is active.
+  if (entra && e.NODE_ENV === 'production' && entra.demoMemberEmails.length > 0 && e.DEMO !== 'true') {
+    throw new Error('Refusing to start: DEMO_MEMBER_EMAILS is set in production but DEMO=true is not. Remove DEMO_MEMBER_EMAILS for a real election, or set DEMO=true for the demo deployment');
+  }
   const demoUsers = parseDemoUsers(e.DEMO_USERS);
   return {
     demoUsers,
     entra,
+    demo: e.DEMO === 'true',
     demoBanner: e.DEMO_BANNER ? e.DEMO_BANNER === 'true' : e.AUTH_MODE === 'demo',
     nodeEnv: e.NODE_ENV,
     isProd: e.NODE_ENV === 'production',
@@ -65,10 +75,20 @@ export function parseConfig(env: NodeJS.ProcessEnv) {
     adminRateLimit: e.ADMIN_RATE_LIMIT_PER_MIN,
   };
 }
-export interface EntraConfig { tenantId: string; clientId: string; clientSecret: string; redirectUri: string; adminEmails: string[]; demoMemberEmails: string[] }
+export interface EntraConfig {
+  tenantId: string; clientId: string; clientSecret: string; redirectUri: string;
+  /** Admins by Entra object id (SEC-11). The preferred way. */
+  adminOids: string[];
+  /** Admins by email: only used when ADMIN_OIDS is empty, or when ADMIN_EMAILS_FALLBACK=true (an email can be renamed or reused). */
+  adminEmails: string[];
+  adminEmailsAllowed: boolean;
+  demoMemberEmails: string[];
+  /** When the client secret expires (ENTRA_SECRET_EXPIRES_AT, e.g. 2027-05-30). null = not tracked. */
+  secretExpiresAt: Date | null;
+}
 
 /** AUTH_MODE=entra needs every ENTRA_* setting. Names the missing keys, never values. */
-function parseEntra(e: { ENTRA_TENANT_ID?: string; ENTRA_CLIENT_ID?: string; ENTRA_CLIENT_SECRET?: string; ENTRA_REDIRECT_URI?: string; ADMIN_EMAILS?: string; DEMO_MEMBER_EMAILS?: string }): EntraConfig {
+function parseEntra(e: { ENTRA_TENANT_ID?: string; ENTRA_CLIENT_ID?: string; ENTRA_CLIENT_SECRET?: string; ENTRA_REDIRECT_URI?: string; ADMIN_EMAILS?: string; ADMIN_OIDS?: string; ADMIN_EMAILS_FALLBACK?: string; DEMO_MEMBER_EMAILS?: string; ENTRA_SECRET_EXPIRES_AT?: string }): EntraConfig {
   const need = ['ENTRA_TENANT_ID', 'ENTRA_CLIENT_ID', 'ENTRA_CLIENT_SECRET', 'ENTRA_REDIRECT_URI'] as const;
   const missing = need.filter((k) => !e[k]?.trim());
   if (missing.length) throw new Error(`Refusing to start: AUTH_MODE=entra requires ${missing.join(', ')}`);
@@ -78,10 +98,19 @@ function parseEntra(e: { ENTRA_TENANT_ID?: string; ENTRA_CLIENT_ID?: string; ENT
   let redirect: URL;
   try { redirect = new URL(e.ENTRA_REDIRECT_URI!.trim()); } catch { throw new Error('Refusing to start: ENTRA_REDIRECT_URI must be an absolute URL'); }
   if (redirect.pathname !== '/auth/callback') throw new Error('Refusing to start: ENTRA_REDIRECT_URI must end with /auth/callback');
+  const adminOids = (e.ADMIN_OIDS ?? '').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
+  for (const o of adminOids) if (!uuid.test(o)) throw new Error('Refusing to start: ADMIN_OIDS must be a comma-separated list of Entra object ids (GUIDs)');
+  const adminEmails = (e.ADMIN_EMAILS ?? '').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
+  let secretExpiresAt: Date | null = null;
+  if (e.ENTRA_SECRET_EXPIRES_AT?.trim()) {
+    const raw = e.ENTRA_SECRET_EXPIRES_AT.trim();
+    secretExpiresAt = /^\d{4}-\d{2}-\d{2}$/.test(raw) ? new Date(raw + 'T23:59:59Z') : new Date(raw);   // a plain date means "until the end of that day"
+    if (Number.isNaN(secretExpiresAt.getTime())) throw new Error('Refusing to start: ENTRA_SECRET_EXPIRES_AT must be a date such as 2027-05-30');
+  }
   return {
+    adminOids, adminEmails, adminEmailsAllowed: adminOids.length === 0 || e.ADMIN_EMAILS_FALLBACK === 'true', secretExpiresAt,
     tenantId: e.ENTRA_TENANT_ID!.trim().toLowerCase(), clientId: e.ENTRA_CLIENT_ID!.trim().toLowerCase(),
     clientSecret: e.ENTRA_CLIENT_SECRET!.trim(), redirectUri: redirect.toString(),
-    adminEmails: (e.ADMIN_EMAILS ?? '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
     demoMemberEmails: parseDemoMemberEmails(e.DEMO_MEMBER_EMAILS),
   };
 }

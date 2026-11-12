@@ -1,4 +1,5 @@
-import { activeMemberCount } from '../services/umoja.js';
+import { activeMemberCount, snapshotVoters } from '../services/umoja.js';
+import { createTallies } from '../services/tallies.js';
 import crypto from 'node:crypto';
 import { Router, type Request, type RequestHandler, type Response } from 'express';
 import multer from 'multer';
@@ -12,10 +13,10 @@ import { HttpError, notFound } from '../errors.js';
 import { ADMIN_ROLE, currentUser, getCurrentUser, isAdmin, requireUser } from '../auth/index.js';
 import { normalizeEmail } from '../domain/eligibility.js';
 import {
-  candParams, candidateBody, candidatePatchBody, createCampaignBody, eligibleBody, idParams, patchCampaignBody, permanentDeleteBody, resetBody,
+  candParams, candidateBody, candidatePatchBody, closeBody, createCampaignBody, eligibleBody, idParams, patchCampaignBody, permanentDeleteBody, resetBody,
 } from '../domain/validation.js';
 import { audit } from '../services/audit.js';
-import { closeInTx, getResetHistory, getResults, refreshStatus, type CampaignRow } from '../services/campaigns.js';
+import { closeInTx, getNotices, getResults, getTurnout, refreshStatus, verifySeal, type CampaignRow } from '../services/campaigns.js';
 import { deletePhoto, MAX_UPLOAD_BYTES, savePhoto } from '../services/images.js';
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_UPLOAD_BYTES, files: 1, fields: 5, fieldSize: 4096 } });
@@ -112,13 +113,14 @@ export function adminRouter(): Router {
     const { rows } = await getPool().query(
       `SELECT c.*, (SELECT count(*)::int FROM vote_receipts v WHERE v.campaign_id = c.id) AS turnout,
               CASE c.eligibility WHEN 'list' THEN (SELECT count(*)::int FROM eligible_voters e WHERE e.campaign_id = c.id)
-                                WHEN 'umoja' THEN (SELECT count(*)::int FROM umoja_members WHERE active) END AS eligible_count
+                                WHEN 'umoja' THEN (CASE WHEN c.status = 'draft' THEN (SELECT count(*)::int FROM umoja_members WHERE active)
+                                                     ELSE (SELECT count(*)::int FROM campaign_voters v WHERE v.campaign_id = c.id AND v.active) END) END AS eligible_count
          FROM campaigns c WHERE c.created_by = $1 ORDER BY c.created_at DESC`, [u.oid]);
     res.json({ campaigns: rows.map((c) => ({ ...present(c), turnout: c.turnout, eligible_count: c.eligible_count })) });
   });
 
   /**
-   * Dashboard data, scoped to the caller's own campaigns. Receipts/ballots carry no timestamps by design,
+   * Dashboard data, scoped to the caller's own campaigns. Receipts and tallies carry no timestamps by design,
    * so there is no "votes today" figure; `votes_open` is the total cast across open campaigns.
    */
   r.get('/summary', async (req, res) => {
@@ -129,7 +131,8 @@ export function adminRouter(): Router {
       `SELECT c.id, c.title, c.status, c.created_at, c.opens_at, c.closes_at, c.eligibility, c.results_published, c.archived_at,
               (SELECT count(*)::int FROM vote_receipts v WHERE v.campaign_id = c.id) AS turnout,
               CASE c.eligibility WHEN 'list' THEN (SELECT count(*)::int FROM eligible_voters e WHERE e.campaign_id = c.id)
-                                WHEN 'umoja' THEN (SELECT count(*)::int FROM umoja_members WHERE active) END AS eligible_count,
+                                WHEN 'umoja' THEN (CASE WHEN c.status = 'draft' THEN (SELECT count(*)::int FROM umoja_members WHERE active)
+                                                     ELSE (SELECT count(*)::int FROM campaign_voters v WHERE v.campaign_id = c.id AND v.active) END) END AS eligible_count,
               (SELECT min(a.at) FROM audit_log a WHERE a.campaign_id = c.id AND a.action = 'campaign.start') AS started_at,
               (SELECT max(a.at) FROM audit_log a WHERE a.campaign_id = c.id AND a.action LIKE 'campaign.close%') AS closed_at
          FROM campaigns c WHERE c.created_by = $1 ORDER BY c.created_at DESC`, [u.oid]);
@@ -137,9 +140,9 @@ export function adminRouter(): Router {
     const closedIds = rows.filter((c) => c.status === 'closed').map((c) => c.id as string);
     const tallies = closedIds.length
       ? (await getPool().query(
-          `SELECT c.campaign_id, c.id, c.name, c.photo_path, count(b.id)::int AS votes
-             FROM candidates c LEFT JOIN ballots b ON b.candidate_id = c.id AND b.campaign_id = c.campaign_id
-            WHERE c.campaign_id = ANY($1::uuid[]) GROUP BY c.id`, [closedIds])).rows
+          `SELECT c.campaign_id, c.id, c.name, c.photo_path, coalesce(t.votes, 0)::int AS votes
+             FROM candidates c LEFT JOIN tallies t ON t.candidate_id = c.id AND t.campaign_id = c.campaign_id
+            WHERE c.campaign_id = ANY($1::uuid[])`, [closedIds])).rows
       : [];
     const winnerOf = (cid: string) => {
       const t = tallies.filter((x) => x.campaign_id === cid).sort((a, b) => b.votes - a.votes);
@@ -307,17 +310,26 @@ export function adminRouter(): Router {
       }
       if (fresh.closes_at && fresh.closes_at <= new Date()) throw new HttpError(409, 'closes_at is in the past', 'bad_window');
       await tx.query("UPDATE campaigns SET status = 'open' WHERE id = $1", [c.id]);
-      await audit(tx, currentUser(req).oid, 'campaign.start', c.id, { candidates: n });
+      await createTallies(tx, c.id);                                  // one counter per candidate (SEC-02)
+      const frozen = fresh.eligibility === 'umoja' ? await snapshotVoters(tx, c.id) : 0;   // the voter list is frozen now (SEC-05)
+      await audit(tx, currentUser(req).oid, 'campaign.start', c.id, { candidates: n, ...(fresh.eligibility === 'umoja' ? { frozen_members: frozen } : {}) });
     });
     res.json({ status: 'open' });
   });
 
+  /**
+   * Closing before the planned closing time needs a reason (>= 10 characters). It is recorded in the sealed audit entry and shown
+   * to voters on the ballot page and in the published results (SEC-01).
+   */
   r.post('/:id/close', loadOwned, async (req, res) => {
     const c = camp(res);
+    const b = closeBody.parse(req.body ?? {});
     const integrity = await withTx(async (tx) => {
-      const { rows } = await tx.query('SELECT status FROM campaigns WHERE id = $1 FOR UPDATE', [c.id]);
+      const { rows } = await tx.query('SELECT status, closes_at FROM campaigns WHERE id = $1 FOR UPDATE', [c.id]);
       if (rows[0]?.status !== 'open') throw new HttpError(409, 'Only an open campaign can be closed', 'not_open');
-      return closeInTx(tx, c.id, currentUser(req).oid, 'manual');
+      const early = rows[0].closes_at !== null && rows[0].closes_at.getTime() > Date.now();
+      if (early && !b.reason) throw new HttpError(400, 'Closing before the planned closing time needs a reason of at least 10 characters', 'reason_required');
+      return closeInTx(tx, c.id, currentUser(req).oid, 'manual', early ? { early: true, why: b.reason } : {});
     });
     res.json({ status: 'closed', integrity });
   });
@@ -386,13 +398,25 @@ export function adminRouter(): Router {
     res.json({ status: 'open', votes_cleared: out.votes_cleared });
   });
 
+  /**
+   * SEC-01: while a campaign is open (or still a draft) the creator sees ONLY turnout. Per-candidate counts exist in this
+   * response only once the campaign is closed, and the counts of reset rounds are likewise held back until then.
+   */
   r.get('/:id/results', loadOwned, async (_req, res) => {
+    const c = camp(res);
+    const closed = c.status === 'closed';
     res.set('Cache-Control', 'no-store');
     res.json({
-      status: camp(res).status, results_published: camp(res).results_published, archived: !!camp(res).archived_at,
-      ...(await getResults(getPool(), camp(res).id)),
-      resets: await getResetHistory(getPool(), camp(res).id, true),
+      status: c.status, results_published: c.results_published, archived: !!c.archived_at,
+      ...(closed ? await getResults(getPool(), c.id) : { candidates: null, turnout: await getTurnout(getPool(), c.id) }),
+      resets: (await getNotices(getPool(), c.id, closed)).filter((n) => n.kind === 'reset'),
+      notices: await getNotices(getPool(), c.id, closed),
     });
+  });
+
+  /** "Verify results integrity" (SEC-04): audit chain intact, result sealed at close, counters and receipts unchanged since. */
+  r.get('/:id/verify', loadOwned, async (_req, res) => {
+    res.set('Cache-Control', 'no-store').json(await verifySeal(getPool(), camp(res).id));
   });
 
   r.post('/:id/publish', loadOwned, async (req, res) => {

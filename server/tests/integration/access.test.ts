@@ -37,7 +37,7 @@ const snapshot = async (id: string) => JSON.stringify({
   candidates: (await ownerDb().query('SELECT * FROM candidates WHERE campaign_id = $1 ORDER BY id', [id])).rows,
   eligible: (await ownerDb().query('SELECT * FROM eligible_voters WHERE campaign_id = $1 ORDER BY voter_email', [id])).rows,
   receipts: (await ownerDb().query('SELECT * FROM vote_receipts WHERE campaign_id = $1', [id])).rows,
-  ballots: (await ownerDb().query('SELECT count(*)::int AS n FROM ballots WHERE campaign_id = $1', [id])).rows,
+  tallies: (await ownerDb().query('SELECT * FROM tallies WHERE campaign_id = $1 ORDER BY candidate_id', [id])).rows,
 });
 
 const leakTerms = (f: Fx) => [f.id, f.token, TITLE, 'Secret description Yankee', 'Alpha Person', 'Bravo Person', 'bio alpha', ...f.cands];

@@ -99,7 +99,8 @@ export function mountEntra(app: Express, config: Config, opts: EntraOptions = {}
 
       const graph = await readGraphProfile(graphBase, tokens.access_token, fetch);
       const roles = Array.isArray(claims.roles) ? (claims.roles as unknown[]) : [];
-      const admin = roles.includes(ADMIN_ROLE) || e.adminEmails.includes(email);
+      // Admin = the app role in the token, or the account id in ADMIN_OIDS (SEC-11). Email only as a documented fallback.
+      const admin = roles.includes(ADMIN_ROLE) || e.adminOids.includes(oid.toLowerCase()) || (e.adminEmailsAllowed && e.adminEmails.includes(email));
       const user: AuthUser = {
         oid: oid.toLowerCase(), email,
         displayName: String(claims.name ?? graph.displayName ?? email).slice(0, 120) || email,
@@ -111,7 +112,7 @@ export function mountEntra(app: Express, config: Config, opts: EntraOptions = {}
       res.redirect(st.next ?? (admin ? '/admin' : '/votes'));
     } catch (err) {
       // Log the reason (never tokens or secrets); the browser only learns that sign-in failed.
-      console.warn(`[entra] sign-in rejected: ${err instanceof Error ? err.message.slice(0, 200) : 'unknown'}`);
+      logRejected(err);
       res.redirect(FAIL);
     }
   });
@@ -168,4 +169,27 @@ async function upsertUser(u: AuthUser): Promise<void> {
     await pool.query(`UPDATE users SET email = 'superseded-' || left(entra_oid::text, 8) || '+' || email WHERE email = $1 AND entra_oid <> $2`, [u.email, u.oid]);
     await run();
   }
+}
+
+/**
+ * Logs why a sign-in failed (never tokens or secrets). Microsoft's error text carries an AADSTS code; two of them mean the
+ * app's own client secret is no good, which is an operator problem, not a user problem, so they get a loud, explicit line.
+ */
+export function describeSignInFailure(err: unknown): { line: string; secretProblem: boolean } {
+  const e = err as { message?: string; error?: string; error_description?: string; cause?: { error?: string; error_description?: string } };
+  const text = [e?.error_description, e?.cause?.error_description, e?.error, e?.cause?.error, e?.message].filter((x): x is string => typeof x === 'string').join(' ');
+  const code = /AADSTS(\d{4,7})/.exec(text)?.[1];
+  if (code === '7000222' || code === '7000215') {
+    return {
+      secretProblem: true,
+      line: `[entra] CLIENT SECRET ${code === '7000222' ? 'EXPIRED' : 'INVALID'} (AADSTS${code}): Microsoft rejected the app's client secret, so nobody can sign in. Create a new client secret in the Entra app registration and update ENTRA_CLIENT_SECRET (and ENTRA_SECRET_EXPIRES_AT).`,
+    };
+  }
+  const why = err instanceof Error ? err.message.slice(0, 200) : 'unknown';
+  return { secretProblem: false, line: `[entra] sign-in rejected: ${why}${code ? ` (AADSTS${code})` : ''}` };
+}
+
+function logRejected(err: unknown): void {
+  const d = describeSignInFailure(err);
+  if (d.secretProblem) console.error(d.line); else console.warn(d.line);
 }

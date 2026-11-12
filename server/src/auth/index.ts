@@ -9,6 +9,7 @@ import { getConfig, type Config } from '../config.js';
 import * as devAuth from './devAuth.js';
 import * as demoAuth from './demoAuth.js';
 import { mountEntra, type EntraOptions } from './entra.js';
+import { adminNotices } from './notices.js';
 
 import { ADMIN_ROLE, type AuthUser } from './types.js';
 export { ADMIN_ROLE, type AuthUser };
@@ -35,7 +36,9 @@ export function mountAuth(app: Express, config: Config, entraOptions: EntraOptio
   }
   app.get('/api/session', (req, res) => {
     res.set('Cache-Control', 'no-store');
-    res.json({ user: getCurrentUser(req), authMode: config.authMode, demoBanner: config.demoBanner });
+    const user = getCurrentUser(req);
+    // Operator banners (demo override active, secret about to expire) go to campaign admins only.
+    res.json({ user, authMode: config.authMode, demoBanner: config.demoBanner, notices: user && user.roles?.includes(ADMIN_ROLE) ? adminNotices(config) : [] });
   });
 }
 

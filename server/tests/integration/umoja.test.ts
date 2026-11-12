@@ -129,13 +129,20 @@ describe('Umoja-only campaigns', () => {
     expect((await n.get('/api/vote').expect(200)).body.campaigns).toEqual([]);
   });
 
-  it('membership is re-checked inside the vote transaction (status changes between page and POST)', async () => {
+  it('SEC-05: the voter list is frozen when the campaign starts; a later HR import changes nothing', async () => {
     const c = await umojaVote();
     const s = await login(app, member);
+    const n = await login(app, unknown);
     expect((await s.get(`/api/vote/${c.token}`).expect(200)).body.voterState).toBe('can_vote');
-    await setMembers([['NAM0101', false]]);                                     // HR sync deactivates them
-    expect((await s.post(`/api/vote/${c.token}`).send({ candidateId: c.candidates[0] }).expect(403)).body.code).toBe('not_member');
+    await setMembers([['NAM0101', false], ['NAM0777', true]]);                  // HR sync: deactivates the member, adds someone new
+    expect((await s.get(`/api/vote/${c.token}`).expect(200)).body.voterState).toBe('can_vote');   // still on the frozen list
+    expect((await n.post(`/api/vote/${c.token}`).send({ candidateId: c.candidates[0] }).expect(403)).body.code).toBe('not_member');
+    expect((await n.get(`/api/vote/${c.token}`).expect(403)).body.code).toBe('not_member');
     expect(await count('vote_receipts', c.id)).toBe(0);
+    await s.post(`/api/vote/${c.token}`).send({ candidateId: c.candidates[0] }).expect(201);
+    expect(await count('vote_receipts', c.id)).toBe(1);
+    const frozen = await ownerDb().query('SELECT member_code, active FROM campaign_voters WHERE campaign_id = $1 ORDER BY member_code', [c.id]);
+    expect(frozen.rows).toEqual([{ member_code: 'EXE0001', active: true }, { member_code: 'NAM0101', active: true }, { member_code: 'NAM0102', active: false }]);
   });
 
   it('a campaign cannot be started with no active members loaded', async () => {

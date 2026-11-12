@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { api, fmtDate, type CampaignDetail, type Results } from '../../api';
+import { api, fmtDate, type CampaignDetail, type Results, type SealCheck } from '../../api';
 import { Icon } from '../../icons';
 import { SharePanel } from '../../share';
-import { BackLink, Dialog, ErrorBox, Field, ResetHistory, ResultsChart, SectionTitle, Spinner, StatusBadge, Tabs, Thumb, initials } from '../../ui';
+import { BackLink, Dialog, ErrorBox, Field, NoticeList, ResultsChart, SectionTitle, Spinner, StatusBadge, Tabs, Thumb, TurnoutBar, initials } from '../../ui';
 
 type Tab = 'candidates' | 'eligibility' | 'results';
 
-/** `version` re-fetches once when the vote count changes (a reset changes it without changing the status). */
+/**
+ * While a campaign is open the server returns turnout only (SEC-01), so polling is harmless: it never carries per-candidate
+ * counts. `version` re-fetches once when the vote count changes (a reset changes it without changing the status).
+ */
 function useResults(id: string, enabled: boolean, poll: boolean, version?: number) {
   const [r, setR] = useState<Results | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -17,7 +20,7 @@ function useResults(id: string, enabled: boolean, poll: boolean, version?: numbe
     const tick = () => api<Results>('GET', `/api/campaigns/${id}/results`).then((x) => { if (alive) { setR(x); setErr(null); } }).catch((e: Error) => alive && setErr(e.message));
     void tick();
     if (!poll) return () => { alive = false; };
-    const t = setInterval(() => void tick(), 5000);   // live results: every 5 s
+    const t = setInterval(() => void tick(), 15000);   // turnout only: every 15 s
     return () => { alive = false; clearInterval(t); };
   }, [id, enabled, poll, version]);
   return { r, err };
@@ -60,6 +63,35 @@ function EligibilityTab({ c }: { c: CampaignDetail }) {
   );
 }
 
+function SealPanel({ id }: { id: string }) {
+  const [v, setV] = useState<SealCheck | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  async function run() {
+    setBusy(true); setErr(null);
+    try { setV(await api<SealCheck>('GET', `/api/campaigns/${id}/verify`)); } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
+  }
+  const good = !!v && v.chain_ok && v.sealed && v.tallies_match !== false && v.receipts_match !== false;
+  return (
+    <div className="seal-panel">
+      <button className="btn btn-secondary btn-sm" onClick={() => void run()} disabled={busy}>{busy ? 'Checking…' : 'Verify results integrity'}</button>
+      <ErrorBox message={err} />
+      {v && (
+        <div role="status">
+          <p className={good ? 'ok' : 'bad'}>{good ? 'Verified: the result is sealed in the audit chain and nothing has changed since.' : 'NOT verified: see the checks below and investigate before publishing.'}</p>
+          <ul className="list small">
+            <li>Audit chain ({v.chain_checked} entries): {v.chain_ok ? 'intact' : 'BROKEN'}</li>
+            <li>Result sealed at close: {v.sealed ? `yes (${v.sealed_at ? fmtDate(v.sealed_at) : ''})` : 'NO'}</li>
+            <li>Counters equal the sealed tallies: {v.tallies_match === null ? 'n/a' : v.tallies_match ? 'yes' : 'NO'}</li>
+            <li>Receipts equal the sealed turnout: {v.receipts_match === null ? 'n/a' : v.receipts_match ? `yes (${v.sealed_turnout})` : 'NO'}</li>
+          </ul>
+          {v.seal_hash && <p className="muted small">Seal fingerprint: <code>{v.seal_hash}</code></p>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ResultsTab({ c, reload }: { c: CampaignDetail; reload: () => Promise<void> }) {
   const { r, err } = useResults(c.id, c.status !== 'draft', c.status === 'open', c.turnout);
   const [busy, setBusy] = useState(false);
@@ -80,11 +112,20 @@ function ResultsTab({ c, reload }: { c: CampaignDetail; reload: () => Promise<vo
             : <button className="btn btn-primary btn-sm" onClick={() => void publish()} disabled={busy}>Publish results</button>}
           <a className="btn btn-secondary btn-sm" href={`/api/campaigns/${c.id}/results.csv`} download><Icon name="download" /> Export CSV</a>
         </>
-      ) : undefined}>{c.status === 'open' ? 'Live results' : 'Results'}{c.status === 'open' && <span className="muted count"> · updates every 5 s</span>}</SectionTitle>
+      ) : undefined}>{c.status === 'open' ? 'Turnout' : 'Results'}{c.status === 'open' && <span className="muted count"> · updates every 15 s</span>}</SectionTitle>
       <ErrorBox message={err ?? error} />
       {c.status === 'draft' && <p className="muted">Results will appear here once voting has started.</p>}
-      {c.status !== 'draft' && (r ? <ResultsChart candidates={r.candidates} turnout={r.turnout} /> : !err && <Spinner />)}
-      <ResetHistory resets={r?.resets} />
+      {c.status === 'open' && (r
+        ? (
+          <>
+            <div className="results-turnout"><div className="field-label">Turnout</div><TurnoutBar votes={r.turnout.votes} eligible={r.turnout.eligible} /></div>
+            <p className="muted">Per-candidate results are hidden until voting closes, for everyone including you. This protects the secrecy of every vote.</p>
+          </>
+        )
+        : !err && <Spinner />)}
+      {c.status === 'closed' && (r?.candidates ? <ResultsChart candidates={r.candidates} turnout={r.turnout} /> : !err && <Spinner />)}
+      {c.status === 'closed' && <SealPanel id={c.id} />}
+      <NoticeList notices={r?.notices} />
     </>
   );
 }
@@ -110,6 +151,7 @@ function SideCard({ c, reload }: { c: CampaignDetail; reload: () => Promise<void
     catch (e) { setError((e as Error).message); setDialog(null); } finally { setBusy(false); }
   }
   const post = (path: string, body?: unknown) => api('POST', `/api/campaigns/${c.id}/${path}`, body);
+  const earlyClose = c.status === 'open' && !!c.closes_at && new Date(c.closes_at).getTime() > Date.now();
   const titleOk = typed === c.title;
   const reasonOk = reason.trim().length >= 10;
 
@@ -149,8 +191,13 @@ function SideCard({ c, reload }: { c: CampaignDetail; reload: () => Promise<void
         </Dialog>
       )}
       {dialog === 'close' && (
-        <Dialog title="Close voting now?" confirmLabel="Close voting" danger busy={busy} onConfirm={() => void run(() => post('close'), reload)} onCancel={() => setDialog(null)}>
+        <Dialog title="Close voting now?" confirmLabel="Close voting" danger busy={busy} confirmDisabled={earlyClose && !reasonOk}
+          onConfirm={() => void run(() => post('close', earlyClose ? { reason: reason.trim() } : {}), reload)} onCancel={() => setDialog(null)}>
           <p>No more votes will be accepted. This cannot be undone.</p>
+          {earlyClose && (
+            <label>Reason for closing early<span className="field-helper">At least 10 characters. Voters will see it on the ballot page and in the published results.</span>
+              <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={3} maxLength={1000} /></label>
+          )}
         </Dialog>
       )}
       {dialog === 'deleteDraft' && (

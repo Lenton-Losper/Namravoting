@@ -14,7 +14,7 @@ export const ownerDb = () => (owner ??= new pg.Pool({ connectionString: TEST_OWN
 export async function closeOwner() { await owner?.end(); owner = undefined; }
 
 export async function resetDb() {
-  await ownerDb().query('TRUNCATE ballots, vote_receipts, eligible_voters, candidates, audit_log, campaigns, users, umoja_members CASCADE');
+  await ownerDb().query('TRUNCATE tallies, campaign_voters, vote_receipts, eligible_voters, candidates, audit_log, campaigns, users, umoja_members CASCADE');
 }
 
 export interface Session {
@@ -74,8 +74,11 @@ export async function makeCampaign(admin: Session, n = 2, title = 'Test vote', e
   return { id: c.id as string, token: c.share_token as string, candidates };
 }
 
+/** 'ballots' = the sum of the candidate tallies (there is no row per ballot, SEC-02); 'vote_receipts' = rows. */
 export const count = async (table: 'ballots' | 'vote_receipts', campaignId: string) =>
-  (await ownerDb().query(`SELECT count(*)::int AS n FROM ${table} WHERE campaign_id = $1`, [campaignId])).rows[0].n as number;
+  (await ownerDb().query(
+    table === 'ballots' ? 'SELECT coalesce(sum(votes), 0)::int AS n FROM tallies WHERE campaign_id = $1' : 'SELECT count(*)::int AS n FROM vote_receipts WHERE campaign_id = $1',
+    [campaignId])).rows[0].n as number;
 
 /** Replaces umoja_members with the given rows (owner role, like the import script). */
 export async function setMembers(rows: [string, boolean][]) {

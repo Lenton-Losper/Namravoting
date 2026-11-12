@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, type KeyboardEvent, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
+import type { Notice } from './api';
 import { Icon } from './icons';
 
 export function Spinner({ label = 'Loading…' }: { label?: string }) {
@@ -108,22 +109,37 @@ export function Dialog(props: {
   );
 }
 
-/** Who reset the votes, when and why. Counts only, never voter data. Shown to everyone who can see the results. */
-export function ResetHistory({ resets }: { resets: { at: string; by: string | null; reason: string; votes_cleared: number; candidates?: { name: string; votes: number }[] }[] | undefined }) {
-  if (!resets?.length) return null;
+/** What happened to this vote, in order: resets and early closes, each with who, when and why. Counts only, never voter data. */
+export function NoticeList({ notices, title = 'What happened during this vote' }: { notices: Notice[] | undefined; title?: string }) {
+  if (!notices?.length) return null;
   return (
-    <section className="reset-history" aria-label="Reset history">
-      <h3>Reset history</h3>
+    <section className="reset-history" aria-label={title}>
+      <h3>{title}</h3>
       <ul className="list">
-        {resets.map((x, i) => (
+        {notices.map((x, i) => (
           <li key={i} className="reset-item">
-            <div><strong>{new Date(x.at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}</strong>{x.by ? ` · ${x.by}` : ''} · {x.votes_cleared} {x.votes_cleared === 1 ? 'vote' : 'votes'} cleared</div>
+            <div><strong>{new Date(x.at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}</strong>{x.by ? ` · ${x.by}` : ''} · {x.kind === 'reset' ? `reset: ${x.votes_cleared ?? 0} ${x.votes_cleared === 1 ? 'vote' : 'votes'} cleared` : 'closed early'}</div>
             <div className="muted small">Reason: {x.reason}</div>
             {x.candidates && x.candidates.length > 0 && <div className="muted small">Before the reset: {x.candidates.map((c) => `${c.name} ${c.votes}`).join(' · ')}</div>}
           </li>
         ))}
       </ul>
     </section>
+  );
+}
+
+/** Voter-visible banner for the latest reset or early close: "This vote was reset on … because …". */
+export function NoticeBanner({ notices }: { notices: Notice[] | undefined }) {
+  if (!notices?.length) return null;
+  return (
+    <div className="notice-banner" role="status">
+      {notices.map((x, i) => (
+        <p key={i}>
+          <strong>This vote was {x.kind === 'reset' ? 'reset' : 'closed early'} on {new Date(x.at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}</strong>
+          {x.kind === 'reset' ? ' (all earlier votes were cleared and everyone may vote again)' : ''} because: {x.reason}
+        </p>
+      ))}
+    </div>
   );
 }
 
