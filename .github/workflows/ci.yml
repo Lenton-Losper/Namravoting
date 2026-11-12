@@ -1,0 +1,52 @@
+name: CI
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: namra_owner
+          POSTGRES_PASSWORD: namra_owner_dev
+          POSTGRES_DB: namra
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U namra_owner -d namra"
+          --health-interval 3s --health-timeout 3s --health-retries 20
+    env:
+      PGPASSWORD: namra_owner_dev
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Create the test database (same as docker/init-test-db.sql)
+        run: psql -h localhost -p 5433 -U namra_owner -d namra -c "CREATE DATABASE namra_test OWNER namra_owner"
+      - name: Migrations (dev database)
+        run: npm run migrate
+        env:
+          MIGRATE_DATABASE_URL: postgres://namra_owner:namra_owner_dev@localhost:5433/namra
+          APP_DB_PASSWORD: namra_app_dev
+          SESSION_SECRET: ci-ci-ci-ci-ci-ci-ci-ci-ci-ci-ci-ci-ci-ci
+          DATABASE_URL: postgres://namra_app:namra_app_dev@localhost:5433/namra
+      - name: Typecheck (server)
+        run: npm run typecheck -w server
+      - name: Full test suite (unit + integration)
+        run: npm test
+      - name: Build (client typecheck + bundle, server)
+        run: npm run build
