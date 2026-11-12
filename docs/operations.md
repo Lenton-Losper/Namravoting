@@ -44,6 +44,33 @@ needs (`entra`: `ENTRA_CLIENT_SECRET`; `demo`: `CF_ACCESS_AUD`, `DEMO_USERS`). I
 error that tells you how to make one (a new value signs everyone out, so a person has to choose it). Optional `SESSION_SECRET_PREVIOUS`
 and `CSRF_SECRET` are sent when present in `.env`.
 
+## Deploying from GitHub Actions
+
+Actions tab, **Deploy (manual)**, Run workflow on `main`, type `DEPLOY`. Nothing runs by itself. The workflow:
+
+1. **Gate:** refuses unless it runs on `main`, you typed `DEPLOY`, and the CI workflow has a green run on this exact commit.
+2. **One job:** preflight (every secret present, config safe) -> build the container image -> typecheck and build -> database
+   migrations with the owner URL -> `scripts/cf-deploy.mjs` (Worker + Container, then secrets) -> smoke test (`GET /api/csrf` = 200).
+   A failure before the migration step leaves everything as it was. The only gap is between the migration and the new container
+   answering (a few minutes): the old app cannot work against the new schema, so do not run it during a vote.
+
+Repository secrets (Settings -> Secrets and variables -> Actions -> New repository secret):
+
+| Secret | How to get it |
+|---|---|
+| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare dashboard -> Workers & Pages -> right-hand side "Account ID". |
+| `CLOUDFLARE_API_TOKEN` | Cloudflare -> My Profile -> API Tokens -> Create Token (custom). Permissions: Account / Workers Scripts: Edit, Account / Cloudflare Containers: Edit (needed to push the image), Account / Workers R2 Storage: Edit. Scope it to this account only. |
+| `DEMO_OWNER_DATABASE_URL` | Neon console -> project -> Connect -> role `neondb_owner` (or the owner role), the **pooled-off / direct** connection string, `?sslmode=require`. Used only for migrations. |
+| `DEMO_DATABASE_URL` | Neon console -> Roles -> `namra_app` -> **Reset password**, then build `postgres://namra_app:<new password>@<host>/<db>?sslmode=require` (same host and database as the owner URL). Reset it right before you run the deploy: the live app keeps using the old password until the deploy sets this one. |
+| `DEMO_SESSION_SECRET` | A fresh value: `node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"`. Changing it signs everyone out (once). Keep a copy in your password manager; losing it only means another sign-out. |
+| `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | Cloudflare -> R2 -> Manage API tokens -> Create API token, Object Read & Write on the `namra-voting-photos` bucket. |
+| `R2_ENDPOINT` | Same page: `https://<account id>.r2.cloudflarestorage.com`. |
+| `ENTRA_CLIENT_SECRET` | Entra admin centre -> App registrations -> the app -> Certificates & secrets -> New client secret. Copy the **Value** (not the Secret ID) immediately. Then set `ENTRA_SECRET_EXPIRES_AT` in `worker/wrangler.jsonc`. |
+| `SESSION_SECRET_PREVIOUS`, `CSRF_SECRET` | Optional. Only for rotating the session secret without signing people out, or to give CSRF its own key. Leave unset otherwise. |
+
+The workflow never prints a secret. It takes the app role's password from `DEMO_DATABASE_URL` for the migration runner
+(only used on a brand-new database), so there is no separate secret for it.
+
 ## Matching Umoja members to Microsoft accounts
 
 A name is not an identity, so matching is two steps and never writes to a database by itself:

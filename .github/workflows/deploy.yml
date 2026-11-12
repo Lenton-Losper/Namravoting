@@ -1,0 +1,126 @@
+name: Deploy (manual)
+
+# Manual only. Builds the container, applies database migrations with the owner URL, then deploys the Worker + Container,
+# all in ONE job so the new schema and the new code go live together. Refuses to run unless CI is green on the exact commit.
+# Secrets and how to make each one: docs/operations.md, "Deploying from GitHub Actions".
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type DEPLOY to confirm. Migration 007 drops the ballots table: no vote may be in progress.'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+# One deploy at a time, and never cancel one halfway (a cancelled run could leave the schema migrated and the code not).
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    name: Gate (main, confirmed, CI green on this commit)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Must be main, and must be confirmed
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then echo "::error::Deploys run from main only (this run is on $GITHUB_REF)."; exit 1; fi
+          if [ "$CONFIRM" != "DEPLOY" ]; then echo "::error::Type DEPLOY in the confirm box to run this."; exit 1; fi
+      - name: CI must have passed on this exact commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          ok=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$SHA&per_page=50" \
+            --jq '[.workflow_runs[] | select(.conclusion == "success")] | length')
+          echo "Successful CI runs for $SHA: $ok"
+          if [ "$ok" -lt 1 ]; then
+            echo "::error::No green CI run for commit $SHA. Wait for CI to finish (or fix it) and run this again."
+            exit 1
+          fi
+
+  deploy:
+    name: Build, migrate, deploy
+    needs: gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      # Names match the repo-root .env that scripts/cf-deploy.mjs reads locally; here they come from repo secrets.
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      DEMO_DATABASE_URL: ${{ secrets.DEMO_DATABASE_URL }}
+      DEMO_OWNER_DATABASE_URL: ${{ secrets.DEMO_OWNER_DATABASE_URL }}
+      DEMO_SESSION_SECRET: ${{ secrets.DEMO_SESSION_SECRET }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+      ENTRA_CLIENT_SECRET: ${{ secrets.ENTRA_CLIENT_SECRET }}
+      SESSION_SECRET_PREVIOUS: ${{ secrets.SESSION_SECRET_PREVIOUS }}
+      CSRF_SECRET: ${{ secrets.CSRF_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Preflight (nothing is changed until every secret and setting checks out)
+        run: |
+          node --input-type=module -e "
+            import { readFileSync } from 'node:fs';
+            import { parseJsonc, planDeploy } from './scripts/deploy-plan.mjs';
+            const w = parseJsonc(readFileSync('worker/wrangler.jsonc', 'utf8'));
+            const p = planDeploy(process.env, w.vars);
+            if (!process.env.DEMO_OWNER_DATABASE_URL) p.problems.push('DEMO_OWNER_DATABASE_URL is missing (repo secret)');
+            if (p.problems.length) { console.error('Preflight failed:\n - ' + p.problems.join('\n - ')); process.exit(1); }
+            console.log('Preflight ok. AUTH_MODE=' + p.mode + '; secrets to set: ' + p.names.join(', '));
+          "
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          npm ci --prefix worker
+
+      - name: Build the container image (fails here, before anything is touched, if it does not build)
+        run: docker build -t namra-voting:ci .
+
+      - name: Typecheck and build the app
+        run: |
+          npm run typecheck -w server
+          npm run build
+
+      - name: Database migrations (owner URL)
+        run: |
+          # The app role's password is only used by migration 003 on a brand-new database; take it from the app URL so there is one source.
+          APP_DB_PASSWORD="$(node -e "console.log(decodeURIComponent(new URL(process.env.DEMO_DATABASE_URL).password))")"
+          echo "::add-mask::$APP_DB_PASSWORD"
+          export APP_DB_PASSWORD
+          export MIGRATE_DATABASE_URL="$DEMO_OWNER_DATABASE_URL"
+          npm run migrate
+
+      - name: Deploy the Worker + Container, then set secrets
+        run: node scripts/cf-deploy.mjs
+
+      - name: Smoke test
+        run: |
+          url="$(node --input-type=module -e "
+            import { readFileSync } from 'node:fs';
+            import { parseJsonc } from './scripts/deploy-plan.mjs';
+            console.log(parseJsonc(readFileSync('worker/wrangler.jsonc', 'utf8')).vars.PUBLIC_BASE_URL);
+          ")"
+          # A cold Container can take a minute to start.
+          for i in 1 2 3 4 5 6 7 8; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "$url/api/csrf" || true)
+            echo "attempt $i: GET /api/csrf -> $code"
+            if [ "$code" = "200" ]; then echo "Deployed and answering: $url"; exit 0; fi
+            sleep 15
+          done
+          echo "::error::The app did not answer 200 after deploying. Check the Worker logs in Cloudflare."
+          exit 1

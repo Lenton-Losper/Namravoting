@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { parseJsonc, planDeploy } from './deploy-plan.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-process.loadEnvFile(path.join(root, '.env'));
+try { process.loadEnvFile(path.join(root, '.env')); } catch { /* no .env (GitHub Actions): the secrets are in the real environment */ }
 const wrangler = parseJsonc(readFileSync(path.join(root, 'worker/wrangler.jsonc'), 'utf8'));
 const plan = planDeploy(process.env, wrangler.vars);
 if (plan.problems.length) {
