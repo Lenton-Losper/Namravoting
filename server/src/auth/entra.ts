@@ -59,6 +59,8 @@ export function mountEntra(app: Express, config: Config, opts: EntraOptions = {}
     const state = oidc.randomState();
     const nonce = oidc.randomNonce();
     const next = safeNext(typeof req.query.next === 'string' ? req.query.next : null);
+    // resume=1: the app's own re-sign-in after a session expired. Microsoft may sign the person straight back in, so no account picker.
+    const resume = req.query.resume === '1';
     // Already signed in (valid session): there is nothing to sign in to. Go straight to the target, no second Microsoft round trip.
     const current = sessionUser(req);
     if (current) { res.set('Cache-Control', 'no-store'); return res.redirect(next ?? (current.roles.includes(ADMIN_ROLE) ? '/admin' : '/votes')); }
@@ -67,7 +69,7 @@ export function mountEntra(app: Express, config: Config, opts: EntraOptions = {}
     res.cookie(AUTH_COOKIE_PREFIX + state, sign(signingKey(config, 'authflow'), payload), authCookie({ maxAge: AUTH_TTL_MS }));
     res.set('Cache-Control', 'no-store');
     res.redirect(oidc.buildAuthorizationUrl(oc, {
-      redirect_uri: e.redirectUri, scope: SCOPE, response_type: 'code', state, nonce, prompt: 'select_account',
+      redirect_uri: e.redirectUri, scope: SCOPE, response_type: 'code', state, nonce, ...(resume ? {} : { prompt: 'select_account' }),
       code_challenge: await oidc.calculatePKCECodeChallenge(verifier), code_challenge_method: 'S256',
     }).href);
   });

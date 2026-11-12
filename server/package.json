@@ -15,6 +15,7 @@
     "demo:db": "tsx scripts/demo-setup.ts"
   },
   "dependencies": {
+    "exceljs": "^4.4.0",
     "express": "^5.3.0",
     "express-rate-limit": "^8.7.3",
     "helmet": "^8.3.0",

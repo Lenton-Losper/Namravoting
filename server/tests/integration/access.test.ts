@@ -62,6 +62,8 @@ const adminRoutes: AdminRoute[] = [
   { name: 'GET /campaigns/:id/qr.png?download=1', stage: 'open', call: (s, f) => s.get(`/api/campaigns/${f.id}/qr.png?download=1`), control: 200 },
   { name: 'GET /campaigns/:id/poster.pdf', stage: 'open', call: (s, f) => s.get(`/api/campaigns/${f.id}/poster.pdf`), control: 200 },
   { name: 'GET /campaigns/:id/results.csv', stage: 'closed', call: (s, f) => s.get(`/api/campaigns/${f.id}/results.csv`), control: 200 },
+  { name: 'GET /campaigns/:id/results.xlsx', stage: 'closed', call: (s, f) => s.get(`/api/campaigns/${f.id}/results.xlsx`), control: 200 },
+  { name: 'GET /campaigns/:id/results.pdf', stage: 'closed', call: (s, f) => s.get(`/api/campaigns/${f.id}/results.pdf`), control: 200 },
   // Photos: not an admin-only route, but creator-scoped while the campaign is a draft. Staff get 404 (not 403).
   { name: 'GET /photos/:cid (draft)', stage: 'draft', call: (s, f) => s.get(`/api/photos/${f.photoCand}`), control: 200, staff: 404 },
 ];

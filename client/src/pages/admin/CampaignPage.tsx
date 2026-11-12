@@ -134,6 +134,8 @@ function ResultsTab({ c, reload }: { c: CampaignDetail; reload: () => Promise<vo
             ? <span className="chip chip-open">Published to voters</span>
             : <button className="btn btn-primary btn-sm" onClick={() => void publish()} disabled={busy}>Publish results</button>}
           <a className="btn btn-secondary btn-sm" href={`/api/campaigns/${c.id}/results.csv`} download><Icon name="download" /> Export CSV</a>
+          <a className="btn btn-secondary btn-sm" href={`/api/campaigns/${c.id}/results.xlsx`} download><Icon name="download" /> Export Excel (.xlsx)</a>
+          <a className="btn btn-secondary btn-sm" href={`/api/campaigns/${c.id}/results.pdf`} download><Icon name="download" /> Export PDF</a>
         </>
       ) : undefined}>{c.status === 'open' ? 'Turnout' : 'Results'}{c.status === 'open' && <span className="muted count"> · updates every 15 s</span>}</SectionTitle>
       <ErrorBox message={err ?? error} />

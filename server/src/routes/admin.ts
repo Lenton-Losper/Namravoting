@@ -4,6 +4,7 @@ import crypto from 'node:crypto';
 import { Router, type Request, type RequestHandler, type Response } from 'express';
 import multer from 'multer';
 import PDFDocument from 'pdfkit';
+import { buildPdf, buildXlsx, gatherExport } from '../services/resultsExport.js';
 import QRCode from 'qrcode';
 import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import type { PoolClient } from 'pg';
@@ -489,9 +490,9 @@ export function adminRouter(): Router {
     // A permanent delete destroys the only copy of the counters and receipts, so a CSV of the sealed result must have been
     // downloaded after the campaign closed (SEC-04). The sealed entry itself stays in the audit log.
     const exported = await getPool().query(
-      `SELECT 1 FROM audit_log WHERE campaign_id = $1 AND action = 'results.export_csv'
+      `SELECT 1 FROM audit_log WHERE campaign_id = $1 AND action IN ('results.export_csv', 'results.export_xlsx', 'results.export_pdf')
           AND seq > coalesce((SELECT max(seq) FROM audit_log WHERE campaign_id = $1 AND action LIKE 'campaign.close%'), 0) LIMIT 1`, [c.id]);
-    if (!exported.rowCount) throw new HttpError(409, 'Export the results (CSV) before deleting permanently, so a copy of the result exists outside the system.', 'export_first');
+    if (!exported.rowCount) throw new HttpError(409, 'Export the results (CSV, Excel or PDF) before deleting permanently, so a copy of the result exists outside the system.', 'export_first');
     const out = await callCleanup('SELECT delete_archived_campaign($1, $2) AS result', [c.id, sessionRawId(req)],
       () => ({ message: 'Archive the campaign first. Only archived campaigns can be deleted permanently.', code: 'not_archived' }), c.id);
     await removePhotos(out.photos);
@@ -603,6 +604,23 @@ export function adminRouter(): Router {
     await audit(getPool(), currentUser(req).oid, 'results.export_csv', c.id);
     res.type('text/csv').set('Content-Disposition', 'attachment; filename="results.csv"').set('Cache-Control', 'private, no-store').send(lines.join('\r\n') + '\r\n');
   });
+
+  /**
+   * Excel and PDF exports. Same rules as the CSV (SEC-01): the creator only (loadOwned answers 404 to anyone else) and only once
+   * the campaign is closed; each download is audited.
+   */
+  const exportRoute = (kind: 'xlsx' | 'pdf'): RequestHandler => async (req, res) => {
+    const c = camp(res);
+    if (c.status !== 'closed') throw new HttpError(409, 'Exports are only available after the campaign is closed', 'not_closed');
+    const u = currentUser(req);
+    const data = await gatherExport(getPool(), c, `${u.displayName} (${u.email})`);
+    const file = kind === 'xlsx' ? await buildXlsx(data) : await buildPdf(data);
+    await audit(getPool(), u.oid, `results.export_${kind}`, c.id);
+    res.type(kind === 'xlsx' ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' : 'application/pdf')
+      .set('Content-Disposition', `attachment; filename="results.${kind}"`).set('Cache-Control', 'private, no-store').send(file);
+  };
+  r.get('/:id/results.xlsx', loadOwned, exportRoute('xlsx'));
+  r.get('/:id/results.pdf', loadOwned, exportRoute('pdf'));
 
   return r;
 }

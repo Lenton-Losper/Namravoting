@@ -28,6 +28,9 @@ function PublishedResults({ token }: { token: string }) {
   return <section className="card card-pad"><h2>Results</h2>{r.candidates && <ResultsChart candidates={r.candidates} turnout={r.turnout} />}<NoticeList notices={r.notices} /></section>;
 }
 
+const pendingKey = (token: string) => `namra:pending-vote:${token}`;
+const clearPending = (token: string) => { try { sessionStorage.removeItem(pendingKey(token)); } catch { /* storage unavailable */ } };
+
 export function VotePage() {
   const { shareToken = '' } = useParams();
   const now = useNow();
@@ -55,16 +58,28 @@ export function VotePage() {
       return null;
     }
   }, [shareToken]);
+  useEffect(() => { if (selected && info && !info.candidates.some((c) => c.id === selected)) setSelected(null); }, [info, selected]);   // a restored choice that no longer exists
   useEffect(() => { void load(); }, [load]);
+  // Back from a re-sign-in with the choice kept: restore it (once). The person still presses Vote and confirms.
+  useEffect(() => {
+    let id: string | null = null;
+    try { id = sessionStorage.getItem(pendingKey(shareToken)); sessionStorage.removeItem(pendingKey(shareToken)); } catch { /* storage unavailable */ }
+    if (id) setSelected(id);
+  }, [shareToken]);
 
   async function submit() {
     if (!selected || submitting.current) return;
     submitting.current = true; setBusy(true);
+    // Kept only until the answer arrives. If the session turns out to have expired (401) it survives the trip through sign-in;
+    // for every other outcome it is removed again below.
+    try { sessionStorage.setItem(pendingKey(shareToken), selected); } catch { /* storage unavailable */ }
     try {
       await api('POST', `/api/vote/${shareToken}`, { candidateId: selected });
-      setSelected(null); setConfirming(false); setDone(true);   // candidate name is intentionally NOT kept on screen
+      clearPending(shareToken); setSelected(null); setConfirming(false); setDone(true);   // candidate name is intentionally NOT kept on screen
     } catch (e) {
       setConfirming(false);
+      if (e instanceof ApiError && e.status === 401) return;   // being signed back in; the ballot comes back with the choice selected
+      clearPending(shareToken);
       if (e instanceof ApiError && [403, 404, 409].includes(e.status)) {
         // Definitive answers (already voted / closed / not open / not eligible): show the matching state, not an error.
         setSelected(null); await load();

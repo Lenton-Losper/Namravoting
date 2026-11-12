@@ -1,7 +1,28 @@
+import { safeNext } from './safeNext';
 import { formatWindhoek, isoToLocalInput, localInputToIso } from './windhoek';
 
 export class ApiError extends Error {
   constructor(public status: number, message: string, public code?: string) { super(message); }
+}
+
+/** Page navigation, as an object so tests can observe it. */
+export const navigation = { assign: (u: string) => window.location.assign(u), replace: (u: string) => window.location.replace(u) };
+export const SESSION_EXPIRED_MESSAGE = 'Your session expired, signing you back in…';
+
+let expiredHandler: (() => void) | null = null;
+let redirecting = false;
+/** The auth provider registers here so a 401 from ANY call clears the signed-in user. Returns an unsubscribe. */
+export function onSessionExpired(fn: () => void): () => void { expiredHandler = fn; return () => { if (expiredHandler === fn) expiredHandler = null; }; }
+export const resetSessionExpiredGuard = () => { redirecting = false; };
+/** Any 401 means the session is gone: forget the user, then go to /login?next=<where we are>, which goes straight to Microsoft. */
+function sessionExpired() {
+  if (redirecting) return;                      // several calls can fail at once: one redirect
+  const here = window.location.pathname + window.location.search;
+  if (window.location.pathname.startsWith('/login')) return;
+  redirecting = true;
+  resetCsrf(); expiredHandler?.();
+  const next = safeNext(here);
+  navigation.assign('/login?expired=1' + (next ? `&next=${encodeURIComponent(next)}` : ''));
 }
 
 let csrf: string | null = null;
@@ -32,6 +53,7 @@ export async function api<T = unknown>(method: string, url: string, body?: unkno
     const j = await res.clone().json().catch(() => ({}));
     if ((j as { error?: string }).error === 'Invalid CSRF token') { await csrfToken(true); return api<T>(method, url, body, false); }
   }
+  if (res.status === 401 && !url.startsWith('/api/dev/')) { sessionExpired(); throw new ApiError(401, SESSION_EXPIRED_MESSAGE); }
   if (res.status === 204) return undefined as T;
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new ApiError(res.status, (data as { error?: string }).error ?? (res.status >= 500 ? 'The service is starting up or temporarily unavailable. Please retry.' : 'Something went wrong'), (data as { code?: string }).code);

@@ -404,3 +404,17 @@ describe('sign out (SEC-14: POST + CSRF, never a GET)', () => {
     expect((await agent.get('/api/session')).body.user).not.toBeNull();
   });
 });
+
+describe('re-sign-in after a session expired (resume=1)', () => {
+  it('does not force the account picker, so Microsoft can sign the person straight back in', async () => {
+    const r = await request(app).get('/auth/login?resume=1&next=%2Fv%2Fabc').expect(302);
+    const u = new URL(r.headers.location);
+    expect(u.searchParams.has('prompt')).toBe(false);
+    expect(u.searchParams.get('code_challenge_method')).toBe('S256');   // still PKCE + state + nonce
+    expect(u.searchParams.get('state')).toBeTruthy(); expect(u.searchParams.get('nonce')).toBeTruthy();
+  });
+  it('a normal sign-in still shows the picker', async () => {
+    const r = await request(app).get('/auth/login').expect(302);
+    expect(new URL(r.headers.location).searchParams.get('prompt')).toBe('select_account');
+  });
+});

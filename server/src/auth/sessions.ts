@@ -11,12 +11,16 @@ import { ADMIN_ROLE, type AuthUser } from './types.js';
  * Server-side sessions (SEC-06). The cookie is `<random id>.<mac>`; the database row is keyed by SHA-256(id).
  * - logout revokes the row, so a copied cookie stops working at once;
  * - a new random id is issued at every sign-in (no fixation), and any session cookie the browser still held is revoked;
- * - admin sessions are shorter than staff sessions;
+ * - sliding: every request extends the session by its idle timeout (admins 4h, staff 8h), never past an absolute maximum of 12h
+ *   after sign-in; `expires_at` is the idle deadline, `created_at + 12h` the absolute one;
  * - roles are recomputed from live configuration and data on every request.
  */
 export const SESSION_COOKIE = 'namra_session';
 export const STAFF_TTL_SECONDS = 8 * 3600;
 export const ADMIN_TTL_SECONDS = 4 * 3600;
+export const ABSOLUTE_MAX_SECONDS = 12 * 3600;
+/** Extending is a write, so a session is only touched when its deadline is at least this far behind. */
+const EXTEND_AFTER_SECONDS = 60;
 const MAX_SESSIONS_PER_USER = 10;
 
 const hashId = (id: string) => crypto.createHash('sha256').update(id).digest('hex');
@@ -54,7 +58,8 @@ export function sessionLoader(config: Config): RequestHandler {
         const { rows } = await getPool().query(
           `SELECT s.claim_admin, u.entra_oid, u.email, u.display_name, u.employee_code
              FROM sessions s JOIN users u ON u.entra_oid = s.user_oid
-            WHERE s.id_hash = $1 AND s.revoked_at IS NULL AND s.expires_at > now()`, [h]);
+            WHERE s.id_hash = $1 AND s.revoked_at IS NULL AND s.expires_at > now()
+              AND s.created_at + make_interval(secs => $2) > now()`, [h, ABSOLUTE_MAX_SECONDS]);
         const r = rows[0];
         if (r) {
           w.sessionIdHash = h; w.sessionId = id;
@@ -62,6 +67,11 @@ export function sessionLoader(config: Config): RequestHandler {
             oid: r.entra_oid, email: r.email, displayName: r.display_name, employeeCode: r.employee_code ?? null,
             roles: rolesFor(config, { claimAdmin: r.claim_admin, oid: r.entra_oid, email: r.email }),
           };
+          const idle = w.sessionUser.roles.includes(ADMIN_ROLE) ? ADMIN_TTL_SECONDS : STAFF_TTL_SECONDS;
+          await getPool().query(
+            `UPDATE sessions SET expires_at = LEAST(now() + make_interval(secs => $2), created_at + make_interval(secs => $3))
+              WHERE id_hash = $1 AND expires_at < LEAST(now() + make_interval(secs => $2), created_at + make_interval(secs => $3)) - make_interval(secs => $4)`,
+            [h, idle, ABSOLUTE_MAX_SECONDS, EXTEND_AFTER_SECONDS]);
         }
       }
     } catch (e) { next(e); return; }
@@ -85,7 +95,7 @@ export async function createSession(req: Request, res: Response, config: Config,
   await pool.query(
     `DELETE FROM sessions WHERE user_oid = $1 AND id_hash NOT IN (SELECT id_hash FROM sessions WHERE user_oid = $1 ORDER BY created_at DESC LIMIT $2)`,
     [a.oid, MAX_SESSIONS_PER_USER]);
-  res.cookie(SESSION_COOKIE, signValue(signingKey(config, 'session'), id), cookieOptions(config, { httpOnly: true, maxAge: ttl * 1000 }));
+  res.cookie(SESSION_COOKIE, signValue(signingKey(config, 'session'), id), cookieOptions(config, { httpOnly: true, maxAge: ABSOLUTE_MAX_SECONDS * 1000 }));
 }
 
 /** Logout: revokes the session row (so a copied cookie is dead too) and clears the cookie. */

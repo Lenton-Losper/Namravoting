@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
-import { api, resetCsrf, type User } from './api';
+import { api, onSessionExpired, resetCsrf, type User } from './api';
 
 export interface AdminNotice { kind: 'admin_by_email' | 'secret_expiry'; daysLeft?: number; expired?: boolean }
 interface AuthCtx { authMode: string | null; notices: AdminNotice[]; user: User | null; loading: boolean; refresh: () => Promise<void>; logout: () => Promise<void>; isAdmin: boolean }
@@ -15,9 +15,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const s = await api<{ user: User | null; authMode?: string; notices?: AdminNotice[] }>('GET', '/api/session');
       setUser(s.user); setAuthMode(s.authMode ?? null); setNotices(s.notices ?? []);
-    } finally { setLoading(false); }
+    } catch { setUser(null); }   // 401 already started the re-sign-in (api.ts); other failures leave the visitor signed out
+    finally { setLoading(false); }
   }, []);
   useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => onSessionExpired(() => setUser(null)), []);   // any 401 clears the signed-in user
   const logout = useCallback(async () => {
     // Demo: identity is the Cloudflare Access session, so signing out means ending that session.
     if (authMode === 'demo') { window.location.assign('/cdn-cgi/access/logout'); return; }

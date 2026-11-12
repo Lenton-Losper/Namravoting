@@ -16,7 +16,7 @@ security fixes are described here; `.env.example` lists the rest.
 | Setting | What it does |
 |---|---|
 | `SESSION_SECRET` | Root secret. Three separate signing keys are derived from it (session cookie, sign-in flow cookie, CSRF), so a signed value of one kind never verifies as another. |
-| `SESSION_SECRET_PREVIOUS` | Optional. The old `SESSION_SECRET` during a rotation: accepted for verifying cookies only, never for signing. Remove it once old cookies have expired (admin sessions last 4 hours, staff 8). |
+| `SESSION_SECRET_PREVIOUS` | Optional. The old `SESSION_SECRET` during a rotation: accepted for verifying cookies only, never for signing. Remove it once old cookies have expired (sessions are sliding: admins time out after 4 hours idle, staff after 8, and none lasts longer than 12 hours in total). |
 | `CSRF_SECRET` | Optional. Makes the CSRF key independent of `SESSION_SECRET`, so it can be rotated without touching sessions. Changing it is invisible to users (the page fetches a new token). |
 | `AUTH_RATE_LIMIT_PER_MIN` | Per client address, for `/auth/*` (default 30); `/api/csrf` gets four times this. |
 | `READ_RATE_LIMIT_PER_MIN` | Per user, for the voter GET routes (default 120). |
@@ -99,3 +99,8 @@ On a closed campaign, **Verify results integrity** (admin, Results tab) checks t
 sealed when the campaign closed, and that the counters and receipts still equal what was sealed. The fingerprint it shows is the
 hash of the sealed entry: record it somewhere outside the database (for example in the minutes) to make later tampering detectable
 even by someone with full database access.
+
+## Sessions and exports
+
+- **Sliding sessions.** Every request extends a session by its idle time (admins 4 h, staff 8 h), up to 12 h after sign-in. When one expires, the app clears the signed-in user and sends the browser to `/login?expired=1&next=<page>`, which goes to Microsoft without the account picker (`/auth/login?resume=1`), so people are usually signed straight back in. A vote in progress keeps its selection (sessionStorage, one use) and the ballot comes back with it selected; the person presses Cast vote again. If a re-sign-in was tried less than a minute ago the page shows the Sign in button instead of redirecting again.
+- **Exports.** A closed campaign can be exported by its creator as CSV, Excel (.xlsx) or PDF (`/api/campaigns/:id/results.csv|xlsx|pdf`). Each download is audited (`results.export_csv|xlsx|pdf`) and any one of them counts as the copy required before a permanent delete. Open campaigns are refused (SEC-01). Spreadsheet text cells that would start a formula are prefixed with an apostrophe. The PDF header is text ("NamRA | Voting") until a logo file is added.
