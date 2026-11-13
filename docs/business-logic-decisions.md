@@ -105,3 +105,12 @@ Items built on the demo day are NOT deployed yet.
 - Each download is audited (`results.export_bundle`) and counts as the copy needed before a permanent delete. It holds no vote and no receipt.
 - Honest limit: the bundle holds only this campaign's entries of a system-wide chain, so the script proves each entry is unaltered, not that nothing was
   inserted between them; the README says so, and the whole chain is checked by the system ("Verify results integrity").
+
+## 10. Staff joining or leaving mid-campaign
+- **Decision: late additions ARE allowed (default), switchable off with `LATE_VOTERS=false`.** The creator (not a co-admin) can add one person to a RUNNING listed
+  or Umoja vote, with a reason of at least 10 characters. Listed vote: their email goes on the list. Umoja vote: their employee code (an active member on the
+  imported list) is added to the frozen snapshot. A vote open to all staff has nothing to add.
+- Recorded as `voter.late_added` (who, when, why, and the email or code), shown on the Eligibility tab, in the Excel/PDF history and in the audit bundle. The
+  voter count the result is measured against includes them.
+- **Leavers keep their vote**; their account stops working when IT disables it. Nothing here removes anyone.
+- Limit: a member who is in the frozen snapshot but was listed as not a member at that time cannot be reactivated from here (the app role may only insert).

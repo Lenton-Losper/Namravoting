@@ -5,6 +5,7 @@ import { Icon } from '../../icons';
 import { SharePanel } from '../../share';
 import { TeamTab } from './TeamTab';
 import { NotifyPanel } from './NotifyPanel';
+import { LateVoters } from './LateVoters';
 import { BackLink, Dialog, ErrorBox, Field, NoticeList, quorumLine, ResultsChart, SectionTitle, Spinner, StatusBadge, Tabs, Thumb, TurnoutBar, initials } from '../../ui';
 
 type Tab = 'candidates' | 'eligibility' | 'results' | 'team';
@@ -71,7 +72,7 @@ function CandidatesTab({ c, reload }: { c: CampaignDetail; reload: () => Promise
   );
 }
 
-function EligibilityTab({ c }: { c: CampaignDetail }) {
+function EligibilityTab({ c, reload }: { c: CampaignDetail; reload: () => Promise<void> }) {
   return (
     <>
       <SectionTitle icon="lock" actions={c.status === 'draft' ? <Link className="btn btn-secondary btn-sm" to={`/admin/c/${c.id}/edit`}>Edit eligibility</Link> : undefined}>Who can vote</SectionTitle>
@@ -84,6 +85,7 @@ function EligibilityTab({ c }: { c: CampaignDetail }) {
           <ul className="email-list">{c.eligible_emails.map((e) => <li key={e}>{e}</li>)}</ul>
         </Field>
       )}
+      <LateVoters c={c} reload={reload} />
     </>
   );
 }
@@ -399,7 +401,7 @@ export function CampaignPage() {
             { id: 'team', label: 'Team' },
           ]}>
             {tab === 'candidates' && <CandidatesTab c={c} reload={reload} />}
-            {tab === 'eligibility' && <EligibilityTab c={c} />}
+            {tab === 'eligibility' && <EligibilityTab c={c} reload={reload} />}
             {tab === 'results' && <ResultsTab c={c} reload={reload} />}
             {tab === 'team' && <TeamTab c={c} reload={reload} />}
           </Tabs>

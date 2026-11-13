@@ -105,6 +105,13 @@ export async function gatherExport(db: Queryable, c: CampaignRow, generatedBy: s
     if (n.kind === 'closed_early') return { kind: 'Closed early', at: fmtWindhoek(n.at), by: n.by ?? '', detail: `Reason: ${n.reason}` };
     return { kind: 'Edited after start', at: fmtWindhoek(n.at), by: n.by ?? '', detail: (n.changes ?? []).map(describeEdit).join('; ') };
   });
+  // Voters added after voting started (item 10) belong in the history too, in time order with the resets and edits.
+  const lateRows = (await db.query(
+    `SELECT a.at, u.display_name AS by, a.details FROM audit_log a LEFT JOIN users u ON u.entra_oid = a.actor_oid WHERE a.campaign_id = $1 AND a.action = 'voter.late_added' ORDER BY a.seq`, [c.id])).rows;
+  const fullHistory = [
+    ...notices.map((n, i) => ({ t: new Date(n.at).getTime(), h: history[i] })),
+    ...lateRows.map((r) => ({ t: new Date(r.at).getTime(), h: { kind: 'Late voter added', at: fmtWindhoek(r.at), by: r.by ?? '', detail: `Added ${r.details?.email ?? `member ${r.details?.employee_code ?? ''}`} to the voter list after voting started. Reason: ${r.details?.reason ?? ''}` } })),
+  ].sort((a, b) => a.t - b.t).map((x) => x.h);
   return {
     title: c.title, description: c.description ?? '', status: c.status,
     opensAt: fmtWindhoek(c.opens_at), closesAt: fmtWindhoek(c.closes_at), startedAt: fmtWindhoek(times.started), closedAt: fmtWindhoek(times.closed),
@@ -115,7 +122,7 @@ export async function gatherExport(db: Queryable, c: CampaignRow, generatedBy: s
     publication: results.publication ? `Published by ${results.publication.by ?? 'unknown'} on ${fmtWindhoek(results.publication.at)}${results.publication.scheduled ? ' (scheduled; approved by the person who scheduled it)' : ''}` : '',
     tie, tiedNames, leader: st.leader?.name ?? null,
     runoff: [c.runoff_round ? `This is run-off round ${c.runoff_round}${link.parent ? ` of "${link.parent}"` : ''}.` : '', link.child ? `A run-off was started: "${link.child}".` : ''].filter(Boolean).join(' '),
-    history,
+    history: fullHistory,
     seal: {
       sealed: seal.sealed && !!seal.seal_hash, hash: seal.sealed ? seal.seal_hash : null, sealedAt: fmtWindhoek(seal.sealed_at),
       verified: seal.sealed ? seal.chain_ok && seal.tallies_match !== false && seal.receipts_match !== false : null,

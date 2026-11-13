@@ -43,6 +43,8 @@ export function parseConfig(env: NodeJS.ProcessEnv) {
     MAX_RUNOFFS: z.coerce.number().int().min(0).max(5).default(2),
     // Staff notifications by email (Microsoft Graph Mail.Send, granted by IT): the mailbox they are sent from. Unset = notifications off.
     NOTIFY_SENDER: z.string().email().optional(),
+    // Whether the creator may add a voter to a running vote (a person hired or reinstated after voting started). Each one needs a reason and is audited.
+    LATE_VOTERS: z.enum(['true', 'false']).default('true'),
   });
   const e = schema.parse(env);
   if (e.AUTH_MODE === 'dev' && e.NODE_ENV === 'production') {
@@ -96,6 +98,7 @@ export function parseConfig(env: NodeJS.ProcessEnv) {
     authRateLimit: e.AUTH_RATE_LIMIT_PER_MIN,
     maxRunoffs: e.MAX_RUNOFFS,
     notifySender: e.NOTIFY_SENDER ?? null,
+    lateVoters: e.LATE_VOTERS === 'true',
   };
 }
 export interface EntraConfig {

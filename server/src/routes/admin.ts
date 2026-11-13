@@ -6,6 +6,7 @@ import multer from 'multer';
 import PDFDocument from 'pdfkit';
 import { teamRouter } from './team.js';
 import { notifyRouter } from './notify.js';
+import { lateRouter } from './late.js';
 import { backupSealedResult } from '../services/backup.js';
 import { publishBody, publishScheduleBody, withdrawBody } from '../domain/validation.js';
 import { buildAuditBundle } from '../services/auditBundle.js';
@@ -604,6 +605,7 @@ export function adminRouter(): Router {
 
   // Team (co-admins, observers) and the second-approver flow
   r.use('/:id', notifyRouter({ loadRunnable, camp }));
+  r.use('/:id', lateRouter({ loadOwned, loadRunnable, camp }));
   r.use('/:id', teamRouter({ loadOwned, loadRunnable, camp, shouldAuditDenied, doReset, doPermanentDelete }));
 
   /**
