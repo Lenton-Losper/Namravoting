@@ -68,6 +68,8 @@ export interface Campaign {
   share_token: string; share_url: string; turnout?: number; eligible_count?: number | null; archived_at?: string | null;
   /** Title, description, closing time (and candidates until the first vote) stay editable after the campaign starts. */
   allow_edits_after_start?: boolean;
+  /** An "Abstain (none of the above)" line is on the ballot (set while a draft, locked at start). */
+  allow_abstain?: boolean;
 }
 export interface IntegrityBlock { ballots: number; receipts: number; at: string }
 export interface CampaignDetail extends Campaign { turnout: number; candidates: Candidate[]; eligible_emails: string[]; umoja_active_count: number; integrity_block?: IntegrityBlock | null; edited_after_start?: Notice[] }
@@ -79,7 +81,7 @@ export interface ResetEntry extends Notice { votes_cleared: number }
 /** Run-off context of a closed campaign (creator only). */
 export interface RunoffInfo { round: number; max: number; next: { id: string; title: string; status: string } | null; parent: { id: string; title: string } | null; can_start: boolean }
 export interface Tie { names: string[]; votes: number }
-export interface Results { status: string; results_published: boolean; archived?: boolean; candidates: { id: string; name: string; votes: number }[] | null; turnout: { votes: number; eligible: number | null }; resets?: ResetEntry[]; notices?: Notice[]; tie?: Tie | null; runoff?: RunoffInfo }
+export interface Results { status: string; results_published: boolean; archived?: boolean; candidates: { id: string; name: string; votes: number; is_abstain?: boolean }[] | null; turnout: { votes: number; eligible: number | null }; resets?: ResetEntry[]; notices?: Notice[]; tie?: Tie | null; runoff?: RunoffInfo }
 export interface SealCheck {
   chain_ok: boolean; chain_checked: number; sealed: boolean; sealed_at: string | null; seal_hash: string | null; seal_seq: number | null;
   tallies_match: boolean | null; receipts_match: boolean | null; sealed_tallies: { name: string; votes: number }[]; sealed_turnout: number | null;

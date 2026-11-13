@@ -8,7 +8,7 @@ import { BackLink, Dialog, ErrorBox, NoticeBanner, NoticeList, ResultsChart, Spi
 type VoterState = 'can_vote' | 'already_voted' | 'not_eligible' | 'not_member' | 'not_open' | 'closed';
 interface Info {
   title: string; description: string | null; opensAt: string | null; closesAt: string | null; resultsPublished: boolean;
-  voterState: VoterState; notices?: Notice[]; candidates: { id: string; name: string; bio: string | null; photoUrl: string | null }[];
+  voterState: VoterState; notices?: Notice[]; candidates: { id: string; name: string; bio: string | null; photoUrl: string | null; isAbstain?: boolean }[];
 }
 
 function StateCard({ icon, title, children }: { icon: string; title: string; children?: ReactNode }) {
@@ -149,8 +149,8 @@ export function VotePage() {
           <ul className="list" role="radiogroup" aria-label="Candidates">
             {info.candidates.map((c) => (
               <li key={c.id}>
-                <button role="radio" aria-checked={selected === c.id} className={`candidate${selected === c.id ? ' selected' : ''}`} onClick={() => setSelected(c.id)}>
-                  <Thumb url={c.photoUrl} name={c.name} size="lg" />
+                <button role="radio" aria-checked={selected === c.id} className={`candidate${selected === c.id ? ' selected' : ''}${c.isAbstain ? ' candidate-abstain' : ''}`} onClick={() => setSelected(c.id)}>
+                  {!c.isAbstain && <Thumb url={c.photoUrl} name={c.name} size="lg" />}
                   <span className="candidate-text"><strong>{c.name}</strong>{c.bio && <span className="muted">{c.bio}</span>}</span>
                   <span className="candidate-check" aria-hidden="true"><Icon name="check" size={14} /></span>
                 </button>
@@ -164,7 +164,7 @@ export function VotePage() {
       )}
 
       {confirming && chosen && (
-        <Dialog title={`Vote for ${chosen.name}?`} confirmLabel="Confirm vote" cancelLabel="Go back" busy={busy}
+        <Dialog title={chosen.isAbstain ? 'Abstain from this vote?' : `Vote for ${chosen.name}?`} confirmLabel="Confirm vote" cancelLabel="Go back" busy={busy}
           onConfirm={() => void submit()} onCancel={() => setConfirming(false)}>
           <p>This can't be changed.</p>
         </Dialog>

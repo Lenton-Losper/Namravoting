@@ -30,6 +30,7 @@ function CandidatesTab({ c }: { c: CampaignDetail }) {
   const editable = c.status === 'draft' || (c.status === 'open' && !!c.allow_edits_after_start && c.turnout === 0);   // after the first vote the candidates are fixed
   return (
     <>
+      {c.allow_abstain && <p className="muted small">The ballot ends with an “Abstain (none of the above)” option. It is not a candidate and never counts towards the 2 needed.</p>}
       <SectionTitle icon="users" actions={editable ? <Link className="btn btn-secondary btn-sm" to={`/admin/c/${c.id}/edit`}>Edit candidates</Link> : undefined}>Candidates</SectionTitle>
       {c.candidates.length === 0
         ? <p className="muted">No candidates yet.</p>

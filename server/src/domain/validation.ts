@@ -24,6 +24,8 @@ export const createCampaignBody = z.object({
   emails: emailList.optional(),
   /** Keep title, description, closing time and (until the first vote) candidates editable after the campaign starts. */
   allow_edits_after_start: z.boolean().optional(),
+  /** Put an "Abstain (none of the above)" line on the ballot. Draft only; locked once the campaign starts. */
+  allow_abstain: z.boolean().optional(),
 }).strict().refine(windowOk, windowMsg)
   .refine((v) => v.eligibility !== 'list' || (v.emails?.length ?? 0) > 0, { message: 'Add at least one email address for a listed vote', path: ['emails'] })
   .refine((v) => v.eligibility === 'list' || v.emails === undefined, { message: 'emails only applies to a listed vote', path: ['emails'] });
@@ -34,6 +36,7 @@ export const patchCampaignBody = z.object({
   opens_at: isoDate.optional(),
   closes_at: isoDate.optional(),
   allow_edits_after_start: z.boolean().optional(),
+  allow_abstain: z.boolean().optional(),
 }).strict().refine(windowOk, windowMsg);
 
 export const candidateBody = z.object({

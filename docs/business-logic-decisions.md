@@ -12,3 +12,12 @@ Items built on the demo day are NOT deployed yet.
   photos are copied, not shared), the same eligibility mode and the same voter list (a listed vote copies its emails; an Umoja vote
   takes a new member snapshot when it starts). It is started like any campaign, so it gets its own snapshot and seal.
   The link is `campaigns.parent_campaign_id` and `runoff_round`; the database refuses to change them. Audit: `campaign.runoff_created`.
+
+## 2. Abstain / none of the above
+- **Off by default**, per campaign, set on the create or draft edit screen, locked from the moment the campaign starts (also in the database).
+- **Wording: "Abstain (none of the above)"** (last on the ballot; asks "Abstain from this vote?" before it is cast).
+- It is stored as a candidate row flagged `is_abstain`, so it has a tally counter like every candidate and the check "receipts = sum of
+  tallies" and the seal work unchanged. It counts as a vote cast (turnout), can never be the winner or part of a tie, does not count
+  towards the 2 candidates needed, and cannot be edited or removed on its own.
+- Results, CSV, Excel and PDF report abstentions on a separate line. Percentages are of ballots cast.
+- A run-off is not given an Abstain line (the creator can switch it on while the run-off is still a draft).

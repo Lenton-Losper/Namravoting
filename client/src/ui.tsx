@@ -178,9 +178,11 @@ export function TurnoutBar({ votes, eligible }: { votes: number; eligible: numbe
 
 /** Horizontal results bars: navy, leader in orange. */
 export function ResultsChart({ candidates, turnout, tie }: {
-  candidates: { id: string; name: string; votes: number }[]; turnout: { votes: number; eligible: number | null }; tie?: { names: string[]; votes: number } | null;
+  candidates: { id: string; name: string; votes: number; is_abstain?: boolean }[]; turnout: { votes: number; eligible: number | null }; tie?: { names: string[]; votes: number } | null;
 }) {
   const total = Math.max(1, turnout.votes);
+  const abstain = candidates.find((c) => c.is_abstain);
+  candidates = candidates.filter((c) => !c.is_abstain);
   const top = Math.max(0, ...candidates.map((c) => c.votes));
   return (
     <div className="results">
@@ -198,6 +200,7 @@ export function ResultsChart({ candidates, turnout, tie }: {
           </div>
         );
       })}
+      {abstain && <p className="muted small abstain-note">Abstentions (not a candidate, never a winner): {abstain.votes} · included in turnout</p>}
     </div>
   );
 }

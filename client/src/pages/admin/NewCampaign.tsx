@@ -14,6 +14,7 @@ export function NewCampaign() {
   const [eligibility, setEligibility] = useState<EligMode>('umoja');
   const [emailText, setEmailText] = useState('');
   const [allowEdits, setAllowEdits] = useState(false);
+  const [allowAbstain, setAllowAbstain] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const emails = parseEmails(emailText);
@@ -24,7 +25,7 @@ export function NewCampaign() {
       // The mode chosen here is saved WITH the campaign (it used to be chosen only on the next screen and had to be saved separately).
       const c = await api<Campaign>('POST', '/api/campaigns', {
         title, description: description || null, opens_at: fromLocalInput(opens), closes_at: fromLocalInput(closes),
-        eligibility, ...(eligibility === 'list' ? { emails } : {}), allow_edits_after_start: allowEdits,
+        eligibility, ...(eligibility === 'list' ? { emails } : {}), allow_edits_after_start: allowEdits, allow_abstain: allowAbstain,
       });
       nav(`/admin/c/${c.id}/edit`);
     } catch (err) { setError((err as Error).message); setBusy(false); }
@@ -57,6 +58,11 @@ export function NewCampaign() {
           <SectionTitle icon="lock">Who can vote</SectionTitle>
           <EligibilityPicker mode={eligibility} onMode={setEligibility} text={emailText} onText={setEmailText} />
           <p className="field-helper">This is locked once voting starts.</p>
+        </section>
+        <section className="form-section">
+          <SectionTitle icon="check">Ballot</SectionTitle>
+          <label className="check"><input type="checkbox" checked={allowAbstain} onChange={(e) => setAllowAbstain(e.target.checked)} /> Add an “Abstain (none of the above)” option</label>
+          <p className="field-helper">Off by default. When on, voters can choose to abstain. An abstention counts as a vote cast (turnout) but can never win and is reported separately. Locked once voting starts.</p>
         </section>
         <section className="form-section">
           <SectionTitle icon="info">After voting starts</SectionTitle>

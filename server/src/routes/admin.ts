@@ -124,6 +124,14 @@ const trunc = (v: string | null | undefined) => (v == null ? null : v.length > 3
 const auditEdit = (tx: PoolClient, actor: string, id: string, changes: EditChange[]) => audit(tx, actor, 'campaign.edit_after_start', id, { changes });
 const sameInstant = (a: string | null | undefined, b: Date | null) => (a == null ? b == null : b != null && new Date(a).getTime() === b.getTime());
 
+/** The ballot's Abstain line: a candidate row flagged is_abstain (sorted last), so it gets a tally counter like everyone else. */
+export const ABSTAIN_NAME = 'Abstain (none of the above)';
+async function setAbstain(tx: PoolClient, id: string, on: boolean): Promise<void> {
+  await tx.query('UPDATE campaigns SET allow_abstain = $2 WHERE id = $1', [id, on]);
+  if (on) await tx.query('INSERT INTO candidates (campaign_id, name, sort_order, is_abstain) VALUES ($1, $2, 2000000000, true) ON CONFLICT DO NOTHING', [id, ABSTAIN_NAME]);
+  else await tx.query('DELETE FROM candidates WHERE campaign_id = $1 AND is_abstain', [id]);
+}
+
 /** Validates and de-duplicates a list of voter emails (shared by creating a campaign and by setting eligibility). */
 function cleanEmails(raw: string[]): string[] {
   const norm = raw.map(normalizeEmail);
@@ -207,7 +215,7 @@ export function adminRouter(): Router {
       ? (await getPool().query(
           `SELECT c.campaign_id, c.id, c.name, c.photo_path, coalesce(t.votes, 0)::int AS votes
              FROM candidates c LEFT JOIN tallies t ON t.candidate_id = c.id AND t.campaign_id = c.campaign_id
-            WHERE c.campaign_id = ANY($1::uuid[])`, [closedIds])).rows
+            WHERE c.campaign_id = ANY($1::uuid[]) AND NOT c.is_abstain`, [closedIds])).rows
       : [];
     const winnerOf = (cid: string) => {
       const t = tallies.filter((x) => x.campaign_id === cid).sort((a, b) => b.votes - a.votes);
@@ -241,11 +249,12 @@ export function adminRouter(): Router {
     const emails = eligibility === 'list' ? cleanEmails(b.emails ?? []) : [];
     const created = await withTx(async (c) => {
       const { rows } = await c.query(
-        `INSERT INTO campaigns (share_token, created_by, title, description, opens_at, closes_at, eligibility, allow_edits_after_start)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
-        [token, u.oid, b.title, b.description ?? null, b.opens_at ?? null, b.closes_at ?? null, eligibility, b.allow_edits_after_start === true]);
+        `INSERT INTO campaigns (share_token, created_by, title, description, opens_at, closes_at, eligibility, allow_edits_after_start, allow_abstain)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+        [token, u.oid, b.title, b.description ?? null, b.opens_at ?? null, b.closes_at ?? null, eligibility, b.allow_edits_after_start === true, b.allow_abstain === true]);
+      if (b.allow_abstain === true) await setAbstain(c, rows[0].id, true);
       if (emails.length) await c.query('INSERT INTO eligible_voters (campaign_id, voter_email) SELECT $1, unnest($2::text[])', [rows[0].id, emails]);
-      await audit(c, u.oid, 'campaign.create', rows[0].id, { title: b.title, eligibility, allow_edits_after_start: b.allow_edits_after_start === true, ...(emails.length ? { count: emails.length } : {}) });
+      await audit(c, u.oid, 'campaign.create', rows[0].id, { title: b.title, eligibility, allow_edits_after_start: b.allow_edits_after_start === true, allow_abstain: b.allow_abstain === true, ...(emails.length ? { count: emails.length } : {}) });
       return rows[0] as CampaignRow;
     });
     res.status(201).json(present(created));
@@ -254,7 +263,7 @@ export function adminRouter(): Router {
   r.get('/:id', loadOwned, async (_req, res) => {
     const c = camp(res);
     const cands = await getPool().query(
-      'SELECT id, name, bio, photo_path, sort_order FROM candidates WHERE campaign_id = $1 ORDER BY sort_order, name', [c.id]);
+      'SELECT id, name, bio, photo_path, sort_order FROM candidates WHERE campaign_id = $1 AND NOT is_abstain ORDER BY sort_order, name', [c.id]);
     const el = await getPool().query('SELECT voter_email FROM eligible_voters WHERE campaign_id = $1 ORDER BY voter_email', [c.id]);
     res.json({
       ...present(c),
@@ -285,6 +294,7 @@ export function adminRouter(): Router {
            b.opens_at !== undefined, b.opens_at ?? null, b.closes_at !== undefined, b.closes_at ?? null,
            b.allow_edits_after_start !== undefined, b.allow_edits_after_start ?? false]);
         const row = rows[0] as CampaignRow;
+        if (b.allow_abstain !== undefined && b.allow_abstain !== row.allow_abstain) { await setAbstain(tx, c.id, b.allow_abstain); row.allow_abstain = b.allow_abstain; }
         if (row.opens_at && row.closes_at && row.closes_at <= row.opens_at) throw new HttpError(400, 'closes_at must be after opens_at');
         await audit(tx, actor, 'campaign.update', c.id, { fields: Object.keys(b) });
         return row;
@@ -295,6 +305,7 @@ export function adminRouter(): Router {
       if (b.allow_edits_after_start !== undefined && b.allow_edits_after_start !== cur.allow_edits_after_start) {
         throw new HttpError(409, '"Allow edits after start" cannot be changed once voting has started', 'locked');
       }
+      if (b.allow_abstain !== undefined && b.allow_abstain !== cur.allow_abstain) throw new HttpError(409, 'The Abstain option cannot be changed once voting has started', 'locked');
       if (b.opens_at !== undefined && !sameInstant(b.opens_at, cur.opens_at)) throw new HttpError(409, 'The opening time cannot be changed once voting has started', 'locked');
       const changes: EditChange[] = [];
       if (b.title !== undefined && b.title !== cur.title) changes.push({ what: 'title', from: cur.title, to: b.title });
@@ -328,7 +339,7 @@ export function adminRouter(): Router {
         if (live) await requireNoVotes(tx, c.id);
         const { rows } = await tx.query(
           `INSERT INTO candidates (campaign_id, name, bio, photo_path, sort_order)
-           VALUES ($1,$2,$3,$4,(SELECT COALESCE(max(sort_order),0)+1 FROM candidates WHERE campaign_id = $1))
+           VALUES ($1,$2,$3,$4,(SELECT COALESCE(max(sort_order),0)+1 FROM candidates WHERE campaign_id = $1 AND NOT is_abstain))
            RETURNING id, name, bio, photo_path, sort_order`, [c.id, b.name, b.bio || null, photo]);
         if (live) {
           await tx.query('INSERT INTO tallies (campaign_id, candidate_id, votes) VALUES ($1, $2, 0)', [c.id, rows[0].id]);   // a started campaign has a counter per candidate
@@ -352,7 +363,7 @@ export function adminRouter(): Router {
     try {
       const { cand, oldPhoto } = await inEditTx(c.id, async (tx, live) => {
         if (live) await requireNoVotes(tx, c.id);
-        const old = await tx.query('SELECT name, photo_path FROM candidates WHERE id = $1 AND campaign_id = $2 FOR UPDATE', [cid, c.id]);
+        const old = await tx.query('SELECT name, photo_path FROM candidates WHERE id = $1 AND campaign_id = $2 AND NOT is_abstain FOR UPDATE', [cid, c.id]);
         if (!old.rowCount) throw notFound();
         const setPhoto = newPhoto !== null || b.removePhoto === 'true';
         const { rows } = await tx.query(
@@ -378,10 +389,10 @@ export function adminRouter(): Router {
     const photo = await inEditTx(c.id, async (tx, live) => {
       if (live) {
         await requireNoVotes(tx, c.id);
-        const n = (await tx.query('SELECT count(*)::int AS n FROM candidates WHERE campaign_id = $1', [c.id])).rows[0].n as number;
+        const n = (await tx.query('SELECT count(*)::int AS n FROM candidates WHERE campaign_id = $1 AND NOT is_abstain', [c.id])).rows[0].n as number;
         if (n <= 2) throw new HttpError(409, 'A running vote needs at least 2 candidates', 'needs_candidates');
       }
-      const { rows } = await tx.query('DELETE FROM candidates WHERE id = $1 AND campaign_id = $2 RETURNING name, photo_path', [cid, c.id]);
+      const { rows } = await tx.query('DELETE FROM candidates WHERE id = $1 AND campaign_id = $2 AND NOT is_abstain RETURNING name, photo_path', [cid, c.id]);
       if (!rows.length) throw notFound();
       if (live) await auditEdit(tx, currentUser(req).oid, c.id, [{ what: 'candidate_removed', name: rows[0].name as string }]);
       else await audit(tx, currentUser(req).oid, 'candidate.delete', c.id, { candidate_id: cid });
@@ -408,7 +419,7 @@ export function adminRouter(): Router {
   r.post('/:id/start', loadOwned, async (req, res) => {
     const c = camp(res);
     await inDraftTx(c.id, async (tx) => {
-      const n = (await tx.query('SELECT count(*)::int AS n FROM candidates WHERE campaign_id = $1', [c.id])).rows[0].n;
+      const n = (await tx.query('SELECT count(*)::int AS n FROM candidates WHERE campaign_id = $1 AND NOT is_abstain', [c.id])).rows[0].n;
       if (n < 2) throw new HttpError(409, 'At least 2 candidates are required to start', 'needs_candidates');
       const fresh = (await tx.query('SELECT eligibility, closes_at, (closes_at <= clock_timestamp()) AS closes_in_past FROM campaigns WHERE id = $1', [c.id])).rows[0];
       if (fresh.eligibility === 'umoja' && (await activeMemberCount(tx)) < 1) {
@@ -651,7 +662,9 @@ export function adminRouter(): Router {
     if (c.status !== 'closed') throw new HttpError(409, 'CSV export is only available after the campaign is closed', 'not_closed');
     const results = await getResults(getPool(), c.id);
     const seal = await verifySeal(getPool(), c.id);   // the fingerprint ties this file to the sealed audit entry (SEC-04)
-    const lines = ['candidate,votes', ...results.candidates.map((x) => `${csvCell(x.name)},${x.votes}`), `Total ballots,${results.turnout.votes}`,
+    const abstain = results.candidates.find((x) => x.is_abstain);
+    const lines = ['candidate,votes', ...results.candidates.filter((x) => !x.is_abstain).map((x) => `${csvCell(x.name)},${x.votes}`),
+      ...(abstain ? [`Abstentions (not a candidate),${abstain.votes}`] : []), `Total ballots,${results.turnout.votes}`,
       ...(results.tie ? [`Tie,${csvCell('YES: tie for first place between ' + results.tie.names.join(' and '))}`] : []),
       ...(c.runoff_round ? [`Run-off round,${c.runoff_round}`] : []),
       ...(seal.sealed && seal.seal_hash ? [`Sealed at,${new Date(seal.sealed_at!).toISOString()}`, `Seal fingerprint,${seal.seal_hash}`] : [])];

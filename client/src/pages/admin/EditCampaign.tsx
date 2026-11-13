@@ -11,6 +11,7 @@ function DetailsSection({ c, live, onSaved }: { c: CampaignDetail; live: boolean
   const [opens, setOpens] = useState(toLocalInput(c.opens_at));
   const [closes, setCloses] = useState(toLocalInput(c.closes_at));
   const [allowEdits, setAllowEdits] = useState(!!c.allow_edits_after_start);
+  const [allowAbstain, setAllowAbstain] = useState(!!c.allow_abstain);
   const [msg, setMsg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -20,7 +21,7 @@ function DetailsSection({ c, live, onSaved }: { c: CampaignDetail; live: boolean
       // Live: the opening time and the setting itself are locked, so they are not sent at all.
       const body = live
         ? { title, description: description || null, closes_at: fromLocalInput(closes) }
-        : { title, description: description || null, opens_at: fromLocalInput(opens), closes_at: fromLocalInput(closes), allow_edits_after_start: allowEdits };
+        : { title, description: description || null, opens_at: fromLocalInput(opens), closes_at: fromLocalInput(closes), allow_edits_after_start: allowEdits, allow_abstain: allowAbstain };
       await api('PATCH', `/api/campaigns/${c.id}`, body);
       setMsg(live ? 'Saved. Recorded as “Edited after start”.' : 'Saved.'); onSaved();
     } catch (err) { setError((err as Error).message); }
@@ -39,6 +40,8 @@ function DetailsSection({ c, live, onSaved }: { c: CampaignDetail; live: boolean
       </div>
       {!live && (
         <>
+          <label className="check"><input type="checkbox" checked={allowAbstain} onChange={(e) => setAllowAbstain(e.target.checked)} /> Add an “Abstain (none of the above)” option</label>
+          <p className="field-helper">Counts as a vote cast but can never win; reported separately. Locked once voting starts.</p>
           <label className="check"><input type="checkbox" checked={allowEdits} onChange={(e) => setAllowEdits(e.target.checked)} /> Allow edits after start</label>
           <p className="field-helper">When on, the title, description and closing time stay editable while voting is open, and candidates until the first vote is cast. Each edit is recorded and shown as “Edited after start”. Who can vote is always locked at start.</p>
         </>
