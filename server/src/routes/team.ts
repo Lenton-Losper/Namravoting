@@ -11,6 +11,7 @@ import { ADMIN_ROLE } from '../auth/types.js';
 import { cleanMultiline } from '../domain/text.js';
 import { permanentDeleteBody, resetBody } from '../domain/validation.js';
 import { audit } from '../services/audit.js';
+import { buildAuditBundle } from '../services/auditBundle.js';
 import { getNotices, getResults, getTurnout, verifySeal, type CampaignRow } from '../services/campaigns.js';
 
 /**
@@ -262,6 +263,22 @@ export function observeRouter(): Router {
       team, approvals,
       audit: audit_.map((a) => ({ seq: a.seq, at: a.at, action: a.action, actor: a.actor, hash: a.hash, details: redact(a.details, closed) })),
     });
+  });
+
+  /** The same audit bundle the creator can download, for an observer of a CLOSED campaign. */
+  r.get('/:id/audit-bundle.zip', async (req, res) => {
+    const { id } = idParam.parse(req.params);
+    const u = currentUser(req);
+    const c = (await getPool().query(
+      `SELECT c.* FROM campaigns c WHERE c.id = $1 AND EXISTS (SELECT 1 FROM campaign_members m WHERE m.campaign_id = c.id AND m.user_oid = $2 AND m.role = 'observer')`, [id, u.oid])).rows[0] as CampaignRow | undefined;
+    if (!c) {
+      await audit(getPool(), u.oid, 'authz.denied', id, { reason: 'not_observer', method: req.method, path: req.path }).catch(() => undefined);
+      throw notFound();
+    }
+    if (c.status !== 'closed') throw new HttpError(409, 'The audit bundle is only available after the campaign is closed', 'not_closed');
+    const file = await buildAuditBundle(getPool(), c, `${u.displayName} (observer)`);
+    await audit(getPool(), u.oid, 'results.export_bundle', c.id, { as: 'observer' });
+    res.type('application/zip').set('Content-Disposition', 'attachment; filename="audit-bundle.zip"').set('Cache-Control', 'private, no-store').send(file);
   });
 
   return r;

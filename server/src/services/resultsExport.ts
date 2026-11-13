@@ -3,7 +3,7 @@ import PDFDocument from 'pdfkit';
 import type { Queryable } from '../db.js';
 import { standing } from '../domain/results.js';
 import { NAMRA_LOGO_JPEG } from './logo.js';
-import { getNotices, getResults, verifySeal, type CampaignRow, type ResultsPayload } from './campaigns.js';
+import { getNotices, getResults, verifySeal, type CampaignRow, type ResultsPayload, type SealCheck } from './campaigns.js';
 
 /**
  * Excel and PDF exports of a CLOSED campaign's result (SEC-01: the route refuses open campaigns; this module only formats).
@@ -25,6 +25,23 @@ const FORMULA_START = /^[\s\u0000-\u001f]*[=+\-@]/;
 export function safeCell(v: string | null | undefined): string {
   const s = v ?? '';
   return FORMULA_START.test(s) ? "'" + s : s;
+}
+
+/** A CSV cell that cannot start a spreadsheet formula (leading = + - @ tab CR gets an apostrophe), quoted when it needs to be. */
+export const csvCell = (v: string): string => { const s = /^[=+\-@\t\r]/.test(v) ? "'" + v : v; return /[",\n\r]/.test(s) ? `"${s.replaceAll('"', '""')}"` : s; };
+
+/** results.csv: the same content for the download and for the audit bundle. */
+export function buildCsv(c: CampaignRow, results: ResultsPayload, seal: SealCheck): string {
+  const abstain = results.candidates.find((x) => x.is_abstain);
+  const q = results.quorum;
+  const lines = ['candidate,votes', ...results.candidates.filter((x) => !x.is_abstain).map((x) => `${csvCell(x.withdrawn ? `${x.name} (withdrew: votes void)` : x.name)},${x.votes}`),
+    ...(abstain ? [`Abstentions (not a candidate),${abstain.votes}`] : []), `Total ballots,${results.turnout.votes}`,
+    ...(q ? [`Quorum,${q.met === false ? `NOT MET: ${q.votes} of ${q.needed} votes needed (${q.percent}% of ${q.eligible})` : q.met ? `met: ${q.votes} of ${q.needed} votes needed (${q.percent}% of ${q.eligible})` : `${q.percent}% (eligible count unknown)`}`] : []),
+    ...(results.publication ? [`Published by,${csvCell(results.publication.by ?? 'unknown')} on ${results.publication.at.toISOString()}${results.publication.scheduled ? ' (scheduled)' : ''}`] : []),
+    ...(results.tie ? [`Tie,${csvCell('YES: tie for first place between ' + results.tie.names.join(' and '))}`] : []),
+    ...(c.runoff_round ? [`Run-off round,${c.runoff_round}`] : []),
+    ...(seal.sealed && seal.seal_hash ? [`Sealed at,${new Date(seal.sealed_at!).toISOString()}`, `Seal fingerprint,${seal.seal_hash}`] : [])];
+  return lines.join('\r\n') + '\r\n';
 }
 
 export const ELIGIBILITY_LABEL: Record<CampaignRow['eligibility'], string> = { all: 'All staff', umoja: 'Umoja members only', list: 'Specific email list' };

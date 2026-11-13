@@ -8,7 +8,8 @@ import { teamRouter } from './team.js';
 import { notifyRouter } from './notify.js';
 import { backupSealedResult } from '../services/backup.js';
 import { publishBody, publishScheduleBody, withdrawBody } from '../domain/validation.js';
-import { buildPdf, buildXlsx, gatherExport } from '../services/resultsExport.js';
+import { buildAuditBundle } from '../services/auditBundle.js';
+import { buildCsv, buildPdf, buildXlsx, csvCell, gatherExport } from '../services/resultsExport.js';
 import QRCode from 'qrcode';
 import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import type { PoolClient } from 'pg';
@@ -200,7 +201,6 @@ const VISIBLE = "(c.created_by = $1 OR EXISTS (SELECT 1 FROM campaign_members m 
 const shareUrl = (token: string) => `${getConfig().publicBaseUrl}/v/${token}`;
 const present = (c: CampaignRow) => ({ ...c, share_url: shareUrl(c.share_token) });
 const photoUrl = (cand: { id: string; photo_path: string | null }) => (cand.photo_path ? `/api/photos/${cand.id}` : null);
-const csvCell = (v: string) => { const s = /^[=+\-@\t\r]/.test(v) ? "'" + v : v; return /[",\n\r]/.test(s) ? `"${s.replaceAll('"', '""')}"` : s; };
 
 export function adminRouter(): Router {
   const r = Router();
@@ -574,7 +574,7 @@ export function adminRouter(): Router {
     // A permanent delete destroys the only copy of the counters and receipts, so a CSV of the sealed result must have been
     // downloaded after the campaign closed (SEC-04). The sealed entry itself stays in the audit log.
     const exported = await getPool().query(
-      `SELECT 1 FROM audit_log WHERE campaign_id = $1 AND action IN ('results.export_csv', 'results.export_xlsx', 'results.export_pdf')
+      `SELECT 1 FROM audit_log WHERE campaign_id = $1 AND action IN ('results.export_csv', 'results.export_xlsx', 'results.export_pdf', 'results.export_bundle')
           AND seq > coalesce((SELECT max(seq) FROM audit_log WHERE campaign_id = $1 AND action LIKE 'campaign.close%'), 0) LIMIT 1`, [c.id]);
     if (!exported.rowCount) throw new HttpError(409, 'Export the results (CSV, Excel or PDF) before deleting permanently, so a copy of the result exists outside the system.', 'export_first');
     const out = await callCleanup('SELECT delete_archived_campaign($1, $2) AS result', [c.id, sessionRawId(req)],
@@ -757,17 +757,9 @@ export function adminRouter(): Router {
     if (c.status !== 'closed') throw new HttpError(409, 'CSV export is only available after the campaign is closed', 'not_closed');
     const results = await getResults(getPool(), c.id);
     const seal = await verifySeal(getPool(), c.id);   // the fingerprint ties this file to the sealed audit entry (SEC-04)
-    const abstain = results.candidates.find((x) => x.is_abstain);
-    const q = results.quorum;
-    const lines = ['candidate,votes', ...results.candidates.filter((x) => !x.is_abstain).map((x) => `${csvCell(x.withdrawn ? `${x.name} (withdrew: votes void)` : x.name)},${x.votes}`),
-      ...(abstain ? [`Abstentions (not a candidate),${abstain.votes}`] : []), `Total ballots,${results.turnout.votes}`,
-      ...(q ? [`Quorum,${q.met === false ? `NOT MET: ${q.votes} of ${q.needed} votes needed (${q.percent}% of ${q.eligible})` : q.met ? `met: ${q.votes} of ${q.needed} votes needed (${q.percent}% of ${q.eligible})` : `${q.percent}% (eligible count unknown)`}`] : []),
-      ...(results.publication ? [`Published by,${csvCell(results.publication.by ?? 'unknown')} on ${results.publication.at.toISOString()}${results.publication.scheduled ? ' (scheduled)' : ''}`] : []),
-      ...(results.tie ? [`Tie,${csvCell('YES: tie for first place between ' + results.tie.names.join(' and '))}`] : []),
-      ...(c.runoff_round ? [`Run-off round,${c.runoff_round}`] : []),
-      ...(seal.sealed && seal.seal_hash ? [`Sealed at,${new Date(seal.sealed_at!).toISOString()}`, `Seal fingerprint,${seal.seal_hash}`] : [])];
+    const csv = buildCsv(c, results, seal);
     await audit(getPool(), currentUser(req).oid, 'results.export_csv', c.id);
-    res.type('text/csv').set('Content-Disposition', 'attachment; filename="results.csv"').set('Cache-Control', 'private, no-store').send(lines.join('\r\n') + '\r\n');
+    res.type('text/csv').set('Content-Disposition', 'attachment; filename="results.csv"').set('Cache-Control', 'private, no-store').send(csv);
   });
 
   /**
@@ -784,6 +776,14 @@ export function adminRouter(): Router {
     res.type(kind === 'xlsx' ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' : 'application/pdf')
       .set('Content-Disposition', `attachment; filename="results.${kind}"`).set('Cache-Control', 'private, no-store').send(file);
   };
+  /** The audit bundle for leadership: results (PDF, Excel, CSV) + the audit log with hashes + a script that verifies it. Closed campaigns only. */
+  r.get('/:id/audit-bundle.zip', loadRunnable, async (req, res) => {
+    const c = camp(res); const u = currentUser(req);
+    if (c.status !== 'closed') throw new HttpError(409, 'The audit bundle is only available after the campaign is closed', 'not_closed');
+    const file = await buildAuditBundle(getPool(), c, `${u.displayName} (${u.email})`);
+    await audit(getPool(), u.oid, 'results.export_bundle', c.id);
+    res.type('application/zip').set('Content-Disposition', 'attachment; filename="audit-bundle.zip"').set('Cache-Control', 'private, no-store').send(file);
+  });
   r.get('/:id/results.xlsx', loadRunnable, exportRoute('xlsx'));
   r.get('/:id/results.pdf', loadRunnable, exportRoute('pdf'));
 

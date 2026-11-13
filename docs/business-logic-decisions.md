@@ -94,3 +94,14 @@ Items built on the demo day are NOT deployed yet.
 - **"Approved by":** every publication records who and when (`published_by`, `published_at`; the database refuses one without them and refuses
   to alter it). For a scheduled one it is the person who scheduled it. Shown to voters with the published results, in the CSV, Excel and PDF.
   Results published before this was built show no "approved by" line.
+
+## 9. Audit export for Umoja leadership
+- **One download: `audit-bundle.zip`** (Results tab, closed campaigns only; also for observers of that campaign). Opens with any zip tool. Contents:
+  `results.pdf`, `results.xlsx`, `results.csv` (the result, turnout against the frozen voter count, tie, quorum, abstentions, withdrawals, every
+  reset, early close and edit with its reason, the seal fingerprint, who published), `audit-log.csv` (every audit entry of the campaign with its
+  hashes, in the exact form the chain was computed), `verify-audit.mjs` (recomputes each entry's hash; `node verify-audit.mjs audit-log.csv`) and a
+  `README.txt` with the audit-chain status and seal check at the time of export and how to verify.
+- **Format: PDF + CSV as asked, plus Excel and the log.** Who receives it is your decision (default: the creator, co-admins and observers of that campaign).
+- Each download is audited (`results.export_bundle`) and counts as the copy needed before a permanent delete. It holds no vote and no receipt.
+- Honest limit: the bundle holds only this campaign's entries of a system-wide chain, so the script proves each entry is unaltered, not that nothing was
+  inserted between them; the README says so, and the whole chain is checked by the system ("Verify results integrity").

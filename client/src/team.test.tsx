@@ -125,6 +125,18 @@ describe('observer pages', () => {
     expect(screen.getByText('abc123')).toBeTruthy();
   });
 
+  it('offers the audit bundle only once the campaign is closed', async () => {
+    table[`GET /api/observe/${ID}`] = view();
+    const first = page();
+    await screen.findByText(/Per-candidate results are hidden/);
+    expect(screen.queryByRole('link', { name: /audit bundle/ })).toBeNull();
+    first.unmount();
+    table[`GET /api/observe/${ID}`] = view({ status: 'closed', result: { candidates: [], turnout: { votes: 0, eligible: null }, tie: null }, seal: null });
+    page();
+    const link = await screen.findByRole('link', { name: /audit bundle/ });
+    expect(link.getAttribute('href')).toBe(`/api/observe/${ID}/audit-bundle.zip`);
+  });
+
   it('shows a plain message when you are not an observer of that campaign', async () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string) => new Response(JSON.stringify(url === '/api/csrf' ? { token: 't' } : { error: 'Not found' }), { status: url === '/api/csrf' ? 200 : 404, headers: { 'content-type': 'application/json' } })));
     page();

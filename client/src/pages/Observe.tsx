@@ -64,6 +64,7 @@ export function ObserveCampaign() {
         <div className="results-turnout"><div className="field-label">Turnout</div><TurnoutBar votes={v.turnout.votes} eligible={v.turnout.eligible} /></div>
         {v.status !== 'closed' && <p className="muted">Per-candidate results are hidden until voting closes, for everyone. This protects the secrecy of every vote.</p>}
         {v.result && <ResultsChart candidates={v.result.candidates} turnout={v.result.turnout} tie={v.result.tie} />}
+        {v.status === 'closed' && <p><a className="btn btn-secondary btn-sm" href={`/api/observe/${v.id}/audit-bundle.zip`} download>Download the audit bundle (.zip)</a></p>}
         {v.seal && (
           <div className="seal-panel" role="status">
             <p className={good ? 'ok' : 'bad'}>{good ? 'Verified: the result is sealed in the audit chain and nothing has changed since.' : 'NOT verified: the audit chain, the seal or the counters do not match.'}</p>
