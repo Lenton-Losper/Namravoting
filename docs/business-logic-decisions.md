@@ -123,3 +123,12 @@ Items built on the demo day are NOT deployed yet.
   removes the ballot so it cannot be pressed twice, and offers "Check again" / "My votes". An offline notice shows when the browser has no connection.
 - **Not automated, so not claimed:** a real screen-reader pass, behaviour when the browser's default font size is changed (sizes are fixed pixels), touch targets on devices.
 - **Decision for you: an external accessibility review.** Recommended before the first real election.
+
+## 12. Entra secret expiry: outside monitoring
+- **Built:** the Monitor workflow (GitHub, not Cloudflare; every 15 minutes, with the Microsoft checks once an hour) now also (1) **exercises the secret**: the same
+  client-credentials token request the app makes, so an expired or wrong secret is found before a person hits the sign-in, and reports the Microsoft code in words
+  (`AADSTS7000222` = expired); and (2) **tracks the expiry date**: warns 30 days ahead, fails (alerts) in the last 7 days and after expiry. It never prints the secret or a token.
+- **To switch on the date tracking:** set the repository variable `ENTRA_SECRET_EXPIRES_AT` (YYYY-MM-DD, from the app registration). The in-app banner uses the same date
+  as the Worker variable of the same name (`worker/wrangler.jsonc`); both are still unset. **Needs from you: the expiry date.**
+- **Where alerts go:** a failed run is the alert (GitHub emails the people watching the repository); add the repository secret `ALERT_WEBHOOK_URL` (Teams or Slack
+  incoming webhook) for a channel message. Your decision: who should be notified.

@@ -2,6 +2,8 @@ name: Monitor
 
 # Watches the live app from OUTSIDE it (GitHub, not Cloudflare), so it still works when the app is down. A failed run is the alert: GitHub
 # emails the people watching this repository / who last edited this workflow, and the run shows red in the Actions tab.
+# Item 12: once an hour it also exercises the Microsoft sign-in secret and warns 30 days before it expires (fails in the last 7 days). Set the
+# repository variable ENTRA_SECRET_EXPIRES_AT (YYYY-MM-DD) from the Entra app registration.
 # Optional extra alert: set the repository secret ALERT_WEBHOOK_URL to a Microsoft Teams or Slack incoming-webhook URL.
 #
 # Notes: GitHub may delay scheduled runs by several minutes, and pauses schedules in a repository with no activity for 60 days
@@ -25,6 +27,10 @@ jobs:
     timeout-minutes: 8
     env:
       ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}
+      # The Microsoft sign-in secret is exercised once an hour (the same request the app makes), and its expiry date is tracked.
+      ENTRA_CLIENT_SECRET: ${{ secrets.ENTRA_CLIENT_SECRET }}
+      ENTRA_SECRET_EXPIRES_AT: ${{ vars.ENTRA_SECRET_EXPIRES_AT }}
+      EVENT_NAME: ${{ github.event_name }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
