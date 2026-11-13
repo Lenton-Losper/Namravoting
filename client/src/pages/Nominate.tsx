@@ -115,7 +115,7 @@ export function NominatePage() {
   const shown = preview ?? (removePhoto ? null : p?.photoUrl ?? null);
 
   return (
-    <>
+    <div className="nominate-page">
       <section className="card card-accent head-card">
         <div className="head-inner">
           <div className="grow">
@@ -175,6 +175,6 @@ export function NominatePage() {
           <p>You will not appear on the ballot for {info.position.title}. You can submit your profile again while nominations are open.</p>
         </Dialog>
       )}
-    </>
+    </div>
   );
 }

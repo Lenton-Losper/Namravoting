@@ -188,7 +188,7 @@ function PositionDetail({ c, p, reload, editable, canEditPosition }: { c: Campai
   const inRunning = (list ?? []).filter((x) => x.status === 'approved' && !withdrawnIds.has(x.id)).length;
 
   return (
-    <section className="card card-pad position-detail" aria-label={`${p.title} details`}>
+    <section className="position-detail" aria-label={`${p.title} details`}>
       <h3>{p.title}</h3>
       {p.description && <p className="muted">{p.description}</p>}
       <p className="muted small">{p.counts.approved} approved{p.required > 2 || p.min_candidates ? ` (needs at least ${p.required})` : ' (needs at least 2)'}{p.max_candidates ? ` · at most ${p.max_candidates}` : ''} · {p.seats} seat{p.seats === 1 ? '' : 's'}</p>

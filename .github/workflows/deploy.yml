@@ -96,6 +96,14 @@ jobs:
           npm run typecheck -w server
           npm run build
 
+      # A Neon branch of the live database as of now, so a migration that goes wrong can be rolled back instantly (docs/operations.md,
+      # "Rolling back a deploy"). If the snapshot cannot be made the deploy stops here, before anything is changed.
+      - name: Snapshot the live database (Neon branch) before migrating
+        env:
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+          NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID }}
+        run: node scripts/neon-snapshot.mjs --label "${GITHUB_SHA::8}" --keep 3
+
       - name: Database migrations (owner URL)
         run: |
           # The app role's password is only used by migration 003 on a brand-new database; take it from the app URL so there is one source.

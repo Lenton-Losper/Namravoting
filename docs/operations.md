@@ -51,8 +51,10 @@ and `CSRF_SECRET` are sent when present in `.env`.
 Actions tab, **Deploy (manual)**, Run workflow on `main`, type `DEPLOY`. Nothing runs by itself. The workflow:
 
 1. **Gate:** refuses unless it runs on `main`, you typed `DEPLOY`, and the CI workflow has a green run on this exact commit.
-2. **One job:** preflight (every secret present, config safe) -> build the container image -> typecheck and build -> database
-   migrations with the owner URL -> `scripts/cf-deploy.mjs` (Worker + Container, then secrets) -> smoke test (`GET /api/csrf` = 200).
+2. **One job:** preflight (every secret present, config safe) -> build the container image -> typecheck and build -> **snapshot of the
+   live database** (a Neon branch, `scripts/neon-snapshot.mjs`) -> database migrations with the owner URL -> `scripts/cf-deploy.mjs`
+   (Worker + Container, then secrets) -> smoke test (`GET /api/csrf` = 200). If the snapshot cannot be made, the deploy stops before
+   the migration.
    A failure before the migration step leaves everything as it was. The only gap is between the migration and the new container
    answering (a few minutes): the old app cannot work against the new schema, so do not run it during a vote.
 
@@ -68,10 +70,35 @@ Repository secrets (Settings -> Secrets and variables -> Actions -> New reposito
 | `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | Cloudflare -> R2 -> Manage API tokens -> Create API token, Object Read & Write on the `namra-voting-photos` bucket. |
 | `R2_ENDPOINT` | Same page: `https://<account id>.r2.cloudflarestorage.com`. |
 | `ENTRA_CLIENT_SECRET` | Entra admin centre -> App registrations -> the app -> Certificates & secrets -> New client secret. Copy the **Value** (not the Secret ID) immediately. Then set `ENTRA_SECRET_EXPIRES_AT` in `worker/wrangler.jsonc`. |
+| `NEON_API_KEY` | Neon console -> Account settings -> API keys -> Create. Used only to create the pre-deploy snapshot branch (and to delete snapshots older than the last 3). **Required**: without it the deploy stops before migrating. |
+| `NEON_PROJECT_ID` | Neon console -> project -> Settings -> General -> Project ID. Recommended (otherwise the project named `namra-voting-demo` is used). |
 | `SESSION_SECRET_PREVIOUS`, `CSRF_SECRET` | Optional. Only for rotating the session secret without signing people out, or to give CSRF its own key. Leave unset otherwise. |
 
 The workflow never prints a secret. It takes the app role's password from `DEMO_DATABASE_URL` for the migration runner
 (only used on a brand-new database), so there is no separate secret for it.
+
+## Rolling back a deploy (pre-deploy snapshot)
+
+Every deploy first creates a Neon branch of the live database **as of that moment**, named `pre-deploy-<UTC time>-<commit>`. It is a
+copy-on-write fork: it takes seconds, has no compute attached, and costs almost nothing until it is used. The run's summary page names
+it. The 3 newest snapshots are kept; older `pre-deploy-*` branches are deleted after a new one is made.
+
+**Before the first deploy of Part B + positions (migrations 013 to 019)** this matters most: migration 019 rewrites the primary keys of
+`tallies` and `vote_receipts` and moves every candidate into a position. Check in the run summary that the snapshot was made, and do not
+deploy while a vote is open. To take one by hand first: `node scripts/neon-snapshot.mjs --label manual` (needs `NEON_API_KEY` in `.env`).
+
+If the migration or the new app goes wrong:
+
+1. **Stop new writes**: Cloudflare -> the Worker -> roll back to the previous deployment (Deployments tab), so the old code runs again.
+2. **Restore the database**: Neon console -> Branches -> the live (default) branch -> **Restore** -> *From another branch* -> pick the
+   `pre-deploy-...` branch of that run -> Restore. The live branch keeps its name, endpoint and connection strings, so the app reconnects
+   with no configuration change. Neon keeps the replaced state as a backup branch (`<name>_old_<time>`) until you delete it.
+3. Check it: `RESTORE_CHECK_URL=<owner URL> npm run restore:check` (migrations, audit chain, receipts = counters, sealed results).
+4. Anything written between the snapshot and the restore is lost: votes, nominations and audit entries made after the deploy started.
+   That is why a deploy must not run during a vote.
+
+Alternatively, to inspect before restoring: add a compute endpoint to the snapshot branch in the Neon console and point
+`npm run restore:check` at it. The snapshot branch itself is never changed by a restore.
 
 ## Matching Umoja members to Microsoft accounts
 

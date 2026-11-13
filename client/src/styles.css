@@ -144,9 +144,10 @@ main:focus { outline: none; }
 }
 
 /* Two-column body */
-.cols { display: grid; grid-template-columns: 1fr; gap: 24px; align-items: start; }
+.cols { display: grid; grid-template-columns: minmax(0, 1fr); gap: 24px; align-items: start; }   /* minmax(0, ...): a long tab row scrolls inside its card instead of widening the page */
+.cols > * { min-width: 0; }
 .cols .card { margin: 0; }
-@media (min-width: 900px) { .cols { grid-template-columns: 2fr 1fr; } }
+@media (min-width: 900px) { .cols { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); } }
 
 /* ---------- Section titles, fields ---------- */
 .section-title { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin: 0 0 16px; }
@@ -369,7 +370,8 @@ progress::-moz-progress-bar { background: var(--navy); border-radius: 3px; }
 .position-actions { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-top: auto; }
 .position-need { color: var(--danger); margin: 0; }
 .position-outcome { margin: 0; }
-.position-detail { margin-top: 8px; }
+.position-detail { margin-top: 24px; padding-top: 16px; border-top: 2px solid var(--orange); }
+.position-detail > h3 { font-size: 16px; }
 .position-result { margin-top: 24px; padding-top: 12px; border-top: 1px solid var(--border); }
 .region-group { margin-top: 12px; }
 .region-heading { font-size: 14px; font-weight: 600; margin: 16px 0 8px; color: var(--navy-text); }
@@ -386,6 +388,7 @@ progress::-moz-progress-bar { background: var(--navy); border-radius: 3px; }
 .invite-panel { margin: 16px 0; padding: 16px; background: var(--surface-muted); border: 1px solid var(--border); border-radius: var(--radius); }
 .invite-panel h4, .position-detail h4, .inline-form h4 { font-size: 14px; margin: 0 0 8px; }
 .invite-row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; }
+.invite-row label { flex: 1 1 240px; }
 .invite-qr { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 12px; align-items: flex-start; }
 .invite-qr img { background: #fff; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 4px; }
 .region-list { list-style: none; margin: 8px 0; padding: 0; border: 1px solid var(--border); border-radius: var(--radius); }
@@ -398,5 +401,10 @@ progress::-moz-progress-bar { background: var(--navy); border-radius: 3px; }
 .nomination-approved { border-left-color: var(--success); }
 .nomination-rejected { border-left-color: var(--danger); }
 .nomination-submitted { border-left-color: var(--orange); }
-.nominate-form { max-width: 640px; }
+.nominate-page { max-width: 720px; margin: 0 auto; }
 .nomination-row { align-items: flex-start; flex-wrap: wrap; }
+.nomination-row .grow { flex: 1 1 0; min-width: 0; }
+.nomination-row .cand-actions { flex: 1 1 100%; flex-wrap: wrap; justify-content: flex-end; }
+@media (min-width: 640px) { .nomination-row .cand-actions { flex: 0 1 auto; } }
+.abstain-group { margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--border); }
+.ballot-campaign { margin: 0 0 2px; }

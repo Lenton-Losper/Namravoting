@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Link } from 'react-router-dom';
 import { api, ApiError, fmtDate, type Notice, type Results } from '../api';
 import { Icon } from '../icons';
 import { closesIn } from '../time';
@@ -21,6 +20,7 @@ interface BallotCandidate { id: string; name: string; bio: string | null; photoU
 interface Ballot {
   position: { id: string; title: string; description: string | null };
   regions: { id: string; name: string }[]; candidates: BallotCandidate[]; progress: { voted: number; total: number };
+  campaign?: { title: string; closesAt: string | null };
 }
 
 function StateCard({ icon, title, children }: { icon: string; title: string; children?: ReactNode }) {
@@ -138,6 +138,7 @@ export function PositionBallot({ token, position, onBack, onVoted }: {
         <div className="head-inner">
           <div className="initials-box" aria-hidden="true">{initials(position.title)}</div>
           <div className="grow">
+            {ballot?.campaign?.title && <p className="meta ballot-campaign">{ballot.campaign.title}</p>}
             <h1 className="head-title">{position.title}</h1>
             {ballot?.position.description && <p className="head-desc">{ballot.position.description}</p>}
           </div>
@@ -173,7 +174,7 @@ export function PositionBallot({ token, position, onBack, onVoted }: {
                 <div className="list radio-list" role="radiogroup" aria-labelledby={`region-h-${i}`}>{g.items.map(card)}</div>
               </section>
             ))}
-            {abstain && <div className="list radio-list" role="radiogroup" aria-label="Or abstain">{card(abstain)}</div>}
+            {abstain && <div className="list radio-list abstain-group" role="radiogroup" aria-label="Or abstain">{card(abstain)}</div>}
           </div>
           <div className="sticky-bar">
             <button className="btn btn-primary btn-block" disabled={!selected || busy} onClick={() => setConfirming(true)}>Cast vote</button>
@@ -257,7 +258,6 @@ export function CampaignBlocks({ token, info, now, reload }: { token: string; in
           <NoticeList notices={results.notices} />
         </section>
       )}
-      <p className="muted small"><Link to="/votes">My votes</Link></p>
     </>
   );
 }
