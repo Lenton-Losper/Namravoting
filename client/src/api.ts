@@ -76,6 +76,10 @@ export interface Campaign {
   my_role?: 'owner' | 'co_admin';
   /** The retention job removed receipts, voter lists and photos on this date; the sealed result remains. */
   receipts_purged_at?: string | null;
+  /** Minimum turnout (percent of eligible voters); a result below it is flagged. Set while a draft. */
+  quorum_percent?: number | null;
+  /** When the closed result is published automatically (set by the creator or a co-admin). */
+  publish_at?: string | null;
 }
 export interface IntegrityBlock { ballots: number; receipts: number; at: string }
 export interface CampaignDetail extends Campaign { turnout: number; candidates: Candidate[]; eligible_emails: string[]; umoja_active_count: number; integrity_block?: IntegrityBlock | null; edited_after_start?: Notice[] }
@@ -87,7 +91,9 @@ export interface ResetEntry extends Notice { votes_cleared: number }
 /** Run-off context of a closed campaign (creator only). */
 export interface RunoffInfo { round: number; max: number; next: { id: string; title: string; status: string } | null; parent: { id: string; title: string } | null; can_start: boolean }
 export interface Tie { names: string[]; votes: number }
-export interface Results { status: string; results_published: boolean; archived?: boolean; candidates: { id: string; name: string; votes: number; is_abstain?: boolean; withdrawn?: boolean }[] | null; turnout: { votes: number; eligible: number | null }; resets?: ResetEntry[]; notices?: Notice[]; tie?: Tie | null; runoff?: RunoffInfo }
+export interface Quorum { percent: number; eligible: number | null; needed: number | null; votes: number; met: boolean | null }
+export interface Publication { by: string | null; at: string; scheduled: boolean }
+export interface Results { status: string; results_published: boolean; archived?: boolean; candidates: { id: string; name: string; votes: number; is_abstain?: boolean; withdrawn?: boolean }[] | null; turnout: { votes: number; eligible: number | null }; resets?: ResetEntry[]; notices?: Notice[]; tie?: Tie | null; runoff?: RunoffInfo; quorum?: Quorum | null; publication?: Publication | null }
 export interface SealCheck {
   chain_ok: boolean; chain_checked: number; sealed: boolean; sealed_at: string | null; seal_hash: string | null; seal_seq: number | null;
   tallies_match: boolean | null; receipts_match: boolean | null; sealed_tallies: { name: string; votes: number }[]; sealed_turnout: number | null;

@@ -176,7 +176,7 @@ describe('SEC-17: clean-up functions take the actor from a live session, and the
       await upd("UPDATE campaigns SET status = 'closed' WHERE id = $1");                             // open -> closed
       await expect(upd("UPDATE campaigns SET status = 'open' WHERE id = $1")).rejects.toThrow(/illegal status change closed -> open/);   // only the reset function may reopen
       await expect(upd("UPDATE campaigns SET status = 'draft' WHERE id = $1")).rejects.toThrow(/illegal status change closed -> draft/);
-      await upd('UPDATE campaigns SET results_published = true WHERE id = $1');                      // closed: may publish
+      await upd('UPDATE campaigns SET results_published = true, published_at = now(), published_by = $2 WHERE id = $1', ADMIN_A.oid);   // closed: may publish (the publication guard needs who and when, migration 018)
       await expect(upd('UPDATE campaigns SET results_published = false WHERE id = $1')).rejects.toThrow(/cannot be withdrawn/);
       await upd('UPDATE campaigns SET archived_at = now() WHERE id = $1');                           // closed: may archive
     } finally { await db.end(); }

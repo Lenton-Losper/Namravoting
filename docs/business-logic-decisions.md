@@ -82,3 +82,15 @@ Items built on the demo day are NOT deployed yet.
 - **Who can be reached:** a listed vote (the listed emails) and an Umoja vote (active members whose account is known: matched by account id or by
   employee code). A vote open to **all staff has no list to write to**: share the link or QR code, or use a listed vote.
 - **Not built:** automatic scheduled sending (there is no scheduler in the app; the buttons are manual). A schedule could call the same endpoint later.
+
+## 8. Quorum, scheduled publishing, "approved by"
+- **Quorum: optional, per campaign, as a percentage of the eligible voters** (1 to 100). Set on the draft, locked at start (also in the database). It
+  needs a known voter list (Umoja or a list of emails), not "all staff". A result below it is flagged everywhere (results, voters' published
+  results, CSV, Excel, PDF, observers). It can still be published, but only after the creator acknowledges it (audited `below_quorum`).
+  Whether Umoja's constitution has a quorum is yours to say: nothing is on by default.
+- **Scheduled publishing:** the creator or a co-admin sets a time; the closed result is published the first time anyone looks at the campaign after
+  that (like the automatic close; there is no scheduler). It is **never published automatically** if the result is below quorum or no longer matches its seal
+  (recorded once as `results.publish_blocked`): a person decides.
+- **"Approved by":** every publication records who and when (`published_by`, `published_at`; the database refuses one without them and refuses
+  to alter it). For a scheduled one it is the person who scheduled it. Shown to voters with the published results, in the CSV, Excel and PDF.
+  Results published before this was built show no "approved by" line.

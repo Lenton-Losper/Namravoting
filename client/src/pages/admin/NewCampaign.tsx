@@ -16,6 +16,7 @@ export function NewCampaign() {
   const [allowEdits, setAllowEdits] = useState(false);
   const [allowAbstain, setAllowAbstain] = useState(false);
   const [needApproval, setNeedApproval] = useState(false);
+  const [quorum, setQuorum] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const emails = parseEmails(emailText);
@@ -26,7 +27,7 @@ export function NewCampaign() {
       // The mode chosen here is saved WITH the campaign (it used to be chosen only on the next screen and had to be saved separately).
       const c = await api<Campaign>('POST', '/api/campaigns', {
         title, description: description || null, opens_at: fromLocalInput(opens), closes_at: fromLocalInput(closes),
-        eligibility, ...(eligibility === 'list' ? { emails } : {}), allow_edits_after_start: allowEdits, allow_abstain: allowAbstain, require_approval: needApproval,
+        eligibility, ...(eligibility === 'list' ? { emails } : {}), allow_edits_after_start: allowEdits, allow_abstain: allowAbstain, require_approval: needApproval, ...(eligibility !== 'all' && quorum ? { quorum_percent: Number(quorum) } : {}),
       });
       nav(`/admin/c/${c.id}/edit`);
     } catch (err) { setError((err as Error).message); setBusy(false); }
@@ -59,6 +60,8 @@ export function NewCampaign() {
           <SectionTitle icon="lock">Who can vote</SectionTitle>
           <EligibilityPicker mode={eligibility} onMode={setEligibility} text={emailText} onText={setEmailText} />
           <p className="field-helper">This is locked once voting starts.</p>
+          <label>Quorum (optional)<span className="field-helper">{eligibility === 'all' ? 'Needs a known list of voters: choose Umoja members or a list of emails.' : 'Minimum turnout, as a percentage of the eligible voters (1 to 100). A result below it is flagged everywhere; it can still be published, but only knowingly. Locked once voting starts.'}</span>
+            <input type="number" min={1} max={100} step={1} value={quorum} onChange={(e) => setQuorum(e.target.value)} disabled={eligibility === 'all'} /></label>
         </section>
         <section className="form-section">
           <SectionTitle icon="check">Ballot</SectionTitle>

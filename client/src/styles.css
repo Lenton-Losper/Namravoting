@@ -65,6 +65,8 @@ a { color: var(--navy); text-underline-offset: 3px; }
 .wordmark-dark .wordmark-logo img { width: 40px; height: 40px; }
 .tie-note { margin: 0 0 12px; padding: 10px 12px; border-left: 4px solid var(--orange, #E8741A); background: var(--orange-50, #fff4ea); border-radius: 6px; }
 .runoff-panel { margin-top: 16px; }
+.quorum-bad { border-left-color: #b42318; background: #fff1f0; }
+.schedule-panel { margin-top: 16px; }
 .row-between { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
 .audit-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .audit-table th, .audit-table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }

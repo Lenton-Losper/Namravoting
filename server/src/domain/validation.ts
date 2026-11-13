@@ -28,9 +28,12 @@ export const createCampaignBody = z.object({
   allow_abstain: z.boolean().optional(),
   /** Resets and permanent deletes need a co-admin's approval. Can be switched on, never off. */
   require_approval: z.boolean().optional(),
+  /** Minimum turnout as a percentage of the eligible voters; a result below it is flagged. Needs a vote with a voter list. */
+  quorum_percent: z.number().int().min(1).max(100).nullable().optional(),
 }).strict().refine(windowOk, windowMsg)
   .refine((v) => v.eligibility !== 'list' || (v.emails?.length ?? 0) > 0, { message: 'Add at least one email address for a listed vote', path: ['emails'] })
-  .refine((v) => v.eligibility === 'list' || v.emails === undefined, { message: 'emails only applies to a listed vote', path: ['emails'] });
+  .refine((v) => v.eligibility === 'list' || v.emails === undefined, { message: 'emails only applies to a listed vote', path: ['emails'] })
+  .refine((v) => v.eligibility !== 'all' || v.quorum_percent == null, { message: 'A quorum needs a known list of voters: choose Umoja members or a list of emails', path: ['quorum_percent'] });
 
 export const patchCampaignBody = z.object({
   title: line(200).optional(),
@@ -39,12 +42,17 @@ export const patchCampaignBody = z.object({
   closes_at: isoDate.optional(),
   allow_edits_after_start: z.boolean().optional(),
   allow_abstain: z.boolean().optional(),
+  quorum_percent: z.number().int().min(1).max(100).nullable().optional(),
 }).strict().refine(windowOk, windowMsg);
 
 export const candidateBody = z.object({
   name: line(120),
   bio: lines(500).optional(),
 }).strict();
+/** Schedule (or clear) the automatic publication of a closed result. */
+export const publishScheduleBody = z.object({ publish_at: z.string().datetime({ offset: true }).nullable() }).strict();
+export const publishBody = z.object({ acknowledge_below_quorum: z.boolean().optional() }).strict();
+
 /** A candidate withdraws after voting has started: a reason is required and is shown to voters. */
 export const withdrawBody = z.object({ reason: z.string().transform(cleanMultiline).pipe(z.string().trim().min(10, 'Give a reason of at least 10 characters').max(1000)) }).strict();
 export const candidatePatchBody = z.object({

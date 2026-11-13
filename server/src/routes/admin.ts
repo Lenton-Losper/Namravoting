@@ -7,7 +7,7 @@ import PDFDocument from 'pdfkit';
 import { teamRouter } from './team.js';
 import { notifyRouter } from './notify.js';
 import { backupSealedResult } from '../services/backup.js';
-import { withdrawBody } from '../domain/validation.js';
+import { publishBody, publishScheduleBody, withdrawBody } from '../domain/validation.js';
 import { buildPdf, buildXlsx, gatherExport } from '../services/resultsExport.js';
 import QRCode from 'qrcode';
 import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
@@ -24,7 +24,7 @@ import {
 } from '../domain/validation.js';
 import { audit } from '../services/audit.js';
 import {
-  closeInTx, getNotices, getResults, getTurnout, IntegrityBlocked, integrityMessage, openIntegrityBlock, recordIntegrityBlock, refreshStatus, verifySeal, type CampaignRow,
+  closeInTx, getNotices, getResults, getTurnout, IntegrityBlocked, integrityMessage, openIntegrityBlock, quorumOf, recordIntegrityBlock, refreshStatus, verifySeal, type CampaignRow,
 } from '../services/campaigns.js';
 import { deletePhoto, MAX_UPLOAD_BYTES, readPhoto, savePhoto } from '../services/images.js';
 
@@ -276,12 +276,12 @@ export function adminRouter(): Router {
     const emails = eligibility === 'list' ? cleanEmails(b.emails ?? []) : [];
     const created = await withTx(async (c) => {
       const { rows } = await c.query(
-        `INSERT INTO campaigns (share_token, created_by, title, description, opens_at, closes_at, eligibility, allow_edits_after_start, allow_abstain, require_approval)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
-        [token, u.oid, b.title, b.description ?? null, b.opens_at ?? null, b.closes_at ?? null, eligibility, b.allow_edits_after_start === true, b.allow_abstain === true, b.require_approval === true]);
+        `INSERT INTO campaigns (share_token, created_by, title, description, opens_at, closes_at, eligibility, allow_edits_after_start, allow_abstain, require_approval, quorum_percent)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
+        [token, u.oid, b.title, b.description ?? null, b.opens_at ?? null, b.closes_at ?? null, eligibility, b.allow_edits_after_start === true, b.allow_abstain === true, b.require_approval === true, b.quorum_percent ?? null]);
       if (b.allow_abstain === true) await setAbstain(c, rows[0].id, true);
       if (emails.length) await c.query('INSERT INTO eligible_voters (campaign_id, voter_email) SELECT $1, unnest($2::text[])', [rows[0].id, emails]);
-      await audit(c, u.oid, 'campaign.create', rows[0].id, { title: b.title, eligibility, allow_edits_after_start: b.allow_edits_after_start === true, allow_abstain: b.allow_abstain === true, require_approval: b.require_approval === true, ...(emails.length ? { count: emails.length } : {}) });
+      await audit(c, u.oid, 'campaign.create', rows[0].id, { title: b.title, eligibility, allow_edits_after_start: b.allow_edits_after_start === true, allow_abstain: b.allow_abstain === true, require_approval: b.require_approval === true, quorum_percent: b.quorum_percent ?? null, ...(emails.length ? { count: emails.length } : {}) });
       return rows[0] as CampaignRow;
     });
     res.status(201).json(present(created));
@@ -323,6 +323,10 @@ export function adminRouter(): Router {
            b.allow_edits_after_start !== undefined, b.allow_edits_after_start ?? false]);
         const row = rows[0] as CampaignRow;
         if (b.allow_abstain !== undefined && b.allow_abstain !== row.allow_abstain) { await setAbstain(tx, c.id, b.allow_abstain); row.allow_abstain = b.allow_abstain; }
+        if (b.quorum_percent !== undefined) {
+          if (b.quorum_percent !== null && row.eligibility === 'all') throw new HttpError(409, 'A quorum needs a known list of voters: choose Umoja members or a list of emails first', 'quorum_needs_list');
+          await tx.query('UPDATE campaigns SET quorum_percent = $2 WHERE id = $1', [c.id, b.quorum_percent]); row.quorum_percent = b.quorum_percent;
+        }
         if (row.opens_at && row.closes_at && row.closes_at <= row.opens_at) throw new HttpError(400, 'closes_at must be after opens_at');
         await audit(tx, actor, 'campaign.update', c.id, { fields: Object.keys(b) });
         return row;
@@ -334,6 +338,7 @@ export function adminRouter(): Router {
         throw new HttpError(409, '"Allow edits after start" cannot be changed once voting has started', 'locked');
       }
       if (b.allow_abstain !== undefined && b.allow_abstain !== cur.allow_abstain) throw new HttpError(409, 'The Abstain option cannot be changed once voting has started', 'locked');
+      if (b.quorum_percent !== undefined && (b.quorum_percent ?? null) !== (cur.quorum_percent ?? null)) throw new HttpError(409, 'The quorum cannot be changed once voting has started', 'locked');
       if (b.opens_at !== undefined && !sameInstant(b.opens_at, cur.opens_at)) throw new HttpError(409, 'The opening time cannot be changed once voting has started', 'locked');
       const changes: EditChange[] = [];
       if (b.title !== undefined && b.title !== cur.title) changes.push({ what: 'title', from: cur.title, to: b.title });
@@ -459,6 +464,9 @@ export function adminRouter(): Router {
     let emails: string[] = [];
     if (b.mode === 'list') emails = cleanEmails(b.emails);
     await inDraftTx(c.id, async (tx) => {
+      if (b.mode === 'all' && (await tx.query('SELECT 1 FROM campaigns WHERE id = $1 AND quorum_percent IS NOT NULL', [c.id])).rowCount) {
+        throw new HttpError(409, 'This campaign has a quorum, which needs a known list of voters. Remove the quorum first.', 'quorum_needs_list');
+      }
       await tx.query('UPDATE campaigns SET eligibility = $2 WHERE id = $1', [c.id, b.mode]);
       await tx.query('DELETE FROM eligible_voters WHERE campaign_id = $1', [c.id]);
       if (emails.length) await tx.query('INSERT INTO eligible_voters (campaign_id, voter_email) SELECT $1, unnest($2::text[])', [c.id, emails]);
@@ -639,6 +647,7 @@ export function adminRouter(): Router {
 
   r.post('/:id/publish', loadRunnable, async (req, res) => {
     const c = camp(res);
+    const b = publishBody.parse(req.body ?? {});
     await withTx(async (tx) => {
       const { rows } = await tx.query('SELECT status FROM campaigns WHERE id = $1 FOR UPDATE', [c.id]);
       if (rows[0]?.status !== 'closed') throw new HttpError(409, 'Results can only be published after the campaign is closed', 'not_closed');
@@ -647,10 +656,29 @@ export function adminRouter(): Router {
       if (seal.sealed && (!seal.chain_ok || seal.tallies_match === false || seal.receipts_match === false)) {
         throw new HttpError(409, 'The result no longer matches what was sealed when the campaign closed. Run "Verify results integrity" and investigate before publishing.', 'integrity_failed');
       }
-      await tx.query('UPDATE campaigns SET results_published = true WHERE id = $1', [c.id]);
-      await audit(tx, currentUser(req).oid, 'results.publish', c.id);
+      // Below the quorum: allowed, but only knowingly. The flag stays on the result for everyone to see.
+      const q = quorumOf((await tx.query('SELECT quorum_percent FROM campaigns WHERE id = $1', [c.id])).rows[0].quorum_percent, await getTurnout(tx, c.id));
+      if (q && q.met === false && !b.acknowledge_below_quorum) {
+        throw new HttpError(409, `Only ${q.votes} of the ${q.needed} votes needed for the ${q.percent}% quorum were cast. Publish anyway only if you accept that the result is flagged as below quorum.`, 'below_quorum');
+      }
+      await tx.query('UPDATE campaigns SET results_published = true, published_at = now(), published_by = $2, publish_scheduled = false WHERE id = $1', [c.id, currentUser(req).oid]);
+      await audit(tx, currentUser(req).oid, 'results.publish', c.id, q && q.met === false ? { below_quorum: true } : {});
     });
     res.json({ results_published: true });
+  });
+
+  /** Schedule (or clear) the automatic publication of a closed result. The person who schedules it is its "approved by". */
+  r.put('/:id/publish-schedule', loadRunnable, async (req, res) => {
+    const c = camp(res); const u = currentUser(req);
+    const b = publishScheduleBody.parse(req.body);
+    await withTx(async (tx) => {
+      const cur = (await tx.query('SELECT results_published, clock_timestamp() AS now FROM campaigns WHERE id = $1 FOR UPDATE', [c.id])).rows[0];
+      if (cur.results_published) throw new HttpError(409, 'The results are already published', 'already_published');
+      if (b.publish_at && new Date(b.publish_at) <= cur.now) throw new HttpError(400, 'The publication time must be in the future', 'bad_time');
+      await tx.query('UPDATE campaigns SET publish_at = $2, publish_scheduled_by = $3 WHERE id = $1', [c.id, b.publish_at, b.publish_at ? u.oid : null]);
+      await audit(tx, u.oid, b.publish_at ? 'results.publish_scheduled' : 'results.publish_unscheduled', c.id, { publish_at: b.publish_at });
+    });
+    res.json({ publish_at: b.publish_at });
   });
 
   r.get('/:id/qr.png', loadRunnable, async (req, res) => {
@@ -730,8 +758,11 @@ export function adminRouter(): Router {
     const results = await getResults(getPool(), c.id);
     const seal = await verifySeal(getPool(), c.id);   // the fingerprint ties this file to the sealed audit entry (SEC-04)
     const abstain = results.candidates.find((x) => x.is_abstain);
+    const q = results.quorum;
     const lines = ['candidate,votes', ...results.candidates.filter((x) => !x.is_abstain).map((x) => `${csvCell(x.withdrawn ? `${x.name} (withdrew: votes void)` : x.name)},${x.votes}`),
       ...(abstain ? [`Abstentions (not a candidate),${abstain.votes}`] : []), `Total ballots,${results.turnout.votes}`,
+      ...(q ? [`Quorum,${q.met === false ? `NOT MET: ${q.votes} of ${q.needed} votes needed (${q.percent}% of ${q.eligible})` : q.met ? `met: ${q.votes} of ${q.needed} votes needed (${q.percent}% of ${q.eligible})` : `${q.percent}% (eligible count unknown)`}`] : []),
+      ...(results.publication ? [`Published by,${csvCell(results.publication.by ?? 'unknown')} on ${results.publication.at.toISOString()}${results.publication.scheduled ? ' (scheduled)' : ''}`] : []),
       ...(results.tie ? [`Tie,${csvCell('YES: tie for first place between ' + results.tie.names.join(' and '))}`] : []),
       ...(c.runoff_round ? [`Run-off round,${c.runoff_round}`] : []),
       ...(seal.sealed && seal.seal_hash ? [`Sealed at,${new Date(seal.sealed_at!).toISOString()}`, `Seal fingerprint,${seal.seal_hash}`] : [])];

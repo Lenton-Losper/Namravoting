@@ -179,8 +179,15 @@ export function TurnoutBar({ votes, eligible }: { votes: number; eligible: numbe
 }
 
 /** Horizontal results bars: navy, leader in orange. */
-export function ResultsChart({ candidates, turnout, tie }: {
+export function quorumLine(q: { percent: number; eligible: number | null; needed: number | null; votes: number; met: boolean | null }): string {
+  return q.met === null ? `Quorum: ${q.percent}% of the eligible voters (their number is not known).`
+    : q.met ? `Quorum met: ${q.votes} of the ${q.needed} votes needed (${q.percent}% of ${q.eligible} eligible voters).`
+      : `Quorum NOT met: only ${q.votes} of the ${q.needed} votes needed (${q.percent}% of ${q.eligible} eligible voters). This result is below the minimum turnout.`;
+}
+
+export function ResultsChart({ candidates, turnout, tie, quorum }: {
   candidates: { id: string; name: string; votes: number; is_abstain?: boolean; withdrawn?: boolean }[]; turnout: { votes: number; eligible: number | null }; tie?: { names: string[]; votes: number } | null;
+  quorum?: { percent: number; eligible: number | null; needed: number | null; votes: number; met: boolean | null } | null;
 }) {
   const total = Math.max(1, turnout.votes);
   const abstain = candidates.find((c) => c.is_abstain);
@@ -193,6 +200,7 @@ export function ResultsChart({ candidates, turnout, tie }: {
         <div className="field-label">Turnout</div>
         <TurnoutBar votes={turnout.votes} eligible={turnout.eligible} />
       </div>
+      {quorum && <p className={quorum.met === false ? 'tie-note quorum-bad' : 'muted small'} role="status">{quorumLine(quorum)}</p>}
       {tie && <p className="tie-note" role="status"><strong>Tie for first place:</strong> {tie.names.join(' and ')} each have {tie.votes} {tie.votes === 1 ? 'vote' : 'votes'}. There is no winner yet.</p>}
       {candidates.map((c) => {
         const lead = c.votes === top && top > 0;

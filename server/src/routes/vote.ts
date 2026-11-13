@@ -66,7 +66,7 @@ export function voteRouter(): Router {
   r.get('/', async (req, res) => {
     const u = currentUser(req);
     const myKeys = [`oid:${u.oid}`, ...(await liveMemberKey(getPool(), u.oid).then((k) => (k ? [k] : [])))];
-    const stale = await getPool().query("SELECT id FROM campaigns WHERE status = 'open' AND closes_at IS NOT NULL AND closes_at <= now()");
+    const stale = await getPool().query("SELECT id FROM campaigns WHERE (status = 'open' AND closes_at IS NOT NULL AND closes_at <= now()) OR (status = 'closed' AND NOT results_published AND publish_at IS NOT NULL AND publish_at <= now())");
     for (const row of stale.rows) await refreshStatus(row.id);
     const { rows } = await getPool().query(
       `SELECT c.share_token, c.title, c.description, c.status, c.opens_at, c.closes_at, c.results_published, clock_timestamp() AS db_now,

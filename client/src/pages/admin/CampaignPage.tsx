@@ -5,7 +5,7 @@ import { Icon } from '../../icons';
 import { SharePanel } from '../../share';
 import { TeamTab } from './TeamTab';
 import { NotifyPanel } from './NotifyPanel';
-import { BackLink, Dialog, ErrorBox, Field, NoticeList, ResultsChart, SectionTitle, Spinner, StatusBadge, Tabs, Thumb, TurnoutBar, initials } from '../../ui';
+import { BackLink, Dialog, ErrorBox, Field, NoticeList, quorumLine, ResultsChart, SectionTitle, Spinner, StatusBadge, Tabs, Thumb, TurnoutBar, initials } from '../../ui';
 
 type Tab = 'candidates' | 'eligibility' | 'results' | 'team';
 
@@ -168,9 +168,15 @@ function ResultsTab({ c, reload }: { c: CampaignDetail; reload: () => Promise<vo
   // If the campaign auto-closed (closes_at passed) while we were watching, refresh the page state.
   useEffect(() => { if (c.status === 'open' && r?.status === 'closed') void reload(); }, [c.status, r?.status, reload]);
 
-  async function publish() {
-    setBusy(true);
-    try { await api('POST', `/api/campaigns/${c.id}/publish`); await reload(); } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
+  const [askBelow, setAskBelow] = useState(false);
+  const [when, setWhen] = useState('');
+  async function publish(acknowledge = false) {
+    setBusy(true); setError(null);
+    try { await api('POST', `/api/campaigns/${c.id}/publish`, acknowledge ? { acknowledge_below_quorum: true } : {}); setAskBelow(false); await reload(); } catch (e) { setError((e as Error).message); setAskBelow(false); } finally { setBusy(false); }
+  }
+  async function schedule(at: string | null) {
+    setBusy(true); setError(null);
+    try { await api('PUT', `/api/campaigns/${c.id}/publish-schedule`, { publish_at: at }); setWhen(''); await reload(); } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
   }
   return (
     <>
@@ -178,7 +184,7 @@ function ResultsTab({ c, reload }: { c: CampaignDetail; reload: () => Promise<vo
         <>
           {c.results_published
             ? <span className="chip chip-open">Published to voters</span>
-            : <button className="btn btn-primary btn-sm" onClick={() => void publish()} disabled={busy}>Publish results</button>}
+            : <button className="btn btn-primary btn-sm" onClick={() => (r?.quorum?.met === false ? setAskBelow(true) : void publish())} disabled={busy}>Publish results</button>}
           <a className="btn btn-secondary btn-sm" href={`/api/campaigns/${c.id}/results.csv`} download><Icon name="download" /> Export CSV</a>
           <a className="btn btn-secondary btn-sm" href={`/api/campaigns/${c.id}/results.xlsx`} download><Icon name="download" /> Export Excel (.xlsx)</a>
           <a className="btn btn-secondary btn-sm" href={`/api/campaigns/${c.id}/results.pdf`} download><Icon name="download" /> Export PDF</a>
@@ -194,7 +200,24 @@ function ResultsTab({ c, reload }: { c: CampaignDetail; reload: () => Promise<vo
           </>
         )
         : !err && <Spinner />)}
-      {c.status === 'closed' && (r?.candidates ? <ResultsChart candidates={r.candidates} turnout={r.turnout} tie={r.tie} /> : !err && <Spinner />)}
+      {c.status === 'closed' && (r?.candidates ? <ResultsChart candidates={r.candidates} turnout={r.turnout} tie={r.tie} quorum={r.quorum} /> : !err && <Spinner />)}
+      {c.status === 'closed' && r?.publication && <p className="muted small">Published by {r.publication.by ?? 'unknown'} on {fmtDate(r.publication.at)}{r.publication.scheduled ? ' (scheduled in advance)' : ''}.</p>}
+      {(c.status === 'closed' || c.status === 'open') && !c.results_published && (
+        <div className="schedule-panel">
+          {c.publish_at
+            ? <p>Results will be published automatically on {fmtDate(c.publish_at)}, approved by whoever scheduled it. <button className="btn btn-secondary btn-sm" disabled={busy} onClick={() => void schedule(null)}>Cancel schedule</button></p>
+            : (
+              <label>Publish automatically at<span className="field-helper">Optional. Windhoek time (CAT). Checked whenever the campaign is opened; never before voting has closed, and not if the result is below quorum or does not match its seal.</span>
+                <span className="row-between"><input type="datetime-local" value={when} onChange={(e) => setWhen(e.target.value)} />
+                  <button type="button" className="btn btn-secondary btn-sm" disabled={busy || !when} onClick={() => void schedule(fromLocalInput(when))}>Schedule</button></span></label>
+            )}
+        </div>
+      )}
+      {askBelow && r?.quorum && (
+        <Dialog title="Publish below the quorum?" confirmLabel="Publish anyway" danger busy={busy} onConfirm={() => void publish(true)} onCancel={() => setAskBelow(false)}>
+          <p>{quorumLine(r.quorum)}</p><p>Voters will see that the result is below quorum. Publish only if that is acceptable under your rules.</p>
+        </Dialog>
+      )}
       {c.status === 'closed' && r?.runoff && <RunoffPanel id={c.id} tie={r.tie ?? null} info={r.runoff} />}
       {c.status === 'closed' && c.receipts_purged_at && <p className="muted small" role="note">The personal data of this campaign (who voted, the voter list, photos) was removed on {fmtDate(c.receipts_purged_at)} under the retention schedule. The sealed result and the audit trail remain.</p>}
       {c.status === 'closed' && <SealPanel id={c.id} />}
