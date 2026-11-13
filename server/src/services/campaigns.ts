@@ -3,6 +3,7 @@ import { getPool, withTx } from '../db.js';
 import { shouldAutoClose, type Status } from '../domain/status.js';
 import { standing } from '../domain/results.js';
 import { audit } from './audit.js';
+import { backupSealedResult } from './backup.js';
 import { restampTallies, tallySum } from './tallies.js';
 
 export interface CampaignRow {
@@ -87,14 +88,16 @@ export async function refreshStatus(campaignId: string): Promise<void> {
   // Cheap read first (SEC-08): every page load calls this, and a write transaction with a row lock per call is a free load generator.
   const peek = (await getPool().query('SELECT status, opens_at, closes_at, clock_timestamp() AS db_now FROM campaigns WHERE id = $1', [campaignId])).rows[0];
   if (!peek || !shouldAutoClose(peek, peek.db_now)) return;   // database time (SEC-18)
-  await withTx(async (c) => {
+  const closed = await withTx(async (c) => {
     const { rows } = await c.query('SELECT status, opens_at, closes_at, clock_timestamp() AS db_now FROM campaigns WHERE id = $1 FOR UPDATE', [campaignId]);
-    if (rows[0] && shouldAutoClose(rows[0], rows[0].db_now)) await closeInTx(c, campaignId, null, 'auto');
+    if (rows[0] && shouldAutoClose(rows[0], rows[0].db_now)) { await closeInTx(c, campaignId, null, 'auto'); return true; }
+    return false;
   }).catch(async (e) => {
     // A mismatch keeps the campaign open (voting is already shut by its closing time); record it once and carry on.
-    if (e instanceof IntegrityBlocked) { await recordIntegrityBlock(campaignId, null, e, 'auto'); return; }
+    if (e instanceof IntegrityBlocked) { await recordIntegrityBlock(campaignId, null, e, 'auto'); return false; }
     throw e;
   });
+  if (closed) await backupSealedResult(campaignId);   // a copy of the sealed result outside the database (never throws)
 }
 
 /** A voter-visible event in a campaign's life: a reset, or an early close. Built from the permanent audit entries. */

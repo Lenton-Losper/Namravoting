@@ -5,6 +5,7 @@ import { Router, type Request, type RequestHandler, type Response } from 'expres
 import multer from 'multer';
 import PDFDocument from 'pdfkit';
 import { teamRouter } from './team.js';
+import { backupSealedResult } from '../services/backup.js';
 import { withdrawBody } from '../domain/validation.js';
 import { buildPdf, buildXlsx, gatherExport } from '../services/resultsExport.js';
 import QRCode from 'qrcode';
@@ -507,6 +508,7 @@ export function adminRouter(): Router {
       }
       throw e;
     });
+    await backupSealedResult(c.id);   // a copy of the sealed result outside the database (never throws)
     res.json({ status: 'closed', integrity });
   });
 

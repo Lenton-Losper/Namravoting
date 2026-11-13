@@ -57,3 +57,16 @@ Items built on the demo day are NOT deployed yet.
 - **Leavers:** `--leavers file` anonymises name, email and employee code and ends sessions; the account id stays. Done on the operator's
   machine, not in GitHub (the emails would show in a public repository's logs). Someone who still runs a draft or open campaign is skipped.
 - A purged campaign shows a note on its page, verifies with "receipts: not applicable", and cannot be reset.
+
+## 6. Backup, restore, disaster recovery
+- **Built:** a copy of every sealed result (counters + the seal fingerprint, no personal data) is written to the R2 bucket at close, manual or
+  automatic (`sealed-<campaign>-<seq>.json`, audited `result.backed_up`; a storage failure is recorded as `result.backup_failed` and never blocks
+  a close). `npm run backup:sealed` copies earlier campaigns. `npm run restore:check` tells whether a restored database is a faithful copy
+  (migrations, audit chain, receipts = counters, sealed results = counters, copies present). The Monitor workflow checks the app and the
+  Microsoft sign-in every 15 minutes from outside, and alerts by failed run (and an optional Teams/Slack webhook). Runbook: `docs/disaster-recovery.md`.
+- **Neon point-in-time restore: checked, NOT changed.** The window is **6 hours** (read with `node scripts/neon-check.mjs`). I tried to raise it to
+  24 hours and the tool permission check refused to let me change the shared Neon project, so it is unchanged. It is a plan/setting change
+  for the account owner (Neon console, Settings, Storage, Restore window).
+- **Restore drill: script written, NOT run.** It creates and deletes a Neon branch in the shared account, which I was not permitted to do from here.
+  Run `node scripts/restore-drill.mjs` once and record the result in `docs/disaster-recovery.md`.
+- **Defaults assumed:** acceptable downtime 1 hour; alerts go to whoever GitHub notifies, plus an optional webhook.

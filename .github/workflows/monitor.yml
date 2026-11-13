@@ -1,0 +1,33 @@
+name: Monitor
+
+# Watches the live app from OUTSIDE it (GitHub, not Cloudflare), so it still works when the app is down. A failed run is the alert: GitHub
+# emails the people watching this repository / who last edited this workflow, and the run shows red in the Actions tab.
+# Optional extra alert: set the repository secret ALERT_WEBHOOK_URL to a Microsoft Teams or Slack incoming-webhook URL.
+#
+# Notes: GitHub may delay scheduled runs by several minutes, and pauses schedules in a repository with no activity for 60 days
+# (re-enable it in the Actions tab). See docs/disaster-recovery.md.
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: monitor
+  cancel-in-progress: true
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node scripts/monitor.mjs

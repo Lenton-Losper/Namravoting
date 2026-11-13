@@ -13,6 +13,8 @@
     "umoja:import": "tsx scripts/umoja-import.ts",
     "umoja:match": "tsx scripts/umoja-match.ts",
     "retention": "tsx scripts/retention.ts",
+    "restore:check": "tsx scripts/restore-check.ts",
+    "backup:sealed": "tsx scripts/backup-sealed.ts",
     "demo:db": "tsx scripts/demo-setup.ts"
   },
   "dependencies": {

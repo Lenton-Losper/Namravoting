@@ -8,7 +8,7 @@ import { getConfig } from '../config.js';
  * Photos are never served from here directly: only through the authenticated /api/photos/:id route.
  */
 export interface PhotoStorage {
-  put(key: string, data: Buffer): Promise<void>;
+  put(key: string, data: Buffer, contentType?: string): Promise<void>;
   get(key: string): Promise<Buffer | null>;
   delete(key: string): Promise<void>;
 }
@@ -16,7 +16,7 @@ export interface PhotoStorage {
 /** Local disk (dev and tests). */
 export function createDiskStorage(dir: string): PhotoStorage {
   return {
-    async put(key, data) { await fs.mkdir(dir, { recursive: true }); await fs.writeFile(path.join(dir, key), data, { flag: 'wx' }); },
+    async put(key, data, _contentType) { await fs.mkdir(dir, { recursive: true }); await fs.writeFile(path.join(dir, key), data, { flag: 'wx' }); },
     async get(key) { try { return await fs.readFile(path.join(dir, key)); } catch { return null; } },
     async delete(key) { try { await fs.unlink(path.join(dir, key)); } catch { /* already gone */ } },
   };
@@ -40,7 +40,7 @@ export function createR2Storage(o: R2Options): PhotoStorage {
   const f = o.fetchImpl ?? fetch;
   const base = new URL(o.endpoint);
 
-  async function call(method: 'GET' | 'PUT' | 'DELETE', key: string, body?: Buffer): Promise<Response> {
+  async function call(method: 'GET' | 'PUT' | 'DELETE', key: string, body?: Buffer, contentType = 'image/jpeg'): Promise<Response> {
     const uriPath = '/' + encodePath(`${o.bucket}/${key}`);
     const amzDate = (o.now?.() ?? new Date()).toISOString().replace(/[:-]|\.\d{3}/g, '');   // 20260101T000000Z
     const day = amzDate.slice(0, 8);
@@ -55,14 +55,14 @@ export function createR2Storage(o: R2Options): PhotoStorage {
     const authorization = `AWS4-HMAC-SHA256 Credential=${o.accessKeyId}/${scope}, SignedHeaders=${signedNames.join(';')}, Signature=${signature}`;
     const { host: _host, ...sendHeaders } = headers;   // fetch sets Host itself
     return f(`${base.origin}${uriPath}`, {
-      method, headers: { ...sendHeaders, authorization, ...(body ? { 'content-type': 'image/jpeg' } : {}) },
+      method, headers: { ...sendHeaders, authorization, ...(body ? { 'content-type': contentType } : {}) },
       body: body ? new Uint8Array(body) : undefined,
     });
   }
 
   return {
-    async put(key, data) {
-      const r = await call('PUT', key, data);
+    async put(key, data, contentType) {
+      const r = await call('PUT', key, data, contentType);
       if (!r.ok) throw new Error(`R2 put failed: HTTP ${r.status}`);
     },
     async get(key) {
