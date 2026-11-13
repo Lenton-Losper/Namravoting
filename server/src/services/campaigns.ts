@@ -99,7 +99,9 @@ export async function refreshStatus(campaignId: string): Promise<void> {
 
 /** A voter-visible event in a campaign's life: a reset, or an early close. Built from the permanent audit entries. */
 export interface Notice {
-  kind: 'reset' | 'closed_early' | 'edited_after_start';
+  kind: 'reset' | 'closed_early' | 'edited_after_start' | 'candidate_withdrawn';
+  /** candidate_withdrawn: who withdrew. Votes already cast for them are void (reported separately, never a winner). */
+  candidate?: string;
   at: Date; by: string | null; reason: string;
   /** edited_after_start: what changed (titles, descriptions, closing times and candidate names only; never anything about voters). */
   changes?: { what: string; name?: string; from?: string | null; to?: string | null }[];
@@ -116,7 +118,7 @@ export async function getNotices(db: Queryable, campaignId: string, withTallies:
   const { rows } = await db.query(
     `SELECT a.at, a.action, u.display_name AS by, a.details
        FROM audit_log a LEFT JOIN users u ON u.entra_oid = a.actor_oid
-      WHERE a.campaign_id = $1 AND (a.action IN ('campaign.reset', 'campaign.edit_after_start') OR (a.action LIKE 'campaign.close%' AND a.details->>'early' = 'true'))
+      WHERE a.campaign_id = $1 AND (a.action IN ('campaign.reset', 'campaign.edit_after_start', 'candidate.withdrawn') OR (a.action LIKE 'campaign.close%' AND a.details->>'early' = 'true'))
       ORDER BY a.seq`, [campaignId]);
   return rows.map((r) => {
     if (r.action === 'campaign.reset') {
@@ -125,6 +127,7 @@ export async function getNotices(db: Queryable, campaignId: string, withTallies:
       if (withTallies) e.candidates = (snap.candidates ?? []) as { name: string; votes: number }[];
       return e;
     }
+    if (r.action === 'candidate.withdrawn') return { kind: 'candidate_withdrawn', at: r.at, by: r.by ?? null, reason: String(r.details?.reason ?? ''), candidate: String(r.details?.name ?? '') } as Notice;
     if (r.action === 'campaign.edit_after_start') return { kind: 'edited_after_start', at: r.at, by: r.by ?? null, reason: '', changes: (r.details?.changes ?? []) } as Notice;
     return { kind: 'closed_early', at: r.at, by: r.by ?? null, reason: String(r.details?.why ?? '') } as Notice;
   });
@@ -136,7 +139,7 @@ export async function getResetHistory(db: Queryable, campaignId: string, withTal
 }
 
 export interface ResultsPayload {
-  candidates: { id: string; name: string; votes: number; is_abstain?: boolean }[];
+  candidates: { id: string; name: string; votes: number; is_abstain?: boolean; withdrawn?: boolean }[];
   turnout: { votes: number; eligible: number | null };
   /** Candidates sharing first place (2 or more), or null. A tie has no winner: the creator can start a run-off. */
   tie: { ids: string[]; names: string[]; votes: number } | null;
@@ -145,7 +148,7 @@ export interface ResultsPayload {
 /** Per-candidate counts. Only ever returned for a CLOSED campaign (SEC-01): while it is open nobody sees these. */
 export async function getResults(db: Queryable, campaignId: string): Promise<ResultsPayload> {
   const cands = await db.query(
-    `SELECT c.id, c.name, c.is_abstain, coalesce(t.votes, 0)::int AS votes
+    `SELECT c.id, c.name, c.is_abstain, (c.withdrawn_at IS NOT NULL) AS withdrawn, coalesce(t.votes, 0)::int AS votes
        FROM candidates c LEFT JOIN tallies t ON t.candidate_id = c.id AND t.campaign_id = c.campaign_id
       WHERE c.campaign_id = $1 ORDER BY c.sort_order, c.name`, [campaignId]);
   const s = standing(cands.rows);

@@ -37,3 +37,13 @@ Items built on the demo day are NOT deployed yet.
   so add one first.
 - Honest limit: the "must be approved first" check is made by the application when the creator carries the request out; the two-person rule on the
   approval record itself is enforced by the database. Resets and deletes still run through the creator's own session in the database functions.
+
+## 4. Candidate withdraws
+- **Policy: votes already cast for a withdrawn candidate are void.** They stay in the counters (so turnout and the seal are unchanged) but
+  are reported separately ("withdrew: votes void"), are never counted towards a winner or a tie, and the candidate stays on the ballot,
+  greyed and impossible to choose.
+- **Voters are not asked to re-vote**, because a ballot is secret: nobody can say who voted for the candidate. If the creator wants
+  everyone to vote again they use "Reset votes" (a withdrawn candidate stays withdrawn after a reset).
+- Needs a reason of at least 10 characters (audit entry `candidate.withdrawn`, shown to voters on the ballot and in published results), an
+  open campaign, and at least 2 candidates left in the running. The creator or a co-admin can do it. It cannot be undone, and the database
+  allows nothing else about a candidate to change while the campaign is open (migration 016).

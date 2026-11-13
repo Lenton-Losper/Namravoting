@@ -179,7 +179,7 @@ describe('helpers', () => {
   it('buildXlsx never writes a user string as a formula even when given one directly', async () => {
     const wb = await load(await buildXlsx({
       title: '=cmd|calc', description: '@x', status: 'closed', opensAt: 'a', closesAt: 'b', startedAt: 'c', closedAt: 'd', eligibility: 'All staff', eligibleCount: null,
-      turnout: 1, turnoutPct: null, candidates: [{ rank: 1, name: '+SUM(1)', votes: 1, pct: 1 }], tie: false, tiedNames: [], leader: '+SUM(1)', runoff: '', abstentions: null,
+      turnout: 1, turnoutPct: null, candidates: [{ rank: 1, name: '+SUM(1)', votes: 1, pct: 1 }], tie: false, tiedNames: [], leader: '+SUM(1)', runoff: '', abstentions: null, withdrawn: [],
       history: [{ kind: 'Reset', at: 't', by: '-bob', detail: '=evil' }], seal: { sealed: false, hash: null, sealedAt: 'Not set', verified: null }, generatedAt: 'g', generatedBy: '=me',
     }));
     for (const ws of wb.worksheets) ws.eachRow((r) => r.eachCell((c) => { expect(c.type).not.toBe(ExcelJS.ValueType.Formula); }));

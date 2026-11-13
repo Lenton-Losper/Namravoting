@@ -71,6 +71,8 @@ a { color: var(--navy); text-underline-offset: 3px; }
 .table-wrap { overflow-x: auto; }
 .approvals { margin-top: 12px; }
 .candidate-abstain { border-style: dashed; }
+.candidate-withdrawn { opacity: .55; cursor: not-allowed; text-decoration: line-through; }
+.candidate-withdrawn .candidate-text .muted { text-decoration: none; display: block; }
 .abstain-note { margin-top: 8px; }
 .wordmark-dark .wordmark-sep { background: var(--border); }
 .topnav { display: flex; align-self: stretch; margin-left: auto; }

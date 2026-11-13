@@ -65,6 +65,11 @@ export async function castVote(voterOid: string, voterEmail: string, shareToken:
 
         const t = await c.query('UPDATE tallies SET votes = votes + 1 WHERE campaign_id = $1 AND candidate_id = $2', [camp.id, candidateId]);
         if (t.rowCount === 0) throw new HttpError(400, 'Candidate does not belong to this campaign', 'invalid_candidate');
+        // A withdrawn candidate cannot be chosen. (The campaign row is held FOR SHARE and a withdrawal takes it FOR UPDATE, so this check
+        // cannot race with one.) Throwing rolls the receipt back.
+        if ((await c.query('SELECT 1 FROM candidates WHERE id = $1 AND withdrawn_at IS NOT NULL', [candidateId])).rowCount) {
+          throw new HttpError(409, 'This candidate has withdrawn. Please choose someone else.', 'candidate_withdrawn');
+        }
         return { kind: 'recorded' } as Outcome;
       });
       break;

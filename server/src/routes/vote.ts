@@ -95,14 +95,14 @@ export function voteRouter(): Router {
     if (!s.eligible) throw new HttpError(403, 'You are not eligible to vote in this campaign', 'not_eligible');
     const showCandidates = c.status !== 'draft';
     const cands = showCandidates
-      ? (await getPool().query('SELECT id, name, bio, photo_path, is_abstain FROM candidates WHERE campaign_id = $1 ORDER BY sort_order, name', [c.id])).rows
+      ? (await getPool().query('SELECT id, name, bio, photo_path, is_abstain, withdrawn_at FROM candidates WHERE campaign_id = $1 ORDER BY sort_order, name', [c.id])).rows
       : [];
     res.set('Cache-Control', 'no-store').json({
       title: c.title, description: c.description, opensAt: c.opens_at, closesAt: c.closes_at,
       resultsPublished: c.results_published && c.status === 'closed',
       voterState: s.state,
       notices: await getNotices(getPool(), c.id, false),   // resets and early closes, with their reasons (SEC-01)
-      candidates: cands.map((x) => ({ id: x.id, name: x.name, bio: x.bio, photoUrl: x.photo_path ? `/api/photos/${x.id}` : null, isAbstain: x.is_abstain })),
+      candidates: cands.map((x) => ({ id: x.id, name: x.name, bio: x.bio, photoUrl: x.photo_path ? `/api/photos/${x.id}` : null, isAbstain: x.is_abstain, withdrawn: x.withdrawn_at !== null })),
     });
   });
 

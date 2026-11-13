@@ -5,6 +5,7 @@ import { Router, type Request, type RequestHandler, type Response } from 'expres
 import multer from 'multer';
 import PDFDocument from 'pdfkit';
 import { teamRouter } from './team.js';
+import { withdrawBody } from '../domain/validation.js';
 import { buildPdf, buildXlsx, gatherExport } from '../services/resultsExport.js';
 import QRCode from 'qrcode';
 import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
@@ -239,7 +240,7 @@ export function adminRouter(): Router {
       ? (await getPool().query(
           `SELECT c.campaign_id, c.id, c.name, c.photo_path, coalesce(t.votes, 0)::int AS votes
              FROM candidates c LEFT JOIN tallies t ON t.candidate_id = c.id AND t.campaign_id = c.campaign_id
-            WHERE c.campaign_id = ANY($1::uuid[]) AND NOT c.is_abstain`, [closedIds])).rows
+            WHERE c.campaign_id = ANY($1::uuid[]) AND NOT c.is_abstain AND c.withdrawn_at IS NULL`, [closedIds])).rows
       : [];
     const winnerOf = (cid: string) => {
       const t = tallies.filter((x) => x.campaign_id === cid).sort((a, b) => b.votes - a.votes);
@@ -287,12 +288,12 @@ export function adminRouter(): Router {
   r.get('/:id', loadRunnable, async (_req, res) => {
     const c = camp(res);
     const cands = await getPool().query(
-      'SELECT id, name, bio, photo_path, sort_order FROM candidates WHERE campaign_id = $1 AND NOT is_abstain ORDER BY sort_order, name', [c.id]);
+      'SELECT id, name, bio, photo_path, sort_order, withdrawn_at, withdrawn_reason FROM candidates WHERE campaign_id = $1 AND NOT is_abstain ORDER BY sort_order, name', [c.id]);
     const el = await getPool().query('SELECT voter_email FROM eligible_voters WHERE campaign_id = $1 ORDER BY voter_email', [c.id]);
     res.json({
       ...present(c),
       my_role: res.locals.myRole as string,
-      candidates: cands.rows.map((x) => ({ id: x.id, name: x.name, bio: x.bio, photo_url: photoUrl(x), sort_order: x.sort_order })),
+      candidates: cands.rows.map((x) => ({ id: x.id, name: x.name, bio: x.bio, photo_url: photoUrl(x), sort_order: x.sort_order, withdrawn_at: x.withdrawn_at, withdrawn_reason: x.withdrawn_reason })),
       eligible_emails: el.rows.map((x) => x.voter_email),
       turnout: (await getPool().query('SELECT count(*)::int AS n FROM vote_receipts WHERE campaign_id = $1', [c.id])).rows[0].n,
       umoja_active_count: await activeMemberCount(getPool()),   // count only; never the members themselves
@@ -425,6 +426,29 @@ export function adminRouter(): Router {
     });
     await deletePhoto(photo);
     res.status(204).end();
+  });
+
+  /**
+   * A candidate withdraws after voting has started. Needs a reason (shown to voters). The candidate stays on the ballot, greyed and
+   * unselectable; votes already cast for them are void: they stay in the counters (turnout, the seal) but are reported separately and
+   * can never win. Votes are secret, so voters cannot be told to re-vote: to have everyone vote again use "Reset votes".
+   */
+  r.post('/:id/candidates/:cid/withdraw', loadRunnable, async (req, res) => {
+    const c = camp(res); const u = currentUser(req);
+    const { cid } = candParams.parse(req.params);
+    const b = withdrawBody.parse(req.body);
+    await withTx(async (tx) => {
+      const st = (await tx.query('SELECT status FROM campaigns WHERE id = $1 FOR UPDATE', [c.id])).rows[0]?.status;
+      if (st !== 'open') throw new HttpError(409, st === 'draft' ? 'Before voting starts, remove the candidate instead' : 'Voting has closed', st === 'draft' ? 'not_started' : 'closed');
+      const cand = (await tx.query('SELECT name, is_abstain, withdrawn_at FROM candidates WHERE id = $1 AND campaign_id = $2 FOR UPDATE', [cid, c.id])).rows[0];
+      if (!cand || cand.is_abstain) throw notFound();
+      if (cand.withdrawn_at) throw new HttpError(409, 'This candidate has already withdrawn', 'already_withdrawn');
+      const left = (await tx.query('SELECT count(*)::int AS n FROM candidates WHERE campaign_id = $1 AND NOT is_abstain AND withdrawn_at IS NULL AND id <> $2', [c.id, cid])).rows[0].n as number;
+      if (left < 2) throw new HttpError(409, 'At least 2 candidates must stay in the running. Close the vote or reset it instead.', 'needs_candidates');
+      await tx.query('UPDATE candidates SET withdrawn_at = now(), withdrawn_by = $3, withdrawn_reason = $4 WHERE id = $1 AND campaign_id = $2', [cid, c.id, u.oid, b.reason]);
+      await audit(tx, u.oid, 'candidate.withdrawn', c.id, { candidate_id: cid, name: cand.name, reason: b.reason });
+    });
+    res.json({ withdrawn: true });
   });
 
   r.put('/:id/eligible', loadRunnable, async (req, res) => {
@@ -701,7 +725,7 @@ export function adminRouter(): Router {
     const results = await getResults(getPool(), c.id);
     const seal = await verifySeal(getPool(), c.id);   // the fingerprint ties this file to the sealed audit entry (SEC-04)
     const abstain = results.candidates.find((x) => x.is_abstain);
-    const lines = ['candidate,votes', ...results.candidates.filter((x) => !x.is_abstain).map((x) => `${csvCell(x.name)},${x.votes}`),
+    const lines = ['candidate,votes', ...results.candidates.filter((x) => !x.is_abstain).map((x) => `${csvCell(x.withdrawn ? `${x.name} (withdrew: votes void)` : x.name)},${x.votes}`),
       ...(abstain ? [`Abstentions (not a candidate),${abstain.votes}`] : []), `Total ballots,${results.turnout.votes}`,
       ...(results.tie ? [`Tie,${csvCell('YES: tie for first place between ' + results.tie.names.join(' and '))}`] : []),
       ...(c.runoff_round ? [`Run-off round,${c.runoff_round}`] : []),

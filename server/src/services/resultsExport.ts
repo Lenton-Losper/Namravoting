@@ -34,6 +34,8 @@ export interface ExportData {
   opensAt: string; closesAt: string; startedAt: string; closedAt: string;
   eligibility: string; eligibleCount: number | null; turnout: number; turnoutPct: number | null;
   candidates: { rank: number; name: string; votes: number; pct: number }[];
+  /** Candidates who withdrew after voting started: the votes cast for them are void (never a winner, not ranked). */
+  withdrawn: { name: string; votes: number }[];
   /** Votes for "Abstain" (null when the campaign had no abstain option). Counted in turnout, never a winner. */
   abstentions: number | null;
   tie: boolean; tiedNames: string[]; leader: string | null;
@@ -67,7 +69,8 @@ export async function gatherExport(db: Queryable, c: CampaignRow, generatedBy: s
             (SELECT max(at) FROM audit_log WHERE campaign_id = $1 AND action LIKE 'campaign.close%') AS closed`, [c.id])).rows[0];
   const total = results.candidates.reduce((n, x) => n + x.votes, 0);
   const abstain = results.candidates.find((x) => x.is_abstain);
-  const sorted = results.candidates.filter((x) => !x.is_abstain).sort((a, b) => b.votes - a.votes || a.name.localeCompare(b.name));
+  const withdrawn = results.candidates.filter((x) => x.withdrawn && !x.is_abstain).map((x) => ({ name: x.name, votes: x.votes }));
+  const sorted = results.candidates.filter((x) => !x.is_abstain && !x.withdrawn).sort((a, b) => b.votes - a.votes || a.name.localeCompare(b.name));
   const st = standing(results.candidates);
   const tiedNames = st.tied.map((x) => x.name);
   const tie = tiedNames.length > 1;
@@ -79,6 +82,7 @@ export async function gatherExport(db: Queryable, c: CampaignRow, generatedBy: s
       const before = n.candidates?.length ? `; before the reset: ${n.candidates.map((x) => `${x.name} ${x.votes}`).join(', ')}` : '';
       return { kind: 'Reset', at: fmtWindhoek(n.at), by: n.by ?? '', detail: `${n.votes_cleared ?? 0} vote(s) cleared. Reason: ${n.reason}${before}` };
     }
+    if (n.kind === 'candidate_withdrawn') return { kind: 'Candidate withdrew', at: fmtWindhoek(n.at), by: n.by ?? '', detail: `${n.candidate}. Reason: ${n.reason}. Votes already cast for them are void.` };
     if (n.kind === 'closed_early') return { kind: 'Closed early', at: fmtWindhoek(n.at), by: n.by ?? '', detail: `Reason: ${n.reason}` };
     return { kind: 'Edited after start', at: fmtWindhoek(n.at), by: n.by ?? '', detail: (n.changes ?? []).map(describeEdit).join('; ') };
   });
@@ -87,7 +91,7 @@ export async function gatherExport(db: Queryable, c: CampaignRow, generatedBy: s
     opensAt: fmtWindhoek(c.opens_at), closesAt: fmtWindhoek(c.closes_at), startedAt: fmtWindhoek(times.started), closedAt: fmtWindhoek(times.closed),
     eligibility: ELIGIBILITY_LABEL[c.eligibility], eligibleCount: eligible, turnout: votes, turnoutPct: eligible && eligible > 0 ? votes / eligible : null,
     candidates: sorted.map((x, i) => ({ rank: i + 1, name: x.name, votes: x.votes, pct: total > 0 ? x.votes / total : 0 })),
-    abstentions: abstain ? abstain.votes : null,
+    abstentions: abstain ? abstain.votes : null, withdrawn,
     tie, tiedNames, leader: st.leader?.name ?? null,
     runoff: [c.runoff_round ? `This is run-off round ${c.runoff_round}${link.parent ? ` of "${link.parent}"` : ''}.` : '', link.child ? `A run-off was started: "${link.child}".` : ''].filter(Boolean).join(' '),
     history,
@@ -135,6 +139,7 @@ export async function buildXlsx(d: ExportData): Promise<Buffer> {
     const row = r.addRow([x.rank, safeCell(x.name), x.votes, x.pct]);
     row.getCell(4).numFmt = '0.0%';
   }
+  for (const w of d.withdrawn) r.addRow(['', safeCell(`${w.name} (withdrew: votes void)`), w.votes]);
   if (d.abstentions !== null) { const a = r.addRow(['', 'Abstentions (not a candidate)', d.abstentions, d.turnout > 0 ? d.abstentions / d.turnout : 0]); a.getCell(4).numFmt = '0.0%'; }
   r.addRow([]);
   r.addRow(['', 'Total votes', d.turnout]).font = bold;
@@ -204,6 +209,13 @@ export async function buildPdf(d: ExportData, opts: { compress?: boolean } = {})
     const rowEnd = doc.y;
     doc.text(String(x.votes), cx[2], y, { width: 60, align: 'right' }); doc.text(pct(x.pct), cx[3], y, { width: 70, align: 'right' });
     doc.y = rowEnd + 4;
+  }
+  for (const w of d.withdrawn) {
+    ensure(20);
+    const y = doc.y;
+    doc.font('Helvetica-Oblique').fontSize(10).fillColor('#444').text(`${w.name} (withdrew: votes void)`, cx[1], y, { width: cx[2] - cx[1] - 10 });
+    doc.text(String(w.votes), cx[2], y, { width: 60, align: 'right' }); doc.fillColor('#000');
+    doc.y += 4;
   }
   if (d.abstentions !== null) {
     ensure(20);

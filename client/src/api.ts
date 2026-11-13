@@ -61,7 +61,7 @@ export async function api<T = unknown>(method: string, url: string, body?: unkno
 }
 
 export interface User { oid: string; email: string; displayName: string; roles: string[] }
-export interface Candidate { id: string; name: string; bio: string | null; photo_url: string | null }
+export interface Candidate { id: string; name: string; bio: string | null; photo_url: string | null; withdrawn_at?: string | null; withdrawn_reason?: string | null }
 export interface Campaign {
   id: string; title: string; description: string | null; status: 'draft' | 'open' | 'closed';
   opens_at: string | null; closes_at: string | null; eligibility: 'all' | 'list' | 'umoja'; results_published: boolean;
@@ -79,13 +79,13 @@ export interface IntegrityBlock { ballots: number; receipts: number; at: string 
 export interface CampaignDetail extends Campaign { turnout: number; candidates: Candidate[]; eligible_emails: string[]; umoja_active_count: number; integrity_block?: IntegrityBlock | null; edited_after_start?: Notice[] }
 /** A reset or an early close, with the reason the creator gave. Shown to voters (SEC-01). */
 export interface EditChange { what: 'title' | 'description' | 'closes_at' | 'candidate_added' | 'candidate_edited' | 'candidate_removed'; name?: string; from?: string | null; to?: string | null }
-export interface Notice { kind: 'reset' | 'closed_early' | 'edited_after_start'; at: string; by: string | null; reason: string; votes_cleared?: number; candidates?: { name: string; votes: number }[]; changes?: EditChange[] }
+export interface Notice { kind: 'reset' | 'closed_early' | 'edited_after_start' | 'candidate_withdrawn'; candidate?: string; at: string; by: string | null; reason: string; votes_cleared?: number; candidates?: { name: string; votes: number }[]; changes?: EditChange[] }
 export interface ResetEntry extends Notice { votes_cleared: number }
 /** `candidates` is null while the campaign is open: per-candidate counts exist only after it has closed (SEC-01). */
 /** Run-off context of a closed campaign (creator only). */
 export interface RunoffInfo { round: number; max: number; next: { id: string; title: string; status: string } | null; parent: { id: string; title: string } | null; can_start: boolean }
 export interface Tie { names: string[]; votes: number }
-export interface Results { status: string; results_published: boolean; archived?: boolean; candidates: { id: string; name: string; votes: number; is_abstain?: boolean }[] | null; turnout: { votes: number; eligible: number | null }; resets?: ResetEntry[]; notices?: Notice[]; tie?: Tie | null; runoff?: RunoffInfo }
+export interface Results { status: string; results_published: boolean; archived?: boolean; candidates: { id: string; name: string; votes: number; is_abstain?: boolean; withdrawn?: boolean }[] | null; turnout: { votes: number; eligible: number | null }; resets?: ResetEntry[]; notices?: Notice[]; tie?: Tie | null; runoff?: RunoffInfo }
 export interface SealCheck {
   chain_ok: boolean; chain_checked: number; sealed: boolean; sealed_at: string | null; seal_hash: string | null; seal_seq: number | null;
   tallies_match: boolean | null; receipts_match: boolean | null; sealed_tallies: { name: string; votes: number }[]; sealed_turnout: number | null;

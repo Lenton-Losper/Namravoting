@@ -27,7 +27,18 @@ function useResults(id: string, enabled: boolean, poll: boolean, version?: numbe
   return { r, err };
 }
 
-function CandidatesTab({ c }: { c: CampaignDetail }) {
+function CandidatesTab({ c, reload }: { c: CampaignDetail; reload: () => Promise<void> }) {
+  const [target, setTarget] = useState<{ id: string; name: string } | null>(null);
+  const [why, setWhy] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const inRunning = c.candidates.filter((x) => !x.withdrawn_at).length;
+  async function withdraw() {
+    if (!target) return;
+    setBusy(true); setErr(null);
+    try { await api('POST', `/api/campaigns/${c.id}/candidates/${target.id}/withdraw`, { reason: why.trim() }); setTarget(null); setWhy(''); await reload(); }
+    catch (e) { setErr((e as Error).message); setTarget(null); } finally { setBusy(false); }
+  }
   const editable = c.status === 'draft' || (c.status === 'open' && !!c.allow_edits_after_start && c.turnout === 0);   // after the first vote the candidates are fixed
   return (
     <>
@@ -40,11 +51,21 @@ function CandidatesTab({ c }: { c: CampaignDetail }) {
             {c.candidates.map((x) => (
               <li key={x.id} className="cand-row">
                 <Thumb url={x.photo_url} name={x.name} />
-                <div className="grow"><strong>{x.name}</strong>{x.bio && <div className="muted small">{x.bio}</div>}</div>
+                <div className="grow"><strong>{x.name}</strong>{x.withdrawn_at && <span className="chip chip-outline">Withdrew</span>}{x.bio && <div className="muted small">{x.bio}</div>}{x.withdrawn_reason && <div className="muted small">Withdrew: {x.withdrawn_reason}</div>}</div>
+                {c.status === 'open' && !x.withdrawn_at && <button className="btn btn-secondary btn-sm" disabled={inRunning <= 2} title={inRunning <= 2 ? 'At least 2 candidates must stay in the running' : undefined} onClick={() => { setWhy(''); setErr(null); setTarget({ id: x.id, name: x.name }); }}>Withdraw…</button>}
               </li>
             ))}
           </ul>
         )}
+      <ErrorBox message={err} />
+      {c.status === 'open' && <p className="field-helper">If a candidate withdraws, they stay on the ballot but cannot be chosen. Votes already cast for them are void: they count in turnout but never for a winner. Votes are secret, so voters cannot be asked to vote again; use Reset votes if everyone should vote again.</p>}
+      {target && (
+        <Dialog title={`${target.name} withdraws?`} confirmLabel="Withdraw candidate" danger busy={busy} confirmDisabled={why.trim().length < 10} onConfirm={() => void withdraw()} onCancel={() => setTarget(null)}>
+          <p>{target.name} stays on the ballot but can no longer be chosen. Votes already cast for them become void. This cannot be undone.</p>
+          <label>Reason<span className="field-helper">At least 10 characters. Voters will see it on the ballot page and in the published results.</span>
+            <textarea value={why} onChange={(e) => setWhy(e.target.value)} rows={3} maxLength={1000} /></label>
+        </Dialog>
+      )}
     </>
   );
 }
@@ -350,7 +371,7 @@ export function CampaignPage() {
             { id: 'results', label: 'Results' },
             { id: 'team', label: 'Team' },
           ]}>
-            {tab === 'candidates' && <CandidatesTab c={c} />}
+            {tab === 'candidates' && <CandidatesTab c={c} reload={reload} />}
             {tab === 'eligibility' && <EligibilityTab c={c} />}
             {tab === 'results' && <ResultsTab c={c} reload={reload} />}
             {tab === 'team' && <TeamTab c={c} reload={reload} />}

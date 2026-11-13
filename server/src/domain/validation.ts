@@ -45,6 +45,8 @@ export const candidateBody = z.object({
   name: line(120),
   bio: lines(500).optional(),
 }).strict();
+/** A candidate withdraws after voting has started: a reason is required and is shown to voters. */
+export const withdrawBody = z.object({ reason: z.string().transform(cleanMultiline).pipe(z.string().trim().min(10, 'Give a reason of at least 10 characters').max(1000)) }).strict();
 export const candidatePatchBody = z.object({
   name: line(120).optional(),
   bio: lines(500).optional(),

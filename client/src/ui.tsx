@@ -136,7 +136,7 @@ export function NoticeList({ notices, title = 'What happened during this vote' }
       <ul className="list">
         {notices.map((x, i) => (
           <li key={i} className="reset-item">
-            <div><strong>{fmtDate(x.at)}</strong>{x.by ? ` · ${x.by}` : ''} · {x.kind === 'reset' ? `reset: ${x.votes_cleared ?? 0} ${x.votes_cleared === 1 ? 'vote' : 'votes'} cleared` : x.kind === 'edited_after_start' ? 'Edited after start' : 'closed early'}</div>
+            <div><strong>{fmtDate(x.at)}</strong>{x.by ? ` · ${x.by}` : ''} · {x.kind === 'reset' ? `reset: ${x.votes_cleared ?? 0} ${x.votes_cleared === 1 ? 'vote' : 'votes'} cleared` : x.kind === 'edited_after_start' ? 'Edited after start' : x.kind === 'candidate_withdrawn' ? `${x.candidate} withdrew (votes already cast for them are void)` : 'closed early'}</div>
             {x.kind === 'edited_after_start'
               ? <ul className="list small">{(x.changes ?? []).map((ch, j) => <li key={j} className="muted">{describeEdit(ch)}</li>)}</ul>
               : <div className="muted small">Reason: {x.reason}</div>}
@@ -154,7 +154,9 @@ export function NoticeBanner({ notices }: { notices: Notice[] | undefined }) {
   return (
     <div className="notice-banner" role="status">
       {notices.map((x, i) => (
-        x.kind === 'edited_after_start'
+        x.kind === 'candidate_withdrawn'
+          ? <p key={i}><strong>{x.candidate} withdrew on {fmtDate(x.at)}</strong> because: {x.reason}. They can no longer be chosen, and votes already cast for them are void.</p>
+          : x.kind === 'edited_after_start'
           ? <p key={i}><strong>This vote was edited after it started, on {fmtDate(x.at)}:</strong> {(x.changes ?? []).map(describeEdit).join('; ')}.</p>
           : <p key={i}>
               <strong>This vote was {x.kind === 'reset' ? 'reset' : 'closed early'} on {fmtDate(x.at)}</strong>
@@ -178,11 +180,12 @@ export function TurnoutBar({ votes, eligible }: { votes: number; eligible: numbe
 
 /** Horizontal results bars: navy, leader in orange. */
 export function ResultsChart({ candidates, turnout, tie }: {
-  candidates: { id: string; name: string; votes: number; is_abstain?: boolean }[]; turnout: { votes: number; eligible: number | null }; tie?: { names: string[]; votes: number } | null;
+  candidates: { id: string; name: string; votes: number; is_abstain?: boolean; withdrawn?: boolean }[]; turnout: { votes: number; eligible: number | null }; tie?: { names: string[]; votes: number } | null;
 }) {
   const total = Math.max(1, turnout.votes);
   const abstain = candidates.find((c) => c.is_abstain);
-  candidates = candidates.filter((c) => !c.is_abstain);
+  const withdrawn = candidates.filter((c) => c.withdrawn && !c.is_abstain);
+  candidates = candidates.filter((c) => !c.is_abstain && !c.withdrawn);
   const top = Math.max(0, ...candidates.map((c) => c.votes));
   return (
     <div className="results">
@@ -200,6 +203,7 @@ export function ResultsChart({ candidates, turnout, tie }: {
           </div>
         );
       })}
+      {withdrawn.map((w) => <p key={w.id} className="muted small abstain-note">{w.name} withdrew: {w.votes} {w.votes === 1 ? 'vote' : 'votes'} void (not counted for any candidate, included in turnout)</p>)}
       {abstain && <p className="muted small abstain-note">Abstentions (not a candidate, never a winner): {abstain.votes} · included in turnout</p>}
     </div>
   );
