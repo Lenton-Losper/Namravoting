@@ -5,6 +5,7 @@ import { Icon, Wordmark } from './icons';
 import { initials, Spinner } from './ui';
 import { LoginPage } from './pages/Login';
 import { VotePage } from './pages/Vote';
+import { NominatePage } from './pages/Nominate';
 import { MyVotes } from './pages/MyVotes';
 import { ObserveCampaign, ObserveList } from './pages/Observe';
 import { Dashboard } from './pages/admin/Dashboard';
@@ -122,6 +123,7 @@ export function App() {
         <Route element={<RequireUser />}>
           <Route path="/votes" element={<MyVotes />} />
           <Route path="/v/:shareToken" element={<VotePage />} />
+          <Route path="/n/:token" element={<NominatePage />} />
           <Route path="/observe" element={<ObserveList />} />
           <Route path="/observe/:id" element={<ObserveCampaign />} />
         </Route>

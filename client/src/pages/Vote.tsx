@@ -3,12 +3,16 @@ import { Link, useParams } from 'react-router-dom';
 import { api, ApiError, fmtDate, type Notice, type Results } from '../api';
 import { Icon } from '../icons';
 import { closesIn, useNow } from '../time';
+import { CampaignBlocks, type BlockPosition } from './VoteBlocks';
 import { BackLink, Dialog, ErrorBox, NoticeBanner, NoticeList, ResultsChart, Spinner, Thumb, initials } from '../ui';
 
 type VoterState = 'can_vote' | 'already_voted' | 'not_eligible' | 'not_member' | 'not_open' | 'closed';
 interface Info {
   title: string; description: string | null; opensAt: string | null; closesAt: string | null; resultsPublished: boolean;
-  voterState: VoterState; notices?: Notice[]; candidates: { id: string; name: string; bio: string | null; photoUrl: string | null; isAbstain?: boolean; withdrawn?: boolean }[];
+  voterState: VoterState; notices?: Notice[];
+  /** Present when the server knows about positions: the campaign page is then a grid of position blocks (VoteBlocks.tsx). */
+  positions?: BlockPosition[];
+  candidates: { id: string; name: string; bio: string | null; photoUrl: string | null; isAbstain?: boolean; withdrawn?: boolean }[];
 }
 
 function StateCard({ icon, title, children }: { icon: string; title: string; children?: ReactNode }) {
@@ -137,6 +141,7 @@ export function VotePage() {
   }
   if (error && !info) return <StateCard icon="alert" title="Can't open this vote"><p className="muted">{error}</p><button className="btn btn-secondary" onClick={() => void load()}>Try again</button></StateCard>;
   if (!info) return <Spinner />;
+  if (info.positions) return <CampaignBlocks token={shareToken} info={{ ...info, positions: info.positions }} now={now} reload={load} />;
 
   const chosen = info.candidates.find((c) => c.id === selected);
   const left = info.voterState === 'can_vote' ? closesIn(info.closesAt, now) : null;

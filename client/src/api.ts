@@ -61,7 +61,22 @@ export async function api<T = unknown>(method: string, url: string, body?: unkno
 }
 
 export interface User { oid: string; email: string; displayName: string; roles: string[] }
-export interface Candidate { id: string; name: string; bio: string | null; photo_url: string | null; withdrawn_at?: string | null; withdrawn_reason?: string | null }
+export interface Candidate {
+  id: string; name: string; bio: string | null; photo_url: string | null; withdrawn_at?: string | null; withdrawn_reason?: string | null;
+  position_id?: string; region_id?: string | null; region?: string | null; status?: CandidateStatus; self_nominated?: boolean; submitted_at?: string | null; review_reason?: string | null;
+}
+/** invited / submitted (waiting for the admin) / approved (on the ballot) / rejected / withdrawn (the candidate stood down before the start). */
+export type CandidateStatus = 'invited' | 'submitted' | 'approved' | 'rejected' | 'withdrawn';
+export interface Region { id: string; name: string; sort_order?: number; candidates?: number }
+export type NominationState = 'not_invited' | 'open' | 'closed' | 'expired' | 'ended';
+/** One block on the campaign page: a position with its candidate counts and nomination status (and, once closed, its outcome). */
+export interface Position {
+  id: string; title: string; description: string | null; sort_order: number; seats: number; min_candidates: number | null; max_candidates: number | null;
+  status: 'open' | 'closed'; nomination_state: NominationState; invite_url: string | null; required: number;
+  counts: { approved: number; submitted: number; rejected: number; withdrawn: number; invited: number };
+  result: { turnout: number; winners: string[]; tie: string[] | null } | null;
+}
+export interface Nomination { id: string; name: string; bio: string | null; photo_url: string | null; status: CandidateStatus; region_id: string | null; region: string | null; submitted_at: string | null; submitted_by: string | null; submitted_by_email: string | null; review_reason: string | null }
 export interface Campaign {
   id: string; title: string; description: string | null; status: 'draft' | 'open' | 'closed';
   opens_at: string | null; closes_at: string | null; eligibility: 'all' | 'list' | 'umoja'; results_published: boolean;
@@ -82,10 +97,10 @@ export interface Campaign {
   publish_at?: string | null;
 }
 export interface IntegrityBlock { ballots: number; receipts: number; at: string }
-export interface CampaignDetail extends Campaign { turnout: number; candidates: Candidate[]; eligible_emails: string[]; umoja_active_count: number; integrity_block?: IntegrityBlock | null; edited_after_start?: Notice[] }
+export interface CampaignDetail extends Campaign { positions?: Position[]; regions?: Region[]; nominations_close_at?: string | null; nominate_eligibility?: 'all' | 'umoja' | null; results_group_by_region?: boolean; turnout: number; candidates: Candidate[]; eligible_emails: string[]; umoja_active_count: number; integrity_block?: IntegrityBlock | null; edited_after_start?: Notice[] }
 /** A reset or an early close, with the reason the creator gave. Shown to voters (SEC-01). */
-export interface EditChange { what: 'title' | 'description' | 'closes_at' | 'candidate_added' | 'candidate_edited' | 'candidate_removed'; name?: string; from?: string | null; to?: string | null }
-export interface Notice { kind: 'reset' | 'closed_early' | 'edited_after_start' | 'candidate_withdrawn'; candidate?: string; at: string; by: string | null; reason: string; votes_cleared?: number; candidates?: { name: string; votes: number }[]; changes?: EditChange[] }
+export interface EditChange { what: 'title' | 'description' | 'closes_at' | 'candidate_added' | 'candidate_edited' | 'candidate_removed' | 'position_title' | 'position_description'; name?: string; from?: string | null; to?: string | null }
+export interface Notice { kind: 'reset' | 'closed_early' | 'edited_after_start' | 'candidate_withdrawn'; candidate?: string; at: string; by: string | null; reason: string; votes_cleared?: number; candidates?: { name: string; votes: number; position?: string }[]; changes?: EditChange[] }
 export interface ResetEntry extends Notice { votes_cleared: number }
 /** `candidates` is null while the campaign is open: per-candidate counts exist only after it has closed (SEC-01). */
 /** Run-off context of a closed campaign (creator only). */
@@ -93,10 +108,14 @@ export interface RunoffInfo { round: number; max: number; next: { id: string; ti
 export interface Tie { names: string[]; votes: number }
 export interface Quorum { percent: number; eligible: number | null; needed: number | null; votes: number; met: boolean | null }
 export interface Publication { by: string | null; at: string; scheduled: boolean }
-export interface Results { status: string; results_published: boolean; archived?: boolean; candidates: { id: string; name: string; votes: number; is_abstain?: boolean; withdrawn?: boolean }[] | null; turnout: { votes: number; eligible: number | null }; resets?: ResetEntry[]; notices?: Notice[]; tie?: Tie | null; runoff?: RunoffInfo; quorum?: Quorum | null; publication?: Publication | null }
+export interface ResultCandidate { id: string; name: string; votes: number; is_abstain?: boolean; withdrawn?: boolean; region?: string | null; position_id?: string }
+/** One position's result. While the campaign is open `candidates` is null: only the turnout of the position is shown. */
+export interface PositionResult { id: string; title: string; description?: string | null; candidates: ResultCandidate[] | null; turnout: { votes: number; eligible?: number | null }; winners?: { id: string; name: string; votes: number }[]; tie?: Tie | null }
+export interface Results { status: string; results_published: boolean; archived?: boolean; positions?: PositionResult[]; group_by_region?: boolean; candidates: ResultCandidate[] | null; turnout: { votes: number; eligible: number | null }; resets?: ResetEntry[]; notices?: Notice[]; tie?: Tie | null; runoff?: RunoffInfo; quorum?: Quorum | null; publication?: Publication | null }
 export interface SealCheck {
   chain_ok: boolean; chain_checked: number; sealed: boolean; sealed_at: string | null; seal_hash: string | null; seal_seq: number | null;
   tallies_match: boolean | null; receipts_match: boolean | null; sealed_tallies: { name: string; votes: number }[]; sealed_turnout: number | null;
+  positions?: { position_id: string; title: string; fingerprint: string; tallies_match: boolean | null; receipts_match: boolean | null }[];
 }
 
 export interface SummaryCampaign {

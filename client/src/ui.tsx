@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, type KeyboardEvent, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { fmtDate, type EditChange, type Notice } from './api';
+import { fmtDate, type EditChange, type Notice, type PositionResult, type Results } from './api';
 import { Icon } from './icons';
 
 export function Spinner({ label = 'Loading…' }: { label?: string }) {
@@ -123,6 +123,8 @@ export function describeEdit(ch: EditChange): string {
     case 'closes_at': return `closing time changed from ${ch.from ? fmtDate(ch.from) : 'none'} to ${ch.to ? fmtDate(ch.to) : 'none'}`;
     case 'candidate_added': return `candidate added: ${ch.name ?? ''}`;
     case 'candidate_removed': return `candidate removed: ${ch.name ?? ''}`;
+    case 'position_title': return `position title changed from ${q(ch.from)} to ${q(ch.to)}`;
+    case 'position_description': return `description of the position “${ch.name ?? ''}” changed`;
     default: return ch.from && ch.to ? `candidate renamed from ${ch.from} to ${ch.to}` : `candidate edited: ${ch.name ?? ''}`;
   }
 }
@@ -140,7 +142,7 @@ export function NoticeList({ notices, title = 'What happened during this vote' }
             {x.kind === 'edited_after_start'
               ? <ul className="list small">{(x.changes ?? []).map((ch, j) => <li key={j} className="muted">{describeEdit(ch)}</li>)}</ul>
               : <div className="muted small">Reason: {x.reason}</div>}
-            {x.candidates && x.candidates.length > 0 && <div className="muted small">Before the reset: {x.candidates.map((c) => `${c.name} ${c.votes}`).join(' · ')}</div>}
+            {x.candidates && x.candidates.length > 0 && <div className="muted small">Before the reset: {x.candidates.map((c) => `${c.position ? `${c.position}: ` : ''}${c.name} ${c.votes}`).join(' · ')}</div>}
           </li>
         ))}
       </ul>
@@ -225,3 +227,66 @@ export function Thumb({ url, name, size = 'md' }: { url: string | null; name: st
 }
 
 export const initials = (n: string) => n.trim().split(/\s+/).map((p) => p[0]).slice(0, 2).join('').toUpperCase() || '?';
+
+/**
+ * Results of a campaign with several positions: one section per position (its own turnout, outcome and bars), optionally grouped by region.
+ * Members who voted in at least one position are the campaign's turnout; each position also shows its own.
+ */
+export function PositionResults({ r }: { r: Pick<Results, 'positions' | 'turnout' | 'quorum' | 'group_by_region'> }) {
+  return (
+    <div className="results">
+      <div className="results-turnout">
+        <div className="field-label">Members who voted in at least one position</div>
+        <TurnoutBar votes={r.turnout.votes} eligible={r.turnout.eligible} />
+      </div>
+      {r.quorum && <p className={r.quorum.met === false ? 'tie-note quorum-bad' : 'muted small'} role="status">{quorumLine(r.quorum)}</p>}
+      {(r.positions ?? []).map((p) => <PositionResultBlock key={p.id} p={p} groupByRegion={!!r.group_by_region} />)}
+    </div>
+  );
+}
+
+const NO_REGION = 'No region';
+
+function PositionResultBlock({ p, groupByRegion }: { p: PositionResult; groupByRegion: boolean }) {
+  const all = p.candidates ?? [];
+  const abstain = all.find((c) => c.is_abstain);
+  const withdrawn = all.filter((c) => c.withdrawn && !c.is_abstain);
+  const live = all.filter((c) => !c.is_abstain && !c.withdrawn);
+  const total = Math.max(1, p.turnout.votes);
+  const top = Math.max(0, ...live.map((c) => c.votes));
+  const byRegion = new Map<string, typeof live>();
+  for (const c of live) { const k = c.region ?? NO_REGION; byRegion.set(k, [...(byRegion.get(k) ?? []), c]); }
+  const groups: [string, typeof live][] = groupByRegion
+    ? [...byRegion].sort((a, b) => Number(a[0] === NO_REGION) - Number(b[0] === NO_REGION) || a[0].localeCompare(b[0]))
+    : [['', live]];
+  const bar = (c: (typeof live)[number]) => {
+    const lead = c.votes === top && top > 0 && !p.tie;
+    return (
+      <div key={c.id} className={`bar${lead ? ' leader' : ''}`}>
+        <div className="bar-head"><span>{c.name}{!groupByRegion && c.region ? <span className="muted small"> · {c.region}</span> : null}</span><span className="bar-num">{Math.round((c.votes / total) * 100)}% · {c.votes} {c.votes === 1 ? 'vote' : 'votes'}</span></div>
+        <progress max={total} value={c.votes} aria-label={`${c.name}: ${c.votes} votes`} />
+      </div>
+    );
+  };
+  return (
+    <section className="position-result" aria-label={p.title}>
+      <h3>{p.title}</h3>
+      <p className="muted small">{p.turnout.votes} {p.turnout.votes === 1 ? 'member voted' : 'members voted'} in this position</p>
+      {p.candidates === null ? null : (
+        <>
+          {p.tie ? <p className="tie-note" role="status"><strong>Tie for first place:</strong> {p.tie.names.join(' and ')} each have {p.tie.votes} {p.tie.votes === 1 ? 'vote' : 'votes'}. There is no winner yet.</p>
+            : p.winners && p.winners.length > 0 ? <p className="winner-line"><strong>{p.winners.length > 1 ? 'Winners' : 'Winner'}:</strong> {p.winners.map((w) => w.name).join(', ')}</p>
+              : <p className="muted small">No winner (no votes).</p>}
+          {groups.map(([region, list]) => (
+            <div key={region || 'all'} className="region-group">
+              {groupByRegion && <h4 className="region-heading">{region}</h4>}
+              {list.map(bar)}
+            </div>
+          ))}
+          {withdrawn.map((w) => <p key={w.id} className="muted small abstain-note">{w.name} withdrew: {w.votes} {w.votes === 1 ? 'vote' : 'votes'} void</p>)}
+          {abstain && <p className="muted small abstain-note">Abstentions (not a candidate, never a winner): {abstain.votes}</p>}
+        </>
+      )}
+    </section>
+  );
+}

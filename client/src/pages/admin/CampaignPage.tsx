@@ -6,9 +6,10 @@ import { SharePanel } from '../../share';
 import { TeamTab } from './TeamTab';
 import { NotifyPanel } from './NotifyPanel';
 import { LateVoters } from './LateVoters';
-import { BackLink, Dialog, ErrorBox, Field, NoticeList, quorumLine, ResultsChart, SectionTitle, Spinner, StatusBadge, Tabs, Thumb, TurnoutBar, initials } from '../../ui';
+import { PositionsTab, SettingsTab, startBlocker } from './PositionsTab';
+import { BackLink, Dialog, ErrorBox, Field, NoticeList, quorumLine, PositionResults, ResultsChart, SectionTitle, Spinner, StatusBadge, Tabs, Thumb, TurnoutBar, initials } from '../../ui';
 
-type Tab = 'candidates' | 'eligibility' | 'results' | 'team';
+type Tab = 'candidates' | 'eligibility' | 'settings' | 'results' | 'team';
 
 /**
  * While a campaign is open the server returns turnout only (SEC-01), so polling is harmless: it never carries per-candidate
@@ -200,12 +201,12 @@ function ResultsTab({ c, reload }: { c: CampaignDetail; reload: () => Promise<vo
       {c.status === 'open' && (r
         ? (
           <>
-            <div className="results-turnout"><div className="field-label">Turnout</div><TurnoutBar votes={r.turnout.votes} eligible={r.turnout.eligible} /></div>
+            {c.positions ? <PositionResults r={r} /> : <div className="results-turnout"><div className="field-label">Turnout</div><TurnoutBar votes={r.turnout.votes} eligible={r.turnout.eligible} /></div>}
             <p className="muted">Per-candidate results are hidden until voting closes, for everyone including you. This protects the secrecy of every vote.</p>
           </>
         )
         : !err && <Spinner />)}
-      {c.status === 'closed' && (r?.candidates ? <ResultsChart candidates={r.candidates} turnout={r.turnout} tie={r.tie} quorum={r.quorum} /> : !err && <Spinner />)}
+      {c.status === 'closed' && (r?.candidates ? (c.positions ? <PositionResults r={r} /> : <ResultsChart candidates={r.candidates} turnout={r.turnout} tie={r.tie} quorum={r.quorum} />) : !err && <Spinner />)}
       {c.status === 'closed' && r?.publication && <p className="muted small">Published by {r.publication.by ?? 'unknown'} on {fmtDate(r.publication.at)}{r.publication.scheduled ? ' (scheduled in advance)' : ''}.</p>}
       {(c.status === 'closed' || c.status === 'open') && !c.results_published && (
         <div className="schedule-panel">
@@ -223,7 +224,7 @@ function ResultsTab({ c, reload }: { c: CampaignDetail; reload: () => Promise<vo
           <p>{quorumLine(r.quorum)}</p><p>Voters will see that the result is below quorum. Publish only if that is acceptable under your rules.</p>
         </Dialog>
       )}
-      {c.status === 'closed' && r?.runoff && <RunoffPanel id={c.id} tie={r.tie ?? null} info={r.runoff} />}
+      {c.status === 'closed' && r?.runoff && (c.positions?.length ?? 1) <= 1 && <RunoffPanel id={c.id} tie={r.tie ?? null} info={r.runoff} />}
       {c.status === 'closed' && c.receipts_purged_at && <p className="muted small" role="note">The personal data of this campaign (who voted, the voter list, photos) was removed on {fmtDate(c.receipts_purged_at)} under the retention schedule. The sealed result and the audit trail remain.</p>}
       {/* TODO(re-enable): the "Verify results integrity" panel is hidden for now. Sealing, GET /api/campaigns/:id/verify and the publish block on a
           mismatch are unchanged on the server. Restore with:  {c.status === 'closed' && <SealPanel id={c.id} />}  */}
@@ -245,7 +246,7 @@ function SideCard({ c, reload }: { c: CampaignDetail; reload: () => Promise<void
   const archived = !!c.archived_at;
   const owner = c.my_role !== 'co_admin';   // co-admins run the campaign; reset, delete and archive stay with its creator
   const [notice, setNotice] = useState<string | null>(null);
-  const blockedReason = c.candidates.length < 2 ? 'Add at least 2 candidates to start.'
+  const blockedReason = c.positions ? startBlocker(c.positions) : c.candidates.length < 2 ? 'Add at least 2 candidates to start.'
     : c.eligibility === 'list' && c.eligible_emails.length === 0 ? 'Add at least one eligible email.' : null;
   const open = (d: Dlg) => { setTyped(''); setReason(''); setCloses(''); setError(null); setDialog(d); };
 
@@ -266,7 +267,7 @@ function SideCard({ c, reload }: { c: CampaignDetail; reload: () => Promise<void
           <SectionTitle icon="flag">Actions</SectionTitle>
           <p className="field-helper">{c.allow_edits_after_start
             ? 'Starting opens the vote. Who can vote locks; the title, description and closing time stay editable, and candidates until the first vote is cast.'
-            : 'Starting opens the vote and locks the campaign. Details, candidates and voters can no longer be changed.'}</p>
+            : 'Starting opens the vote and locks the campaign. Details, positions, candidates, nominations and voters can no longer be changed.'}</p>
           <div className="stack">
             <button className="btn btn-primary" disabled={!!blockedReason} onClick={() => open('start')}>Start voting</button>
             {blockedReason && <p className="field-helper" role="note">{blockedReason}</p>}
@@ -397,14 +398,21 @@ export function CampaignPage() {
 
       <div className="cols">
         <div className="card card-pad main-col">
-          <Tabs<Tab> label="Campaign sections" value={tab} onChange={setTab} tabs={[
+          <Tabs<Tab> label="Campaign sections" value={tab} onChange={setTab} tabs={c.positions ? [
+            { id: 'candidates', label: 'Positions', count: c.positions.length },
+            { id: 'eligibility', label: 'Eligibility' },
+            { id: 'settings', label: 'Settings' },
+            { id: 'results', label: 'Results' },
+            { id: 'team', label: 'Team' },
+          ] : [
             { id: 'candidates', label: 'Candidates', count: c.candidates.length },
             { id: 'eligibility', label: 'Eligibility' },
             { id: 'results', label: 'Results' },
             { id: 'team', label: 'Team' },
           ]}>
-            {tab === 'candidates' && <CandidatesTab c={c} reload={reload} />}
+            {tab === 'candidates' && (c.positions ? <PositionsTab c={c} reload={reload} /> : <CandidatesTab c={c} reload={reload} />)}
             {tab === 'eligibility' && <EligibilityTab c={c} reload={reload} />}
+            {tab === 'settings' && c.positions && <SettingsTab c={c} reload={reload} />}
             {tab === 'results' && <ResultsTab c={c} reload={reload} />}
             {tab === 'team' && <TeamTab c={c} reload={reload} />}
           </Tabs>

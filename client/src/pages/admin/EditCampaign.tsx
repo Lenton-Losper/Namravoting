@@ -228,7 +228,9 @@ export function EditCampaign() {
       {live && <p className="admin-banner" role="status">Voting is open. Edits made here are recorded in the audit log and shown to voters as “Edited after start”.</p>}
       <div className="card form-card">
         <DetailsSection c={c} live={live} onSaved={() => void reload()} />
-        <CandidatesSection c={c} live={live} onChanged={() => void reload()} />
+        {c.positions
+          ? <section className="form-section"><SectionTitle icon="users">Positions and candidates</SectionTitle><p className="field-helper">Positions, nominations and candidates are managed on the campaign page, one position at a time.</p><Link className="btn btn-secondary btn-sm" to={`/admin/c/${c.id}`}>Manage positions</Link></section>
+          : <CandidatesSection c={c} live={live} onChanged={() => void reload()} />}
         <EligibilitySection c={c} live={live} onSaved={() => void reload()} onDirty={setEligDirty} />
       </div>
     </>
