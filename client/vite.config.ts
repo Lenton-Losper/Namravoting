@@ -7,5 +7,5 @@ export default defineConfig({
     port: 5173,
     proxy: { '/api': { target: 'http://localhost:3001', changeOrigin: false } },
   },
-  test: { environment: 'jsdom', include: ['src/**/*.test.tsx'], testTimeout: 20000 },
+  test: { environment: 'jsdom', include: ['src/**/*.test.{ts,tsx}'], testTimeout: 20000 },
 });

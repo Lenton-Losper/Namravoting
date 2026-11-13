@@ -31,6 +31,17 @@ function PublishedResults({ token }: { token: string }) {
 const pendingKey = (token: string) => `namra:pending-vote:${token}`;
 const clearPending = (token: string) => { try { sessionStorage.removeItem(pendingKey(token)); } catch { /* storage unavailable */ } };
 
+/** Whether the browser thinks it has a connection (a hint only: the real test is whether a request gets through). */
+function useOnline(): boolean {
+  const [on, setOn] = useState(() => (typeof navigator === 'undefined' ? true : navigator.onLine));
+  useEffect(() => {
+    const up = () => setOn(true); const down = () => setOn(false);
+    window.addEventListener('online', up); window.addEventListener('offline', down);
+    return () => { window.removeEventListener('online', up); window.removeEventListener('offline', down); };
+  }, []);
+  return on;
+}
+
 export function VotePage() {
   const { shareToken = '' } = useParams();
   const now = useNow();
@@ -43,6 +54,9 @@ export function VotePage() {
   const [invalid, setInvalid] = useState(false);
   const [ineligible, setIneligible] = useState(false);
   const [notMember, setNotMember] = useState(false);
+  /** The vote was sent but the answer never arrived AND the server could not be reached to check: the outcome is unknown. */
+  const [uncertain, setUncertain] = useState(false);
+  const online = useOnline();
   const submitting = useRef(false);   // synchronous guard: a double tap can never send two requests
 
   const load = useCallback(async (): Promise<Info | null> => {
@@ -86,9 +100,18 @@ export function VotePage() {
       } else {
         // Network or server error: the outcome is unknown. Re-sync from the server; if the vote did land we will see "already voted".
         const fresh = await load();
-        if (!fresh || fresh.voterState === 'can_vote') setError("We couldn't confirm your vote. Check your connection and try again.");
+        if (!fresh) setUncertain(true);                                    // could not even ask: do NOT invite a second attempt yet
+        else if (fresh.voterState === 'can_vote') setError('Your vote was not recorded. Please try again.');   // the server says there is no receipt, so voting again is safe
       }
     } finally { submitting.current = false; setBusy(false); }
+  }
+
+  /** "Check again" after a lost response: ask the server whether the vote landed. */
+  async function recheck() {
+    const fresh = await load();
+    if (!fresh) return;                                                    // still no signal: stay uncertain
+    setUncertain(false);
+    if (fresh.voterState === 'can_vote') setError('Your vote was not recorded. You can vote again.');
   }
 
   if (invalid) {
@@ -137,26 +160,35 @@ export function VotePage() {
       <NoticeBanner notices={info.notices} />
 
       {done && <StateCard icon="check" title="Your vote has been recorded"><p className="muted">Thank you for voting. Your choice is secret and cannot be changed.</p></StateCard>}
+      {uncertain && !done && info.voterState === 'can_vote' && (
+        <section className="card card-pad state-card" role="alert">
+          <span className="state-icon"><Icon name="alert" size={22} /></span>
+          <h2>Your vote may not have been recorded</h2>
+          <p className="muted">The connection dropped before we heard back, and we could not reach the server to check. Please do not vote again until you have checked: press “Check again”, or open My votes once you have a signal.</p>
+          <div className="form-actions"><button className="btn btn-primary" onClick={() => void recheck()}>Check again</button><Link className="btn btn-secondary" to="/votes">Go to My votes</Link></div>
+        </section>
+      )}
+      {!online && <p className="offline-note" role="status">You appear to be offline. Your vote can only be sent when you are connected again.</p>}
       {!done && info.voterState === 'already_voted' && <StateCard icon="check" title="You have already voted"><p className="muted">Your vote was recorded. Each person can vote once.</p></StateCard>}
       {!done && info.voterState === 'not_open' && <StateCard icon="clock" title="Voting has not opened yet"><p className="muted">{info.opensAt ? `Voting opens ${fmtDate(info.opensAt)}.` : 'Please check back soon.'}</p></StateCard>}
       {!done && info.voterState === 'closed' && <StateCard icon="lock" title="Voting has closed"><p className="muted">{info.resultsPublished ? 'The results are below.' : 'The results have not been published yet.'}</p></StateCard>}
 
       {info.resultsPublished && <PublishedResults token={shareToken} />}
 
-      {!done && info.voterState === 'can_vote' && (
+      {!done && info.voterState === 'can_vote' && !uncertain && (
         <>
           <p className="field-label hint">Select one candidate</p>
-          <ul className="list" role="radiogroup" aria-label="Candidates">
+          <div className="list radio-list" role="radiogroup" aria-label="Candidates">
             {info.candidates.map((c) => (
-              <li key={c.id}>
+              <div key={c.id}>
                 <button role="radio" aria-checked={selected === c.id} disabled={c.withdrawn} className={`candidate${selected === c.id ? ' selected' : ''}${c.isAbstain ? ' candidate-abstain' : ''}${c.withdrawn ? ' candidate-withdrawn' : ''}`} onClick={() => setSelected(c.id)}>
                   {!c.isAbstain && <Thumb url={c.photoUrl} name={c.name} size="lg" />}
                   <span className="candidate-text"><strong>{c.name}</strong>{c.withdrawn && <span className="muted">Withdrawn: this candidate can no longer be chosen</span>}{c.bio && !c.withdrawn && <span className="muted">{c.bio}</span>}</span>
                   <span className="candidate-check" aria-hidden="true"><Icon name="check" size={14} /></span>
                 </button>
-              </li>
+              </div>
             ))}
-          </ul>
+          </div>
           <div className="sticky-bar">
             <button className="btn btn-primary btn-block" disabled={!selected || busy} onClick={() => setConfirming(true)}>Cast vote</button>
           </div>

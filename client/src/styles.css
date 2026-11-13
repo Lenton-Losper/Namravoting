@@ -11,7 +11,7 @@
   --bg: #FFFFFF;
   --surface-muted: #F5F7F9;
   --border: #E3E8EE;
-  --muted: #6B7785;
+  --muted: #5B6673;             /* AA: 5.3:1 or better on the page, the muted surface and the orange tint (was #6B7785, 4.2:1 on tints) */
   --success: #1A7F37;
   --danger: #C62828;
 
@@ -44,12 +44,17 @@ a { color: var(--navy); text-underline-offset: 3px; }
 .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 16px; }
 .list { list-style: none; margin: 0; padding: 0; }
 .list > li + li { margin-top: 12px; }
+.radio-list { display: grid; gap: 12px; }
+.offline-note { margin: 12px 0; padding: 10px 12px; border-left: 4px solid var(--orange-text); background: var(--orange-50); border-radius: 6px; }
+.skip-link { position: absolute; left: -9999px; top: 8px; z-index: 100; padding: 8px 14px; background: #fff; color: var(--navy-text); border: 2px solid var(--navy-text); border-radius: var(--radius-sm); font-weight: 600; }
+.skip-link:focus { left: 8px; }
+main:focus { outline: none; }
 .excerpt { display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .meta { display: inline-flex; align-items: center; gap: 6px; margin: 6px 0 0; color: var(--muted); font-size: 13px; }
 .meta .icon, .orange-icon { color: var(--orange); }
 .orange-icon { display: inline-flex; align-items: center; }
 .count { font-weight: 400; font-size: 13px; }
-:where(a, button, input, textarea, select, [tabindex]):focus-visible { outline: 2px solid var(--orange); outline-offset: 2px; }
+:where(a, button, input, textarea, select, [tabindex]):focus-visible { outline: 2px solid var(--orange-text); outline-offset: 2px; box-shadow: 0 0 0 4px #fff; }   /* AA 3:1: the brand orange is 2.6:1 on white; the white halo keeps it visible on the navy bar */
 
 /* ---------- Top bar: navy, 64px, content max 1120 ---------- */
 .topbar { background: var(--navy); color: #fff; position: relative; z-index: 30; }
@@ -158,7 +163,7 @@ a { color: var(--navy); text-underline-offset: 3px; }
 /* ---------- Forms ---------- */
 label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; font-weight: 600; color: var(--navy-text); }
 label.check { flex-direction: row; align-items: center; gap: 8px; font-weight: 500; font-size: 14px; }
-input, textarea, select { font: 400 14px var(--font); padding: 8px 12px; min-height: 40px; width: 100%; color: var(--navy-text); background: #fff; border: 1px solid var(--border); border-radius: var(--radius-sm); }
+input, textarea, select { font: 400 14px var(--font); padding: 8px 12px; min-height: 40px; width: 100%; color: var(--navy-text); background: #fff; border: 1px solid var(--muted); border-radius: var(--radius-sm); }   /* AA 3:1 for the boundary of a control */
 input[readonly] { background: var(--surface-muted); }
 textarea { line-height: 1.5; }
 input[type="radio"], input[type="checkbox"] { width: 16px; height: 16px; min-height: 0; accent-color: var(--navy); }

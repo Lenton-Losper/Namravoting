@@ -114,3 +114,12 @@ Items built on the demo day are NOT deployed yet.
   voter count the result is measured against includes them.
 - **Leavers keep their vote**; their account stops working when IT disables it. Nothing here removes anyone.
 - Limit: a member who is in the frozen snapshot but was listed as not a member at that time cannot be reactivated from here (the app role may only insert).
+
+## 11. Accessibility and poor signal
+- **A WCAG 2.1 AA pass with automated checks in CI** (axe-core over the real pages and dialogs; colour contrast from the stylesheet). The first run found and fixed five
+  real problems (faint secondary text, faint form borders, a low-contrast focus ring, invalid list semantics on the ballot, no skip link). Details and the limits in
+  `docs/accessibility.md`.
+- **Poor signal:** after a lost response the page asks the server whether the vote landed; if it cannot be reached it says "Your vote may not have been recorded",
+  removes the ballot so it cannot be pressed twice, and offers "Check again" / "My votes". An offline notice shows when the browser has no connection.
+- **Not automated, so not claimed:** a real screen-reader pass, behaviour when the browser's default font size is changed (sizes are fixed pixels), touch targets on devices.
+- **Decision for you: an external accessibility review.** Recommended before the first real election.

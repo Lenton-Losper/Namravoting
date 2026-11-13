@@ -90,9 +90,10 @@ function AdminBanners() {
 function Shell() {
   return (
     <>
+      <a className="skip-link" href="#main">Skip to main content</a>
       <TopBar />
       <AdminBanners />
-      <main className="container"><Outlet /></main>
+      <main id="main" tabIndex={-1} className="container"><Outlet /></main>
     </>
   );
 }
