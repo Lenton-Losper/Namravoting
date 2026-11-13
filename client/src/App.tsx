@@ -6,6 +6,7 @@ import { initials, Spinner } from './ui';
 import { LoginPage } from './pages/Login';
 import { VotePage } from './pages/Vote';
 import { MyVotes } from './pages/MyVotes';
+import { ObserveCampaign, ObserveList } from './pages/Observe';
 import { Dashboard } from './pages/admin/Dashboard';
 import { ResultsArchive } from './pages/admin/ResultsArchive';
 import { NewCampaign } from './pages/admin/NewCampaign';
@@ -30,11 +31,11 @@ const VOTER_NAV = [{ to: '/votes', label: 'My votes', end: false }];
 
 /** Navy 64px top bar: wordmark left; nav, user and sign-out right. Collapses to a hamburger under 768px. */
 function TopBar() {
-  const { user, logout, isAdmin } = useAuth();
+  const { user, logout, isAdmin, observing } = useAuth();
   const [open, setOpen] = useState(false);
   const loc = useLocation();
   useEffect(() => { setOpen(false); }, [loc.pathname]);
-  const nav = isAdmin ? ADMIN_NAV : VOTER_NAV;
+  const nav = [...(isAdmin ? ADMIN_NAV : VOTER_NAV), ...(observing > 0 ? [{ to: '/observe', label: 'Observing', end: false }] : [])];
   const linkClass = (to: string) => ({ isActive }: { isActive: boolean }) =>
     `topnav-link${isActive || (to === '/votes' && loc.pathname.startsWith('/v/')) ? ' active' : ''}`;
   return (
@@ -120,6 +121,8 @@ export function App() {
         <Route element={<RequireUser />}>
           <Route path="/votes" element={<MyVotes />} />
           <Route path="/v/:shareToken" element={<VotePage />} />
+          <Route path="/observe" element={<ObserveList />} />
+          <Route path="/observe/:id" element={<ObserveCampaign />} />
         </Route>
         <Route path="*" element={<div className="card card-pad center"><h1>Page not found</h1><Link to="/">Go home</Link></div>} />
       </Route>

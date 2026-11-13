@@ -70,6 +70,10 @@ export interface Campaign {
   allow_edits_after_start?: boolean;
   /** An "Abstain (none of the above)" line is on the ballot (set while a draft, locked at start). */
   allow_abstain?: boolean;
+  /** Resets and permanent deletes need a co-admin's approval (switched on, never off). */
+  require_approval?: boolean;
+  /** Your role on this campaign: its creator, or a co-admin (can run it, not reset/delete/archive or change the team). */
+  my_role?: 'owner' | 'co_admin';
 }
 export interface IntegrityBlock { ballots: number; receipts: number; at: string }
 export interface CampaignDetail extends Campaign { turnout: number; candidates: Candidate[]; eligible_emails: string[]; umoja_active_count: number; integrity_block?: IntegrityBlock | null; edited_after_start?: Notice[] }

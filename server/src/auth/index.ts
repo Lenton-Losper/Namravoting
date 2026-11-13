@@ -6,6 +6,7 @@
  */
 import type { Express, Request, RequestHandler } from 'express';
 import { getConfig, type Config } from '../config.js';
+import { getPool } from '../db.js';
 import * as devAuth from './devAuth.js';
 import * as demoAuth from './demoAuth.js';
 import { mountEntra, type EntraOptions } from './entra.js';
@@ -34,12 +35,21 @@ export function mountAuth(app: Express, config: Config, entraOptions: EntraOptio
     // Microsoft Entra ID sign-in (/auth/login, /auth/callback, /auth/logout) + the same signed session cookie as dev.
     mountEntra(app, config, entraOptions);
   }
-  app.get('/api/session', (req, res) => {
+  app.get('/api/session', (req, res, next) => {
     res.set('Cache-Control', 'no-store');
     const user = getCurrentUser(req);
     // Operator banners (demo override active, secret about to expire) go to campaign admins only.
-    res.json({ user, authMode: config.authMode, notices: user && user.roles?.includes(ADMIN_ROLE) ? adminNotices(config) : [] });
+    // observing: how many campaigns this person has been asked to observe (shows the "Observing" link; a count, nothing else).
+    getObserving(user?.oid).then((observing) => {
+      res.json({ user, authMode: config.authMode, observing, notices: user && user.roles?.includes(ADMIN_ROLE) ? adminNotices(config) : [] });
+    }).catch(next);
   });
+}
+
+async function getObserving(oid: string | undefined): Promise<number> {
+  if (!oid) return 0;
+  const { rows } = await getPool().query("SELECT count(*)::int AS n FROM campaign_members WHERE user_oid = $1 AND role = 'observer'", [oid]);
+  return rows[0].n as number;
 }
 
 export const requireUser: RequestHandler = (req, res, next) => {

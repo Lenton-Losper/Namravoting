@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useState, type React
 import { api, onSessionExpired, resetCsrf, type User } from './api';
 
 export interface AdminNotice { kind: 'admin_by_email' | 'secret_expiry'; daysLeft?: number; expired?: boolean }
-interface AuthCtx { authMode: string | null; notices: AdminNotice[]; user: User | null; loading: boolean; refresh: () => Promise<void>; logout: () => Promise<void>; isAdmin: boolean }
+interface AuthCtx { observing: number; authMode: string | null; notices: AdminNotice[]; user: User | null; loading: boolean; refresh: () => Promise<void>; logout: () => Promise<void>; isAdmin: boolean }
 const Ctx = createContext<AuthCtx>(null as never);
 export const useAuth = () => useContext(Ctx);
 
@@ -11,10 +11,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [authMode, setAuthMode] = useState<string | null>(null);
   const [notices, setNotices] = useState<AdminNotice[]>([]);
+  const [observing, setObserving] = useState(0);
   const refresh = useCallback(async () => {
     try {
-      const s = await api<{ user: User | null; authMode?: string; notices?: AdminNotice[] }>('GET', '/api/session');
-      setUser(s.user); setAuthMode(s.authMode ?? null); setNotices(s.notices ?? []);
+      const s = await api<{ user: User | null; authMode?: string; notices?: AdminNotice[]; observing?: number }>('GET', '/api/session');
+      setUser(s.user); setAuthMode(s.authMode ?? null); setNotices(s.notices ?? []); setObserving(s.observing ?? 0);
     } catch { setUser(null); }   // 401 already started the re-sign-in (api.ts); other failures leave the visitor signed out
     finally { setLoading(false); }
   }, []);
@@ -27,5 +28,5 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (authMode === 'entra') { const r = await api<{ redirect?: string }>('POST', '/api/logout'); resetCsrf(); window.location.assign(r?.redirect ?? '/'); return; }
     await api('POST', '/api/logout'); resetCsrf(); setUser(null);
   }, [authMode]);
-  return <Ctx.Provider value={{ authMode, notices, user, loading, refresh, logout, isAdmin: !!user?.roles.includes('CampaignAdmin') }}>{children}</Ctx.Provider>;
+  return <Ctx.Provider value={{ observing, authMode, notices, user, loading, refresh, logout, isAdmin: !!user?.roles.includes('CampaignAdmin') }}>{children}</Ctx.Provider>;
 }

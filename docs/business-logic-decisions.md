@@ -21,3 +21,19 @@ Items built on the demo day are NOT deployed yet.
   towards the 2 candidates needed, and cannot be edited or removed on its own.
 - Results, CSV, Excel and PDF report abstentions on a separate line. Percentages are of ballots cast.
 - A run-off is not given an Abstain line (the creator can switch it on while the run-off is still a draft).
+
+## 3. Co-admins, observers, second approver
+- **Roles per campaign:** the creator (owner); **co-admins** can run it (edit, start, close, publish, export, run-off) but cannot reset,
+  delete, archive or change the team; **observers** are read-only: turnout, the sealed result once closed, the integrity check, the team,
+  approvals and the audit trail. Observers never see per-candidate counts while a campaign is open (the old round's counts in a reset entry
+  are held back too). Observers see it at `/observe`; the "Observing" link appears only for people who observe something.
+- **Who may be an observer: anyone the owner adds** (HR, a union representative, internal audit). They must have signed in once. Every
+  addition and removal is audited (`team.add`, `team.remove`). A co-admin must already be a campaign administrator
+  (ADMIN_OIDS or the app role), because they work in the admin area. At most 20 people per campaign.
+- **Second approver: both reset and permanent delete, per campaign, off by default** ("Require a second approver", on the create form
+  or the Team tab). Once on it can never be switched off (the database refuses). The creator requests, a co-admin (never the
+  requester) approves or rejects, the creator carries out an approved request within 24 hours. Every step is audited. The database
+  refuses an approval by the requester and any edit to a request. With no co-admin on the campaign nothing can be approved,
+  so add one first.
+- Honest limit: the "must be approved first" check is made by the application when the creator carries the request out; the two-person rule on the
+  approval record itself is enforced by the database. Resets and deletes still run through the creator's own session in the database functions.

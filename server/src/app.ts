@@ -12,6 +12,7 @@ import type { EntraOptions } from './auth/entra.js';
 import { csrfProtection, mountCsrf } from './auth/csrf.js';
 import { errorHandler, notFoundHandler } from './errors.js';
 import { adminRouter } from './routes/admin.js';
+import { observeRouter } from './routes/team.js';
 import { photosRouter } from './routes/photos.js';
 import { voteRouter } from './routes/vote.js';
 
@@ -48,6 +49,7 @@ export function createApp(opts: { accessVerifier?: AccessVerifier; entra?: Entra
 
   app.use('/api/campaigns', adminRouter());
   app.use('/api/vote', voteRouter());
+  app.use('/api/observe', observeRouter());
   app.use('/api/photos', photosRouter());
   app.use('/api', notFoundHandler);
 

@@ -3,9 +3,10 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api, fmtDate, fromLocalInput, type Campaign, type CampaignDetail, type Results, type SealCheck } from '../../api';
 import { Icon } from '../../icons';
 import { SharePanel } from '../../share';
+import { TeamTab } from './TeamTab';
 import { BackLink, Dialog, ErrorBox, Field, NoticeList, ResultsChart, SectionTitle, Spinner, StatusBadge, Tabs, Thumb, TurnoutBar, initials } from '../../ui';
 
-type Tab = 'candidates' | 'eligibility' | 'results';
+type Tab = 'candidates' | 'eligibility' | 'results' | 'team';
 
 /**
  * While a campaign is open the server returns turnout only (SEC-01), so polling is harmless: it never carries per-candidate
@@ -190,6 +191,8 @@ function SideCard({ c, reload }: { c: CampaignDetail; reload: () => Promise<void
   const [reason, setReason] = useState('');
   const [closes, setCloses] = useState('');
   const archived = !!c.archived_at;
+  const owner = c.my_role !== 'co_admin';   // co-admins run the campaign; reset, delete and archive stay with its creator
+  const [notice, setNotice] = useState<string | null>(null);
   const blockedReason = c.candidates.length < 2 ? 'Add at least 2 candidates to start.'
     : c.eligibility === 'list' && c.eligible_emails.length === 0 ? 'Add at least one eligible email.' : null;
   const open = (d: Dlg) => { setTyped(''); setReason(''); setCloses(''); setError(null); setDialog(d); };
@@ -216,7 +219,7 @@ function SideCard({ c, reload }: { c: CampaignDetail; reload: () => Promise<void
             <button className="btn btn-primary" disabled={!!blockedReason} onClick={() => open('start')}>Start voting</button>
             {blockedReason && <p className="field-helper" role="note">{blockedReason}</p>}
             <Link className="btn btn-secondary" to={`/admin/c/${c.id}/edit`}>Edit campaign</Link>
-            <button className="btn btn-danger" onClick={() => open('deleteDraft')}>Delete draft</button>
+            {owner && <button className="btn btn-danger" onClick={() => open('deleteDraft')}>Delete draft</button>}
           </div>
         </>
       ) : (
@@ -227,15 +230,18 @@ function SideCard({ c, reload }: { c: CampaignDetail; reload: () => Promise<void
             {c.status === 'open' && c.allow_edits_after_start && <Link className="btn btn-secondary" to={`/admin/c/${c.id}/edit`}>Edit campaign</Link>}
             {c.status === 'open' && <button className="btn btn-danger" onClick={() => open('close')}>Close voting</button>}
             {c.status === 'open' && <p className="field-helper" role="note">Close the campaign first to archive or delete it.</p>}
-            {c.status === 'closed' && !archived && <button className="btn btn-secondary" onClick={() => open('archive')}>Archive</button>}
-            {archived && <button className="btn btn-secondary" onClick={() => open('unarchive')}>Unarchive</button>}
-            {archived && <button className="btn btn-danger" onClick={() => open('permanent')}>Delete permanently</button>}
-            {!archived && <button className="btn btn-danger" onClick={() => open('reset')}>Reset votes</button>}
-            {archived && <p className="field-helper" role="note">Unarchive the campaign to reset its votes.</p>}
+            {owner && c.status === 'closed' && !archived && <button className="btn btn-secondary" onClick={() => open('archive')}>Archive</button>}
+            {owner && archived && <button className="btn btn-secondary" onClick={() => open('unarchive')}>Unarchive</button>}
+            {owner && archived && <button className="btn btn-danger" onClick={() => open('permanent')}>{c.require_approval ? 'Request permanent delete' : 'Delete permanently'}</button>}
+            {owner && !archived && <button className="btn btn-danger" onClick={() => open('reset')}>{c.require_approval ? 'Request reset' : 'Reset votes'}</button>}
+            {owner && archived && <p className="field-helper" role="note">Unarchive the campaign to reset its votes.</p>}
+            {!owner && <p className="field-helper" role="note">You are a co-admin: you can run this campaign. Resetting, deleting, archiving and the team stay with its creator.</p>}
+            {c.require_approval && owner && <p className="field-helper" role="note">A reset or a permanent delete needs a co-admin&rsquo;s approval (Team tab).</p>}
           </div>
         </>
       )}
       <ErrorBox message={error} />
+      {notice && <p className="ok" role="status">{notice}</p>}
 
       {dialog === 'start' && (
         <Dialog title="Start voting?" confirmLabel="Start and lock" busy={busy} onConfirm={() => void run(() => post('start'), reload)} onCancel={() => setDialog(null)}>
@@ -271,8 +277,10 @@ function SideCard({ c, reload }: { c: CampaignDetail; reload: () => Promise<void
         </Dialog>
       )}
       {dialog === 'permanent' && (
-        <Dialog title="Delete permanently?" confirmLabel="Delete permanently" danger busy={busy} confirmDisabled={!titleOk}
-          onConfirm={() => void run(() => post('permanent-delete', { confirm_title: typed }), () => nav('/admin', { replace: true }))} onCancel={() => setDialog(null)}>
+        <Dialog title={c.require_approval ? 'Request permanent delete?' : 'Delete permanently?'} confirmLabel={c.require_approval ? 'Send request' : 'Delete permanently'} danger busy={busy} confirmDisabled={!titleOk}
+          onConfirm={() => void (c.require_approval
+            ? run(() => post('approvals', { kind: 'permanent_delete', confirm_title: typed }), () => setNotice('Request sent. A co-admin must approve it in the Team tab, then you carry it out there.'))
+            : run(() => post('permanent-delete', { confirm_title: typed }), () => nav('/admin', { replace: true })))} onCancel={() => setDialog(null)}>
           <p className="confirm-warning">This deletes the campaign, its {c.turnout} recorded {c.turnout === 1 ? 'vote' : 'votes'}, candidates and photos for good. This can't be undone. (The sealed result and a record of the deletion stay in the audit log.)</p>
           <p className="field-helper">You must have exported the results (CSV, Results tab) after the campaign closed, so a copy of the result exists outside the system.</p>
           <label>Type the campaign title to confirm<span className="field-helper">{c.title}</span>
@@ -280,8 +288,10 @@ function SideCard({ c, reload }: { c: CampaignDetail; reload: () => Promise<void
         </Dialog>
       )}
       {dialog === 'reset' && (
-        <Dialog title="Reset votes?" confirmLabel="Reset votes" danger busy={busy} confirmDisabled={!titleOk || !reasonOk}
-          onConfirm={() => void run(() => post('reset', { confirm_title: typed, reason: reason.trim(), closes_at: fromLocalInput(closes) }), reload)} onCancel={() => setDialog(null)}>
+        <Dialog title={c.require_approval ? 'Request a reset of the votes?' : 'Reset votes?'} confirmLabel={c.require_approval ? 'Send request' : 'Reset votes'} danger busy={busy} confirmDisabled={!titleOk || !reasonOk}
+          onConfirm={() => void (c.require_approval
+            ? run(() => post('approvals', { kind: 'reset', confirm_title: typed, reason: reason.trim(), closes_at: fromLocalInput(closes) }), () => setNotice('Request sent. A co-admin must approve it in the Team tab, then you carry it out there.'))
+            : run(() => post('reset', { confirm_title: typed, reason: reason.trim(), closes_at: fromLocalInput(closes) }), reload))} onCancel={() => setDialog(null)}>
           <p className="confirm-warning">All {c.turnout} {c.turnout === 1 ? 'vote' : 'votes'} will be deleted. Everyone will be able to vote again. This can't be undone.</p>
           <div className="stack">
             <label>Type the campaign title to confirm<span className="field-helper">{c.title}</span>
@@ -338,10 +348,12 @@ export function CampaignPage() {
             { id: 'candidates', label: 'Candidates', count: c.candidates.length },
             { id: 'eligibility', label: 'Eligibility' },
             { id: 'results', label: 'Results' },
+            { id: 'team', label: 'Team' },
           ]}>
             {tab === 'candidates' && <CandidatesTab c={c} />}
             {tab === 'eligibility' && <EligibilityTab c={c} />}
             {tab === 'results' && <ResultsTab c={c} reload={reload} />}
+            {tab === 'team' && <TeamTab c={c} reload={reload} />}
           </Tabs>
         </div>
         <SideCard c={c} reload={reload} />

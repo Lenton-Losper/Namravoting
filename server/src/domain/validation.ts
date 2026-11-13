@@ -26,6 +26,8 @@ export const createCampaignBody = z.object({
   allow_edits_after_start: z.boolean().optional(),
   /** Put an "Abstain (none of the above)" line on the ballot. Draft only; locked once the campaign starts. */
   allow_abstain: z.boolean().optional(),
+  /** Resets and permanent deletes need a co-admin's approval. Can be switched on, never off. */
+  require_approval: z.boolean().optional(),
 }).strict().refine(windowOk, windowMsg)
   .refine((v) => v.eligibility !== 'list' || (v.emails?.length ?? 0) > 0, { message: 'Add at least one email address for a listed vote', path: ['emails'] })
   .refine((v) => v.eligibility === 'list' || v.emails === undefined, { message: 'emails only applies to a listed vote', path: ['emails'] });

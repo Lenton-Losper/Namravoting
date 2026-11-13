@@ -4,6 +4,7 @@ import crypto from 'node:crypto';
 import { Router, type Request, type RequestHandler, type Response } from 'express';
 import multer from 'multer';
 import PDFDocument from 'pdfkit';
+import { teamRouter } from './team.js';
 import { buildPdf, buildXlsx, gatherExport } from '../services/resultsExport.js';
 import QRCode from 'qrcode';
 import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
@@ -75,6 +76,27 @@ const loadOwned: RequestHandler = async (req, res, next) => {
     return;
   }
   res.locals.campaign = c;
+  next();
+};
+/**
+ * Gate for everything that RUNS a campaign (edit, start, close, publish, export): the creator or a co-admin of that campaign.
+ * Reset, delete, archive and the team itself stay with the creator (loadOwned). Same 404-and-audit answer for everyone else.
+ */
+const loadRunnable: RequestHandler = async (req, res, next) => {
+  const { id } = idParams.parse(req.params);
+  const u = currentUser(req);
+  await refreshStatus(id).catch(() => undefined);
+  const { rows } = await getPool().query(
+    `SELECT c.*, CASE WHEN c.created_by = $2 THEN 'owner' ELSE m.role END AS my_role
+       FROM campaigns c LEFT JOIN campaign_members m ON m.campaign_id = c.id AND m.user_oid = $2 AND m.role = 'co_admin' WHERE c.id = $1`, [id, u.oid]);
+  const c = rows[0] as (CampaignRow & { my_role: string | null }) | undefined;
+  if (!c || !c.my_role) {
+    if (shouldAuditDenied(`${u.oid}|not_owner|${req.method} ${req.path}`)) await audit(getPool(), u.oid, 'authz.denied', id, { reason: 'not_owner', method: req.method, path: req.path });
+    next(notFound());
+    return;
+  }
+  res.locals.campaign = c;
+  res.locals.myRole = c.my_role;
   next();
 };
 const camp = (res: Response) => res.locals.campaign as CampaignRow;
@@ -170,6 +192,8 @@ async function removePhotos(photos: unknown): Promise<void> {
   }
 }
 
+/** Campaigns the caller sees on the dashboard: their own, and those they co-administer. (Observers have their own page.) */
+const VISIBLE = "(c.created_by = $1 OR EXISTS (SELECT 1 FROM campaign_members m WHERE m.campaign_id = c.id AND m.user_oid = $1 AND m.role = 'co_admin'))";
 const shareUrl = (token: string) => `${getConfig().publicBaseUrl}/v/${token}`;
 const present = (c: CampaignRow) => ({ ...c, share_url: shareUrl(c.share_token) });
 const photoUrl = (cand: { id: string; photo_path: string | null }) => (cand.photo_path ? `/api/photos/${cand.id}` : null);
@@ -181,14 +205,14 @@ export function adminRouter(): Router {
 
   r.get('/mine', async (req, res) => {
     const u = currentUser(req);
-    const open = await getPool().query("SELECT id FROM campaigns WHERE created_by = $1 AND status = 'open'", [u.oid]);
+    const open = await getPool().query("SELECT id FROM campaigns c WHERE " + VISIBLE + " AND status = 'open'", [u.oid]);
     for (const row of open.rows) await refreshStatus(row.id);
     const { rows } = await getPool().query(
       `SELECT c.*, (SELECT count(*)::int FROM vote_receipts v WHERE v.campaign_id = c.id) AS turnout,
               CASE c.eligibility WHEN 'list' THEN (SELECT count(*)::int FROM eligible_voters e WHERE e.campaign_id = c.id)
                                 WHEN 'umoja' THEN (CASE WHEN c.status = 'draft' THEN (SELECT count(*)::int FROM umoja_members WHERE active)
                                                      ELSE (SELECT count(*)::int FROM campaign_voters v WHERE v.campaign_id = c.id AND v.active) END) END AS eligible_count
-         FROM campaigns c WHERE c.created_by = $1 ORDER BY c.created_at DESC`, [u.oid]);
+         FROM campaigns c WHERE ${VISIBLE} ORDER BY c.created_at DESC`, [u.oid]);
     res.json({ campaigns: rows.map((c) => ({ ...present(c), turnout: c.turnout, eligible_count: c.eligible_count })) });
   });
 
@@ -198,7 +222,7 @@ export function adminRouter(): Router {
    */
   r.get('/summary', async (req, res) => {
     const u = currentUser(req);
-    const mine = await getPool().query("SELECT id FROM campaigns WHERE created_by = $1 AND status = 'open'", [u.oid]);
+    const mine = await getPool().query("SELECT id FROM campaigns c WHERE " + VISIBLE + " AND status = 'open'", [u.oid]);
     for (const row of mine.rows) await refreshStatus(row.id);
     const { rows } = await getPool().query(
       `SELECT c.id, c.title, c.status, c.created_at, c.opens_at, c.closes_at, c.eligibility, c.results_published, c.archived_at,
@@ -208,7 +232,7 @@ export function adminRouter(): Router {
                                                      ELSE (SELECT count(*)::int FROM campaign_voters v WHERE v.campaign_id = c.id AND v.active) END) END AS eligible_count,
               (SELECT min(a.at) FROM audit_log a WHERE a.campaign_id = c.id AND a.action = 'campaign.start') AS started_at,
               (SELECT max(a.at) FROM audit_log a WHERE a.campaign_id = c.id AND a.action LIKE 'campaign.close%') AS closed_at
-         FROM campaigns c WHERE c.created_by = $1 ORDER BY c.created_at DESC`, [u.oid]);
+         FROM campaigns c WHERE ${VISIBLE} ORDER BY c.created_at DESC`, [u.oid]);
 
     const closedIds = rows.filter((c) => c.status === 'closed').map((c) => c.id as string);
     const tallies = closedIds.length
@@ -249,24 +273,25 @@ export function adminRouter(): Router {
     const emails = eligibility === 'list' ? cleanEmails(b.emails ?? []) : [];
     const created = await withTx(async (c) => {
       const { rows } = await c.query(
-        `INSERT INTO campaigns (share_token, created_by, title, description, opens_at, closes_at, eligibility, allow_edits_after_start, allow_abstain)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
-        [token, u.oid, b.title, b.description ?? null, b.opens_at ?? null, b.closes_at ?? null, eligibility, b.allow_edits_after_start === true, b.allow_abstain === true]);
+        `INSERT INTO campaigns (share_token, created_by, title, description, opens_at, closes_at, eligibility, allow_edits_after_start, allow_abstain, require_approval)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+        [token, u.oid, b.title, b.description ?? null, b.opens_at ?? null, b.closes_at ?? null, eligibility, b.allow_edits_after_start === true, b.allow_abstain === true, b.require_approval === true]);
       if (b.allow_abstain === true) await setAbstain(c, rows[0].id, true);
       if (emails.length) await c.query('INSERT INTO eligible_voters (campaign_id, voter_email) SELECT $1, unnest($2::text[])', [rows[0].id, emails]);
-      await audit(c, u.oid, 'campaign.create', rows[0].id, { title: b.title, eligibility, allow_edits_after_start: b.allow_edits_after_start === true, allow_abstain: b.allow_abstain === true, ...(emails.length ? { count: emails.length } : {}) });
+      await audit(c, u.oid, 'campaign.create', rows[0].id, { title: b.title, eligibility, allow_edits_after_start: b.allow_edits_after_start === true, allow_abstain: b.allow_abstain === true, require_approval: b.require_approval === true, ...(emails.length ? { count: emails.length } : {}) });
       return rows[0] as CampaignRow;
     });
     res.status(201).json(present(created));
   });
 
-  r.get('/:id', loadOwned, async (_req, res) => {
+  r.get('/:id', loadRunnable, async (_req, res) => {
     const c = camp(res);
     const cands = await getPool().query(
       'SELECT id, name, bio, photo_path, sort_order FROM candidates WHERE campaign_id = $1 AND NOT is_abstain ORDER BY sort_order, name', [c.id]);
     const el = await getPool().query('SELECT voter_email FROM eligible_voters WHERE campaign_id = $1 ORDER BY voter_email', [c.id]);
     res.json({
       ...present(c),
+      my_role: res.locals.myRole as string,
       candidates: cands.rows.map((x) => ({ id: x.id, name: x.name, bio: x.bio, photo_url: photoUrl(x), sort_order: x.sort_order })),
       eligible_emails: el.rows.map((x) => x.voter_email),
       turnout: (await getPool().query('SELECT count(*)::int AS n FROM vote_receipts WHERE campaign_id = $1', [c.id])).rows[0].n,
@@ -276,7 +301,7 @@ export function adminRouter(): Router {
     });
   });
 
-  r.patch('/:id', loadOwned, async (req, res) => {
+  r.patch('/:id', loadRunnable, async (req, res) => {
     const c = camp(res);
     const b = patchCampaignBody.parse(req.body);
     const actor = currentUser(req).oid;
@@ -330,7 +355,7 @@ export function adminRouter(): Router {
     res.json(present(updated));
   });
 
-  r.post('/:id/candidates', loadOwned, upload.single('photo'), async (req, res) => {
+  r.post('/:id/candidates', loadRunnable, upload.single('photo'), async (req, res) => {
     const c = camp(res);
     const b = candidateBody.parse({ name: req.body?.name, ...(req.body?.bio !== undefined ? { bio: req.body.bio } : {}) });
     const photo = req.file ? await savePhoto(req.file.buffer) : null;
@@ -351,7 +376,7 @@ export function adminRouter(): Router {
     } catch (e) { await deletePhoto(photo); throw e; }
   });
 
-  r.patch('/:id/candidates/:cid', loadOwned, upload.single('photo'), async (req, res) => {
+  r.patch('/:id/candidates/:cid', loadRunnable, upload.single('photo'), async (req, res) => {
     const c = camp(res);
     const { cid } = candParams.parse(req.params);
     const b = candidatePatchBody.parse({
@@ -383,7 +408,7 @@ export function adminRouter(): Router {
     } catch (e) { await deletePhoto(newPhoto); throw e; }
   });
 
-  r.delete('/:id/candidates/:cid', loadOwned, async (req, res) => {
+  r.delete('/:id/candidates/:cid', loadRunnable, async (req, res) => {
     const c = camp(res);
     const { cid } = candParams.parse(req.params);
     const photo = await inEditTx(c.id, async (tx, live) => {
@@ -402,7 +427,7 @@ export function adminRouter(): Router {
     res.status(204).end();
   });
 
-  r.put('/:id/eligible', loadOwned, async (req, res) => {
+  r.put('/:id/eligible', loadRunnable, async (req, res) => {
     const c = camp(res);
     const b = eligibleBody.parse(req.body);
     let emails: string[] = [];
@@ -416,7 +441,7 @@ export function adminRouter(): Router {
     res.json({ mode: b.mode, count: emails.length });
   });
 
-  r.post('/:id/start', loadOwned, async (req, res) => {
+  r.post('/:id/start', loadRunnable, async (req, res) => {
     const c = camp(res);
     await inDraftTx(c.id, async (tx) => {
       const n = (await tx.query('SELECT count(*)::int AS n FROM candidates WHERE campaign_id = $1 AND NOT is_abstain', [c.id])).rows[0].n;
@@ -442,7 +467,7 @@ export function adminRouter(): Router {
    * Closing before the planned closing time needs a reason (>= 10 characters). It is recorded in the sealed audit entry and shown
    * to voters on the ballot page and in the published results (SEC-01).
    */
-  r.post('/:id/close', loadOwned, async (req, res) => {
+  r.post('/:id/close', loadRunnable, async (req, res) => {
     const c = camp(res);
     const b = closeBody.parse(req.body ?? {});
     const integrity = await withTx(async (tx) => {
@@ -504,8 +529,13 @@ export function adminRouter(): Router {
   r.post('/:id/permanent-delete', loadOwned, async (req, res) => {
     const c = camp(res);
     const b = permanentDeleteBody.parse(req.body);
+    if (c.require_approval) throw new HttpError(409, 'This campaign needs a co-admin\'s approval to be deleted. Request it in the Team tab.', 'approval_required');
+    res.json(await doPermanentDelete(req, c, b.confirm_title));
+  });
+
+  async function doPermanentDelete(req: Request, c: CampaignRow, confirmTitle: string) {
     if (!c.archived_at || c.status !== 'closed') throw new HttpError(409, 'Archive the campaign first. Only archived campaigns can be deleted permanently.', 'not_archived');
-    if (b.confirm_title !== c.title) throw new HttpError(400, 'The title you typed does not match', 'title_mismatch');
+    if (confirmTitle !== c.title) throw new HttpError(400, 'The title you typed does not match', 'title_mismatch');
     // A permanent delete destroys the only copy of the counters and receipts, so a CSV of the sealed result must have been
     // downloaded after the campaign closed (SEC-04). The sealed entry itself stays in the audit log.
     const exported = await getPool().query(
@@ -515,27 +545,35 @@ export function adminRouter(): Router {
     const out = await callCleanup('SELECT delete_archived_campaign($1, $2) AS result', [c.id, sessionRawId(req)],
       () => ({ message: 'Archive the campaign first. Only archived campaigns can be deleted permanently.', code: 'not_archived' }), c.id);
     await removePhotos(out.photos);
-    res.json({ deleted: true, ballots_removed: out.ballots, receipts_removed: out.receipts });
-  });
+    return { deleted: true, ballots_removed: out.ballots, receipts_removed: out.receipts };
+  }
 
   /** Open or closed (not archived): wipes all votes and re-opens the voting. Needs the exact title and a reason. */
   r.post('/:id/reset', loadOwned, async (req, res) => {
     const c = camp(res);
     const b = resetBody.parse(req.body);
+    if (c.require_approval) throw new HttpError(409, 'This campaign needs a co-admin\'s approval to be reset. Request it in the Team tab.', 'approval_required');
+    res.json(await doReset(req, c, b));
+  });
+
+  async function doReset(req: Request, c: CampaignRow, b: { confirm_title: string; reason: string; closes_at?: string | null }) {
     if (c.archived_at) throw new HttpError(409, 'Unarchive the campaign before resetting it', 'archived');
     if (c.status === 'draft') throw new HttpError(409, 'A draft has no votes to reset', 'not_started');
     if (b.confirm_title !== c.title) throw new HttpError(400, 'The title you typed does not match', 'title_mismatch');
     const out = await callCleanup('SELECT reset_campaign_votes($1, $2, $3, $4) AS result', [c.id, sessionRawId(req), b.reason, b.closes_at ?? null],
       (status, archived) => archived ? { message: 'Unarchive the campaign before resetting it', code: 'archived' }
         : status === 'draft' ? { message: 'A draft has no votes to reset', code: 'not_started' } : { message: 'This campaign cannot be reset right now', code: 'conflict' }, c.id);
-    res.json({ status: 'open', votes_cleared: out.votes_cleared });
-  });
+    return { status: 'open', votes_cleared: out.votes_cleared };
+  }
+
+  // Team (co-admins, observers) and the second-approver flow
+  r.use('/:id', teamRouter({ loadOwned, loadRunnable, camp, shouldAuditDenied, doReset, doPermanentDelete }));
 
   /**
    * SEC-01: while a campaign is open (or still a draft) the creator sees ONLY turnout. Per-candidate counts exist in this
    * response only once the campaign is closed, and the counts of reset rounds are likewise held back until then.
    */
-  r.get('/:id/results', loadOwned, async (_req, res) => {
+  r.get('/:id/results', loadRunnable, async (_req, res) => {
     const c = camp(res);
     const closed = c.status === 'closed';
     res.set('Cache-Control', 'no-store');
@@ -549,7 +587,7 @@ export function adminRouter(): Router {
   });
 
   /** "Verify results integrity" (SEC-04): audit chain intact, result sealed at close, counters and receipts unchanged since. */
-  r.get('/:id/verify', loadOwned, async (_req, res) => {
+  r.get('/:id/verify', loadRunnable, async (_req, res) => {
     res.set('Cache-Control', 'no-store').json(await verifySeal(getPool(), camp(res).id));
   });
 
@@ -557,7 +595,7 @@ export function adminRouter(): Router {
    * SEC-16: "I investigated": lifts the integrity block so the campaign can be closed (the sealed entry then records that the
    * mismatch was acknowledged, and by whom). Needs a note of at least 10 characters.
    */
-  r.post('/:id/integrity/acknowledge', loadOwned, async (req, res) => {
+  r.post('/:id/integrity/acknowledge', loadRunnable, async (req, res) => {
     const c = camp(res);
     const b = ackBody.parse(req.body);
     await withTx(async (tx) => {
@@ -570,7 +608,7 @@ export function adminRouter(): Router {
     res.json({ acknowledged: true });
   });
 
-  r.post('/:id/publish', loadOwned, async (req, res) => {
+  r.post('/:id/publish', loadRunnable, async (req, res) => {
     const c = camp(res);
     await withTx(async (tx) => {
       const { rows } = await tx.query('SELECT status FROM campaigns WHERE id = $1 FOR UPDATE', [c.id]);
@@ -586,13 +624,13 @@ export function adminRouter(): Router {
     res.json({ results_published: true });
   });
 
-  r.get('/:id/qr.png', loadOwned, async (req, res) => {
+  r.get('/:id/qr.png', loadRunnable, async (req, res) => {
     const png = await QRCode.toBuffer(shareUrl(camp(res).share_token), { type: 'png', width: 640, margin: 2, errorCorrectionLevel: 'M' });
     if (req.query.download === '1') await audit(getPool(), currentUser(req).oid, 'qr.download', camp(res).id);   // previews are not audited
     res.type('png').set('Cache-Control', 'private, no-store').set('Content-Disposition', req.query.download === '1' ? 'attachment; filename="voting-qr.png"' : 'inline').send(png);
   });
 
-  r.get('/:id/poster.pdf', loadOwned, async (req, res) => {
+  r.get('/:id/poster.pdf', loadRunnable, async (req, res) => {
     const c = camp(res);
     const url = shareUrl(c.share_token);
     const png = await QRCode.toBuffer(url, { type: 'png', width: 900, margin: 1, errorCorrectionLevel: 'M' });
@@ -619,7 +657,7 @@ export function adminRouter(): Router {
    * NEW draft campaign linked to this one. The run-off is started like any campaign, so it gets its own frozen voter snapshot and
    * its own seal. At most MAX_RUNOFFS (default 2) rounds follow one campaign.
    */
-  r.post('/:id/runoff', loadOwned, async (req, res) => {
+  r.post('/:id/runoff', loadRunnable, async (req, res) => {
     const c = camp(res);
     const u = currentUser(req);
     if (c.status !== 'closed') throw new HttpError(409, 'A run-off can only follow a closed campaign', 'not_closed');
@@ -657,7 +695,7 @@ export function adminRouter(): Router {
     } catch (e) { await removePhotos(photos.filter(Boolean)); throw e; }
   });
 
-  r.get('/:id/results.csv', loadOwned, async (req, res) => {
+  r.get('/:id/results.csv', loadRunnable, async (req, res) => {
     const c = camp(res);
     if (c.status !== 'closed') throw new HttpError(409, 'CSV export is only available after the campaign is closed', 'not_closed');
     const results = await getResults(getPool(), c.id);
@@ -686,8 +724,8 @@ export function adminRouter(): Router {
     res.type(kind === 'xlsx' ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' : 'application/pdf')
       .set('Content-Disposition', `attachment; filename="results.${kind}"`).set('Cache-Control', 'private, no-store').send(file);
   };
-  r.get('/:id/results.xlsx', loadOwned, exportRoute('xlsx'));
-  r.get('/:id/results.pdf', loadOwned, exportRoute('pdf'));
+  r.get('/:id/results.xlsx', loadRunnable, exportRoute('xlsx'));
+  r.get('/:id/results.pdf', loadRunnable, exportRoute('pdf'));
 
   return r;
 }

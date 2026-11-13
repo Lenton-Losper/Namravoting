@@ -1,9 +1,9 @@
 /**
  * Post-login redirect target validation (pure; unit-tested from server/tests).
- * Accepts only same-site RELATIVE paths under /v/, /votes or /admin. Anything else returns null
+ * Accepts only same-site RELATIVE paths under /v/, /votes, /observe or /admin. Anything else returns null
  * so the caller falls back to the default page (open-redirect protection).
  */
-const ALLOWED = /^\/(?:v\/|votes(?:[/?#]|$)|admin(?:[/?#]|$))/;
+const ALLOWED = /^\/(?:v\/|votes(?:[/?#]|$)|admin(?:[/?#]|$)|observe(?:[/?#]|$))/;
 
 export function safeNext(raw: string | null | undefined): string | null {
   if (typeof raw !== 'string' || raw.length === 0 || raw.length > 512) return null;
