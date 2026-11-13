@@ -70,3 +70,15 @@ Items built on the demo day are NOT deployed yet.
 - **Restore drill: script written, NOT run.** It creates and deletes a Neon branch in the shared account, which I was not permitted to do from here.
   Run `node scripts/restore-drill.mjs` once and record the result in `docs/disaster-recovery.md`.
 - **Defaults assumed:** acceptable downtime 1 hour; alerts go to whoever GitHub notifies, plus an optional webhook.
+
+## 7. Notifying staff
+- **Channel: email through Microsoft Graph** (application permission `Mail.Send`), from the mailbox in `NOTIFY_SENDER` (a Worker variable; unset = off,
+  and the screen says so). **Needs IT:** grant `Mail.Send` (admin consent) to the NamRA Voting app registration and choose the sender address.
+  Not tested live: the Graph calls are covered by tests with a fake Microsoft.
+- **Three notices, sent by a button** (creator or co-admin, open campaigns): "voting is open" (everyone with a known address), "reminder" (people without a
+  receipt), "closing soon" (people without a receipt; needs a closing time). Each kind can be sent once per hour.
+- **Privacy:** one message per batch of 100 with everyone in BCC, so no recipient sees who else got one. The creator sees counts only
+  ("8 of 10 reachable, 5 have not voted"), never names, and the audit entry holds counts only. The reminder text never claims the reader has not voted.
+- **Who can be reached:** a listed vote (the listed emails) and an Umoja vote (active members whose account is known: matched by account id or by
+  employee code). A vote open to **all staff has no list to write to**: share the link or QR code, or use a listed vote.
+- **Not built:** automatic scheduled sending (there is no scheduler in the app; the buttons are manual). A schedule could call the same endpoint later.

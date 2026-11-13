@@ -5,6 +5,7 @@ import { Router, type Request, type RequestHandler, type Response } from 'expres
 import multer from 'multer';
 import PDFDocument from 'pdfkit';
 import { teamRouter } from './team.js';
+import { notifyRouter } from './notify.js';
 import { backupSealedResult } from '../services/backup.js';
 import { withdrawBody } from '../domain/validation.js';
 import { buildPdf, buildXlsx, gatherExport } from '../services/resultsExport.js';
@@ -594,6 +595,7 @@ export function adminRouter(): Router {
   }
 
   // Team (co-admins, observers) and the second-approver flow
+  r.use('/:id', notifyRouter({ loadRunnable, camp }));
   r.use('/:id', teamRouter({ loadOwned, loadRunnable, camp, shouldAuditDenied, doReset, doPermanentDelete }));
 
   /**

@@ -40,6 +40,9 @@
     "ADMIN_OIDS": "87a4af90-dd00-48c6-9601-17e56248c9e1",
     // Still to set: the date the Entra client secret expires, so the app can warn before it does.
     // "ENTRA_SECRET_EXPIRES_AT": "2027-01-31",
+    // Staff notifications by email: the mailbox they are sent from. Needs the Graph application permission Mail.Send (IT grants it).
+    // Unset = the Notify panel says email is not set up. See docs/business-logic-decisions.md (item 7).
+    // "NOTIFY_SENDER": "voting@namra.org.na",
     "CF_ACCESS_TEAM_DOMAIN": "yellow-flower-4592.cloudflareaccess.com",
     "SLEEP_AFTER_MINUTES": "60"
   },

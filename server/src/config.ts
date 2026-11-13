@@ -41,6 +41,8 @@ export function parseConfig(env: NodeJS.ProcessEnv) {
     AUTH_RATE_LIMIT_PER_MIN: z.coerce.number().int().positive().default(30),
     // Ties: how many run-offs may follow one campaign (the rule is: a tie for first place goes to a run-off).
     MAX_RUNOFFS: z.coerce.number().int().min(0).max(5).default(2),
+    // Staff notifications by email (Microsoft Graph Mail.Send, granted by IT): the mailbox they are sent from. Unset = notifications off.
+    NOTIFY_SENDER: z.string().email().optional(),
   });
   const e = schema.parse(env);
   if (e.AUTH_MODE === 'dev' && e.NODE_ENV === 'production') {
@@ -93,6 +95,7 @@ export function parseConfig(env: NodeJS.ProcessEnv) {
     readRateLimit: e.READ_RATE_LIMIT_PER_MIN,
     authRateLimit: e.AUTH_RATE_LIMIT_PER_MIN,
     maxRunoffs: e.MAX_RUNOFFS,
+    notifySender: e.NOTIFY_SENDER ?? null,
   };
 }
 export interface EntraConfig {

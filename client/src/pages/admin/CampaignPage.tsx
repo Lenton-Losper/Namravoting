@@ -4,6 +4,7 @@ import { api, fmtDate, fromLocalInput, type Campaign, type CampaignDetail, type 
 import { Icon } from '../../icons';
 import { SharePanel } from '../../share';
 import { TeamTab } from './TeamTab';
+import { NotifyPanel } from './NotifyPanel';
 import { BackLink, Dialog, ErrorBox, Field, NoticeList, ResultsChart, SectionTitle, Spinner, StatusBadge, Tabs, Thumb, TurnoutBar, initials } from '../../ui';
 
 type Tab = 'candidates' | 'eligibility' | 'results' | 'team';
@@ -248,6 +249,7 @@ function SideCard({ c, reload }: { c: CampaignDetail; reload: () => Promise<void
         <>
           <SectionTitle icon="link">Share</SectionTitle>
           <SharePanel c={c} compact />
+          <NotifyPanel c={c} />
           <div className="stack side-close">
             {c.status === 'open' && c.allow_edits_after_start && <Link className="btn btn-secondary" to={`/admin/c/${c.id}/edit`}>Edit campaign</Link>}
             {c.status === 'open' && <button className="btn btn-danger" onClick={() => open('close')}>Close voting</button>}
