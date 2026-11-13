@@ -9,7 +9,7 @@ export interface CampaignRow {
   id: string; share_token: string; created_by: string; title: string; description: string | null;
   status: Status; opens_at: Date | null; closes_at: Date | null; eligibility: 'all' | 'list' | 'umoja';
   results_published: boolean; created_at: Date; archived_at: Date | null;
-  parent_campaign_id?: string | null; runoff_round?: number; allow_edits_after_start?: boolean; allow_abstain?: boolean; require_approval?: boolean;
+  parent_campaign_id?: string | null; runoff_round?: number; allow_edits_after_start?: boolean; allow_abstain?: boolean; require_approval?: boolean; receipts_purged_at?: Date | null; photos_purged_at?: Date | null;
   /** The database clock when the row was read (only on queries that ask for it). */
   db_now?: Date;
 }
@@ -192,11 +192,14 @@ export async function verifySeal(db: Queryable, campaignId: string): Promise<Sea
   out.sealed_tallies = sealed.map((t) => ({ name: t.name, votes: t.votes }));
   out.sealed_turnout = Number(seal.details?.receipts ?? 0);
   const now = (await db.query('SELECT candidate_id, votes FROM tallies WHERE campaign_id = $1', [campaignId])).rows as { candidate_id: string; votes: number }[];
+  // Once the retention job has removed the receipts (their personal data), "receipts equal the sealed turnout" no longer applies (null);
+  // the sealed turnout itself stays in the audit chain.
+  const purged = (await db.query('SELECT receipts_purged_at FROM campaigns WHERE id = $1', [campaignId])).rows[0]?.receipts_purged_at;
   if (now.length > 0) {
     const cur = new Map(now.map((r) => [r.candidate_id, r.votes]));
     out.tallies_match = sealed.length === now.length && sealed.every((t) => cur.get(t.candidate_id) === t.votes);
     const receipts = (await db.query('SELECT count(*)::int AS n FROM vote_receipts WHERE campaign_id = $1', [campaignId])).rows[0].n as number;
-    out.receipts_match = receipts === out.sealed_turnout;
+    out.receipts_match = purged ? null : receipts === out.sealed_turnout;
   }
   return out;
 }

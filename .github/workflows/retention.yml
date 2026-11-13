@@ -1,0 +1,66 @@
+name: Retention
+
+# Removes the personal data of campaigns that have been closed AND archived for a long time (receipts, voter lists, snapshots, candidate
+# photos), keeping the sealed result and the audit trail. See docs/retention.md.
+#
+#  - Monthly it only REPORTS (dry run) in the run summary, unless the repository variable RETENTION_AUTO_APPLY is "true".
+#  - By hand (Run workflow) it applies only when "apply" is ticked AND "PURGE" is typed, so nothing is deleted by accident.
+#  - Anonymising people who left is NOT done here (their emails would show in a public repository's logs): run it on your own machine:
+#      npm run retention -- --apply --leavers leavers.txt
+
+on:
+  schedule:
+    - cron: '0 4 1 * *'
+  workflow_dispatch:
+    inputs:
+      months:
+        description: 'Purge campaigns closed and archived more than this many months ago'
+        default: '24'
+        required: true
+      apply:
+        description: 'Really delete (otherwise a dry run)'
+        type: boolean
+        default: false
+      confirm:
+        description: 'Type PURGE to confirm when "apply" is ticked'
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: retention
+  cancel-in-progress: false
+
+jobs:
+  retention:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      MIGRATE_DATABASE_URL: ${{ secrets.DEMO_OWNER_DATABASE_URL }}
+      STORAGE: r2
+      R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      MONTHS: ${{ inputs.months || '24' }}
+      APPLY_REQUESTED: ${{ inputs.apply || (github.event_name == 'schedule' && vars.RETENTION_AUTO_APPLY == 'true') }}
+      CONFIRM: ${{ inputs.confirm }}
+      EVENT: ${{ github.event_name }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Run the retention job
+        run: |
+          if [ -z "$MIGRATE_DATABASE_URL" ]; then echo "::error::The DEMO_OWNER_DATABASE_URL repository secret is not set"; exit 1; fi
+          flags="--months $MONTHS"
+          if [ "$APPLY_REQUESTED" = "true" ]; then
+            if [ "$EVENT" = "workflow_dispatch" ] && [ "$CONFIRM" != "PURGE" ]; then
+              echo "::error::To delete, tick apply AND type PURGE in the confirm box."; exit 1
+            fi
+            flags="$flags --apply"
+          fi
+          npm run retention -- $flags

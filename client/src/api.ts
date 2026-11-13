@@ -74,6 +74,8 @@ export interface Campaign {
   require_approval?: boolean;
   /** Your role on this campaign: its creator, or a co-admin (can run it, not reset/delete/archive or change the team). */
   my_role?: 'owner' | 'co_admin';
+  /** The retention job removed receipts, voter lists and photos on this date; the sealed result remains. */
+  receipts_purged_at?: string | null;
 }
 export interface IntegrityBlock { ballots: number; receipts: number; at: string }
 export interface CampaignDetail extends Campaign { turnout: number; candidates: Candidate[]; eligible_emails: string[]; umoja_active_count: number; integrity_block?: IntegrityBlock | null; edited_after_start?: Notice[] }

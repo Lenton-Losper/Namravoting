@@ -195,6 +195,7 @@ function ResultsTab({ c, reload }: { c: CampaignDetail; reload: () => Promise<vo
         : !err && <Spinner />)}
       {c.status === 'closed' && (r?.candidates ? <ResultsChart candidates={r.candidates} turnout={r.turnout} tie={r.tie} /> : !err && <Spinner />)}
       {c.status === 'closed' && r?.runoff && <RunoffPanel id={c.id} tie={r.tie ?? null} info={r.runoff} />}
+      {c.status === 'closed' && c.receipts_purged_at && <p className="muted small" role="note">The personal data of this campaign (who voted, the voter list, photos) was removed on {fmtDate(c.receipts_purged_at)} under the retention schedule. The sealed result and the audit trail remain.</p>}
       {c.status === 'closed' && <SealPanel id={c.id} />}
       <NoticeList notices={r?.notices} />
     </>

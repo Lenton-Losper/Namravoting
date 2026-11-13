@@ -293,7 +293,7 @@ export function adminRouter(): Router {
     res.json({
       ...present(c),
       my_role: res.locals.myRole as string,
-      candidates: cands.rows.map((x) => ({ id: x.id, name: x.name, bio: x.bio, photo_url: photoUrl(x), sort_order: x.sort_order, withdrawn_at: x.withdrawn_at, withdrawn_reason: x.withdrawn_reason })),
+      candidates: cands.rows.map((x) => ({ id: x.id, name: x.name, bio: x.bio, photo_url: c.photos_purged_at ? null : photoUrl(x), sort_order: x.sort_order, withdrawn_at: x.withdrawn_at, withdrawn_reason: x.withdrawn_reason })),
       eligible_emails: el.rows.map((x) => x.voter_email),
       turnout: (await getPool().query('SELECT count(*)::int AS n FROM vote_receipts WHERE campaign_id = $1', [c.id])).rows[0].n,
       umoja_active_count: await activeMemberCount(getPool()),   // count only; never the members themselves
@@ -581,6 +581,7 @@ export function adminRouter(): Router {
   });
 
   async function doReset(req: Request, c: CampaignRow, b: { confirm_title: string; reason: string; closes_at?: string | null }) {
+    if (c.receipts_purged_at) throw new HttpError(409, 'The personal data of this campaign was removed by the retention job, so it cannot be reset', 'purged');
     if (c.archived_at) throw new HttpError(409, 'Unarchive the campaign before resetting it', 'archived');
     if (c.status === 'draft') throw new HttpError(409, 'A draft has no votes to reset', 'not_started');
     if (b.confirm_title !== c.title) throw new HttpError(400, 'The title you typed does not match', 'title_mismatch');

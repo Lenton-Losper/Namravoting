@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit",
     "umoja:import": "tsx scripts/umoja-import.ts",
     "umoja:match": "tsx scripts/umoja-match.ts",
+    "retention": "tsx scripts/retention.ts",
     "demo:db": "tsx scripts/demo-setup.ts"
   },
   "dependencies": {

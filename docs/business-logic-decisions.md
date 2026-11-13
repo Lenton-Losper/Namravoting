@@ -47,3 +47,13 @@ Items built on the demo day are NOT deployed yet.
 - Needs a reason of at least 10 characters (audit entry `candidate.withdrawn`, shown to voters on the ballot and in published results), an
   open campaign, and at least 2 candidates left in the running. The creator or a co-admin can do it. It cannot be undone, and the database
   allows nothing else about a candidate to change while the campaign is open (migration 016).
+
+## 5. Retention and deletion
+- **Written schedule:** `docs/retention.md` (defaults, not legal advice: confirm with counsel). **24 months** after a campaign is closed AND
+  archived, its receipts, voter list, Umoja snapshot and candidate photos are deleted; the sealed result and the audit chain stay forever.
+- **The job:** `npm run retention` (dry run unless `--apply`), owner database role, every step audited (`retention.purged`). The Retention
+  workflow runs monthly as a **dry run**; deleting on the schedule needs the repository variable `RETENTION_AUTO_APPLY=true`, so a person
+  reads a report first by default. By hand it needs "apply" ticked and `PURGE` typed.
+- **Leavers:** `--leavers file` anonymises name, email and employee code and ends sessions; the account id stays. Done on the operator's
+  machine, not in GitHub (the emails would show in a public repository's logs). Someone who still runs a draft or open campaign is skipped.
+- A purged campaign shows a note on its page, verifies with "receipts: not applicable", and cannot be reset.
