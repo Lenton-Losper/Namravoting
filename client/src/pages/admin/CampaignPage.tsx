@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { api, fmtDate, fromLocalInput, type CampaignDetail, type Results, type SealCheck } from '../../api';
+import { api, fmtDate, fromLocalInput, type Campaign, type CampaignDetail, type Results, type SealCheck } from '../../api';
 import { Icon } from '../../icons';
 import { SharePanel } from '../../share';
 import { BackLink, Dialog, ErrorBox, Field, NoticeList, ResultsChart, SectionTitle, Spinner, StatusBadge, Tabs, Thumb, TurnoutBar, initials } from '../../ui';
@@ -115,6 +115,28 @@ function SealPanel({ id }: { id: string }) {
   );
 }
 
+/** Tie handling: a tie for first place goes to a run-off, a new draft campaign with the tied candidates and the same voters. */
+function RunoffPanel({ id, tie, info }: { id: string; tie: Results['tie'] | null; info: NonNullable<Results['runoff']> }) {
+  const nav = useNavigate();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  async function start() {
+    setBusy(true); setError(null);
+    try { const n = await api<Campaign>('POST', `/api/campaigns/${id}/runoff`); nav(`/admin/c/${n.id}`); } catch (e) { setError((e as Error).message); setBusy(false); }
+  }
+  return (
+    <div className="runoff-panel">
+      {info.parent && <p className="muted small">This is run-off round {info.round} of <Link to={`/admin/c/${info.parent.id}`}>{info.parent.title}</Link>.</p>}
+      {info.next && <p>A run-off was started: <Link to={`/admin/c/${info.next.id}`}>{info.next.title}</Link> ({info.next.status}).</p>}
+      {tie && !info.next && (info.can_start
+        ? <><p>The tie goes to a run-off between {tie.names.join(' and ')}. It is created as a draft with the same voters; you start it like any campaign. Run-off {info.round + 1} of at most {info.max}.</p>
+            <button className="btn btn-primary" onClick={() => void start()} disabled={busy}>Start run-off</button></>
+        : <p className="muted">The limit of {info.max} run-off rounds has been reached. The tie has to be decided another way.</p>)}
+      <ErrorBox message={error} />
+    </div>
+  );
+}
+
 function ResultsTab({ c, reload }: { c: CampaignDetail; reload: () => Promise<void> }) {
   const { r, err } = useResults(c.id, c.status !== 'draft', c.status === 'open', c.turnout);
   const [busy, setBusy] = useState(false);
@@ -148,7 +170,8 @@ function ResultsTab({ c, reload }: { c: CampaignDetail; reload: () => Promise<vo
           </>
         )
         : !err && <Spinner />)}
-      {c.status === 'closed' && (r?.candidates ? <ResultsChart candidates={r.candidates} turnout={r.turnout} /> : !err && <Spinner />)}
+      {c.status === 'closed' && (r?.candidates ? <ResultsChart candidates={r.candidates} turnout={r.turnout} tie={r.tie} /> : !err && <Spinner />)}
+      {c.status === 'closed' && r?.runoff && <RunoffPanel id={c.id} tie={r.tie ?? null} info={r.runoff} />}
       {c.status === 'closed' && <SealPanel id={c.id} />}
       <NoticeList notices={r?.notices} />
     </>

@@ -39,6 +39,8 @@ export function parseConfig(env: NodeJS.ProcessEnv) {
     ADMIN_RATE_LIMIT_PER_MIN: z.coerce.number().int().positive().default(60),
     READ_RATE_LIMIT_PER_MIN: z.coerce.number().int().positive().default(120),
     AUTH_RATE_LIMIT_PER_MIN: z.coerce.number().int().positive().default(30),
+    // Ties: how many run-offs may follow one campaign (the rule is: a tie for first place goes to a run-off).
+    MAX_RUNOFFS: z.coerce.number().int().min(0).max(5).default(2),
   });
   const e = schema.parse(env);
   if (e.AUTH_MODE === 'dev' && e.NODE_ENV === 'production') {
@@ -90,6 +92,7 @@ export function parseConfig(env: NodeJS.ProcessEnv) {
     adminRateLimit: e.ADMIN_RATE_LIMIT_PER_MIN,
     readRateLimit: e.READ_RATE_LIMIT_PER_MIN,
     authRateLimit: e.AUTH_RATE_LIMIT_PER_MIN,
+    maxRunoffs: e.MAX_RUNOFFS,
   };
 }
 export interface EntraConfig {

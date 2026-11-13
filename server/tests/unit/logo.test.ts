@@ -15,7 +15,7 @@ describe('the NamRA logo', () => {
   it('the PDF header embeds it as an image', async () => {
     const pdf = await buildPdf({
       title: 'T', description: '', status: 'closed', opensAt: 'a', closesAt: 'b', startedAt: 'c', closedAt: 'd', eligibility: 'All staff', eligibleCount: null,
-      turnout: 0, turnoutPct: null, candidates: [], tie: false, tiedNames: [], leader: null, history: [],
+      turnout: 0, turnoutPct: null, candidates: [], tie: false, tiedNames: [], leader: null, runoff: '', history: [],
       seal: { sealed: false, hash: null, sealedAt: 'n/a', verified: null }, generatedAt: 'g', generatedBy: 'me',
     }, { compress: false });
     const text = pdf.toString('latin1');

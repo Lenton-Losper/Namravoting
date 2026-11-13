@@ -25,7 +25,7 @@ function PublishedResults({ token }: { token: string }) {
   const [r, setR] = useState<(Results & { title: string }) | null>(null);
   useEffect(() => { api<Results & { title: string }>('GET', `/api/vote/${token}/results`).then(setR).catch(() => undefined); }, [token]);
   if (!r) return null;
-  return <section className="card card-pad"><h2>Results</h2>{r.candidates && <ResultsChart candidates={r.candidates} turnout={r.turnout} />}<NoticeList notices={r.notices} /></section>;
+  return <section className="card card-pad"><h2>Results</h2>{r.candidates && <ResultsChart candidates={r.candidates} turnout={r.turnout} tie={r.tie} />}<NoticeList notices={r.notices} /></section>;
 }
 
 const pendingKey = (token: string) => `namra:pending-vote:${token}`;

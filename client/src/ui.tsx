@@ -177,8 +177,8 @@ export function TurnoutBar({ votes, eligible }: { votes: number; eligible: numbe
 }
 
 /** Horizontal results bars: navy, leader in orange. */
-export function ResultsChart({ candidates, turnout }: {
-  candidates: { id: string; name: string; votes: number }[]; turnout: { votes: number; eligible: number | null };
+export function ResultsChart({ candidates, turnout, tie }: {
+  candidates: { id: string; name: string; votes: number }[]; turnout: { votes: number; eligible: number | null }; tie?: { names: string[]; votes: number } | null;
 }) {
   const total = Math.max(1, turnout.votes);
   const top = Math.max(0, ...candidates.map((c) => c.votes));
@@ -188,6 +188,7 @@ export function ResultsChart({ candidates, turnout }: {
         <div className="field-label">Turnout</div>
         <TurnoutBar votes={turnout.votes} eligible={turnout.eligible} />
       </div>
+      {tie && <p className="tie-note" role="status"><strong>Tie for first place:</strong> {tie.names.join(' and ')} each have {tie.votes} {tie.votes === 1 ? 'vote' : 'votes'}. There is no winner yet.</p>}
       {candidates.map((c) => {
         const lead = c.votes === top && top > 0;
         return (

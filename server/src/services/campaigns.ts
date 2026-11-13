@@ -1,6 +1,7 @@
 import type { Queryable } from '../db.js';
 import { getPool, withTx } from '../db.js';
 import { shouldAutoClose, type Status } from '../domain/status.js';
+import { standing } from '../domain/results.js';
 import { audit } from './audit.js';
 import { restampTallies, tallySum } from './tallies.js';
 
@@ -8,6 +9,7 @@ export interface CampaignRow {
   id: string; share_token: string; created_by: string; title: string; description: string | null;
   status: Status; opens_at: Date | null; closes_at: Date | null; eligibility: 'all' | 'list' | 'umoja';
   results_published: boolean; created_at: Date; archived_at: Date | null;
+  parent_campaign_id?: string | null; runoff_round?: number; allow_edits_after_start?: boolean;
   /** The database clock when the row was read (only on queries that ask for it). */
   db_now?: Date;
 }
@@ -136,6 +138,8 @@ export async function getResetHistory(db: Queryable, campaignId: string, withTal
 export interface ResultsPayload {
   candidates: { id: string; name: string; votes: number }[];
   turnout: { votes: number; eligible: number | null };
+  /** Candidates sharing first place (2 or more), or null. A tie has no winner: the creator can start a run-off. */
+  tie: { ids: string[]; names: string[]; votes: number } | null;
 }
 
 /** Per-candidate counts. Only ever returned for a CLOSED campaign (SEC-01): while it is open nobody sees these. */
@@ -144,7 +148,8 @@ export async function getResults(db: Queryable, campaignId: string): Promise<Res
     `SELECT c.id, c.name, coalesce(t.votes, 0)::int AS votes
        FROM candidates c LEFT JOIN tallies t ON t.candidate_id = c.id AND t.campaign_id = c.campaign_id
       WHERE c.campaign_id = $1 ORDER BY c.sort_order, c.name`, [campaignId]);
-  return { candidates: cands.rows, turnout: await getTurnout(db, campaignId) };
+  const s = standing(cands.rows);
+  return { candidates: cands.rows, turnout: await getTurnout(db, campaignId), tie: s.tied.length ? { ids: s.tied.map((x) => x.id), names: s.tied.map((x) => x.name), votes: s.tied[0].votes } : null };
 }
 
 /** Turnout only (votes cast, and how many people could have voted). Safe to show while voting is open. */

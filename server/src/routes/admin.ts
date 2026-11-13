@@ -22,7 +22,7 @@ import { audit } from '../services/audit.js';
 import {
   closeInTx, getNotices, getResults, getTurnout, IntegrityBlocked, integrityMessage, openIntegrityBlock, recordIntegrityBlock, refreshStatus, verifySeal, type CampaignRow,
 } from '../services/campaigns.js';
-import { deletePhoto, MAX_UPLOAD_BYTES, savePhoto } from '../services/images.js';
+import { deletePhoto, MAX_UPLOAD_BYTES, readPhoto, savePhoto } from '../services/images.js';
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_UPLOAD_BYTES, files: 1, fields: 5, fieldSize: 4096 } });
 
@@ -78,6 +78,14 @@ const loadOwned: RequestHandler = async (req, res, next) => {
   next();
 };
 const camp = (res: Response) => res.locals.campaign as CampaignRow;
+
+/** Run-off context of a closed campaign: the run-off it led to (if any), the one it is part of (if any), and whether one may be started. */
+async function runoffInfo(c: CampaignRow) {
+  const child = (await getPool().query('SELECT id, title, status FROM campaigns WHERE parent_campaign_id = $1 ORDER BY created_at LIMIT 1', [c.id])).rows[0] ?? null;
+  const parent = c.parent_campaign_id ? (await getPool().query('SELECT id, title FROM campaigns WHERE id = $1', [c.parent_campaign_id])).rows[0] ?? null : null;
+  const max = getConfig().maxRunoffs;
+  return { round: c.runoff_round ?? 0, max, next: child, parent, can_start: !child && !c.archived_at && (c.runoff_round ?? 0) < max };
+}
 
 /** Runs fn in a tx holding a row lock on the campaign; rejects unless it is still a draft. */
 async function inDraftTx<T>(id: string, fn: (c: PoolClient) => Promise<T>): Promise<T> {
@@ -523,6 +531,7 @@ export function adminRouter(): Router {
     res.json({
       status: c.status, results_published: c.results_published, archived: !!c.archived_at,
       ...(closed ? await getResults(getPool(), c.id) : { candidates: null, turnout: await getTurnout(getPool(), c.id) }),
+      ...(closed ? { runoff: await runoffInfo(c) } : {}),
       resets: (await getNotices(getPool(), c.id, closed)).filter((n) => n.kind === 'reset'),
       notices: await getNotices(getPool(), c.id, closed),
     });
@@ -594,12 +603,57 @@ export function adminRouter(): Router {
     res.type('application/pdf').set('Content-Disposition', 'attachment; filename="poster.pdf"').set('Cache-Control', 'private, no-store').send(pdf);
   });
 
+  /**
+   * Tie rule: a tie for first place goes to a run-off. This clones the tied candidates (with their photos) and the voter list into a
+   * NEW draft campaign linked to this one. The run-off is started like any campaign, so it gets its own frozen voter snapshot and
+   * its own seal. At most MAX_RUNOFFS (default 2) rounds follow one campaign.
+   */
+  r.post('/:id/runoff', loadOwned, async (req, res) => {
+    const c = camp(res);
+    const u = currentUser(req);
+    if (c.status !== 'closed') throw new HttpError(409, 'A run-off can only follow a closed campaign', 'not_closed');
+    if (c.archived_at) throw new HttpError(409, 'Unarchive the campaign before starting a run-off', 'archived');
+    const results = await getResults(getPool(), c.id);
+    if (!results.tie) throw new HttpError(409, 'There is no tie for first place', 'no_tie');
+    const max = getConfig().maxRunoffs;
+    if ((c.runoff_round ?? 0) >= max) throw new HttpError(409, `The limit of ${max} run-off round${max === 1 ? '' : 's'} has been reached. Decide the tie another way.`, 'runoff_limit');
+    const tied = (await getPool().query('SELECT name, bio, photo_path FROM candidates WHERE id = ANY($1::uuid[]) ORDER BY sort_order, name', [results.tie.ids])).rows;
+    // Photo files are copied first (a new file per candidate), so deleting one campaign can never delete the other's photos.
+    const photos: (string | null)[] = [];
+    for (const t of tied) { const buf = t.photo_path ? await readPhoto(t.photo_path) : null; photos.push(buf ? await savePhoto(buf) : null); }
+    const token = crypto.randomBytes(24).toString('base64url');
+    const round = (c.runoff_round ?? 0) + 1;
+    const title = `${c.title.replace(/ \(run-off \d+\)$/, '')} (run-off ${round})`.slice(0, 200);
+    try {
+      const created = await withTx(async (tx) => {
+        const lock = await tx.query('SELECT 1 FROM campaigns WHERE id = $1 FOR UPDATE', [c.id]);
+        if (!lock.rowCount) throw notFound();
+        if ((await tx.query('SELECT 1 FROM campaigns WHERE parent_campaign_id = $1 LIMIT 1', [c.id])).rowCount) throw new HttpError(409, 'A run-off has already been started for this campaign', 'runoff_exists');
+        const { rows } = await tx.query(
+          `INSERT INTO campaigns (share_token, created_by, title, description, eligibility, allow_edits_after_start, parent_campaign_id, runoff_round)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+          [token, u.oid, title, c.description, c.eligibility, c.allow_edits_after_start === true, c.id, round]);
+        const id = rows[0].id as string;
+        for (let i = 0; i < tied.length; i++) {
+          await tx.query('INSERT INTO candidates (campaign_id, name, bio, photo_path, sort_order) VALUES ($1,$2,$3,$4,$5)', [id, tied[i].name, tied[i].bio, photos[i], i + 1]);
+        }
+        if (c.eligibility === 'list') await tx.query('INSERT INTO eligible_voters (campaign_id, voter_email) SELECT $1, voter_email FROM eligible_voters WHERE campaign_id = $2', [id, c.id]);
+        await audit(tx, u.oid, 'campaign.runoff_created', c.id, { runoff_id: id, round, tied: results.tie!.names, votes_each: results.tie!.votes });
+        await audit(tx, u.oid, 'campaign.create', id, { title, eligibility: c.eligibility, runoff_of: c.id, round });
+        return rows[0] as CampaignRow;
+      });
+      res.status(201).json(present(created));
+    } catch (e) { await removePhotos(photos.filter(Boolean)); throw e; }
+  });
+
   r.get('/:id/results.csv', loadOwned, async (req, res) => {
     const c = camp(res);
     if (c.status !== 'closed') throw new HttpError(409, 'CSV export is only available after the campaign is closed', 'not_closed');
     const results = await getResults(getPool(), c.id);
     const seal = await verifySeal(getPool(), c.id);   // the fingerprint ties this file to the sealed audit entry (SEC-04)
     const lines = ['candidate,votes', ...results.candidates.map((x) => `${csvCell(x.name)},${x.votes}`), `Total ballots,${results.turnout.votes}`,
+      ...(results.tie ? [`Tie,${csvCell('YES: tie for first place between ' + results.tie.names.join(' and '))}`] : []),
+      ...(c.runoff_round ? [`Run-off round,${c.runoff_round}`] : []),
       ...(seal.sealed && seal.seal_hash ? [`Sealed at,${new Date(seal.sealed_at!).toISOString()}`, `Seal fingerprint,${seal.seal_hash}`] : [])];
     await audit(getPool(), currentUser(req).oid, 'results.export_csv', c.id);
     res.type('text/csv').set('Content-Disposition', 'attachment; filename="results.csv"').set('Cache-Control', 'private, no-store').send(lines.join('\r\n') + '\r\n');

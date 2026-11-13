@@ -76,7 +76,10 @@ export interface EditChange { what: 'title' | 'description' | 'closes_at' | 'can
 export interface Notice { kind: 'reset' | 'closed_early' | 'edited_after_start'; at: string; by: string | null; reason: string; votes_cleared?: number; candidates?: { name: string; votes: number }[]; changes?: EditChange[] }
 export interface ResetEntry extends Notice { votes_cleared: number }
 /** `candidates` is null while the campaign is open: per-candidate counts exist only after it has closed (SEC-01). */
-export interface Results { status: string; results_published: boolean; archived?: boolean; candidates: { id: string; name: string; votes: number }[] | null; turnout: { votes: number; eligible: number | null }; resets?: ResetEntry[]; notices?: Notice[] }
+/** Run-off context of a closed campaign (creator only). */
+export interface RunoffInfo { round: number; max: number; next: { id: string; title: string; status: string } | null; parent: { id: string; title: string } | null; can_start: boolean }
+export interface Tie { names: string[]; votes: number }
+export interface Results { status: string; results_published: boolean; archived?: boolean; candidates: { id: string; name: string; votes: number }[] | null; turnout: { votes: number; eligible: number | null }; resets?: ResetEntry[]; notices?: Notice[]; tie?: Tie | null; runoff?: RunoffInfo }
 export interface SealCheck {
   chain_ok: boolean; chain_checked: number; sealed: boolean; sealed_at: string | null; seal_hash: string | null; seal_seq: number | null;
   tallies_match: boolean | null; receipts_match: boolean | null; sealed_tallies: { name: string; votes: number }[]; sealed_turnout: number | null;
