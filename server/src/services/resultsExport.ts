@@ -32,6 +32,7 @@ export const csvCell = (v: string): string => { const s = /^[=+\-@\t\r]/.test(v)
 
 /** results.csv: the same content for the download and for the audit bundle. */
 export function buildCsv(c: CampaignRow, results: ResultsPayload, seal: SealCheck): string {
+  if (results.positions.length > 1) return buildCsvMulti(c, results, seal);
   const abstain = results.candidates.find((x) => x.is_abstain);
   const q = results.quorum;
   const lines = ['candidate,votes', ...results.candidates.filter((x) => !x.is_abstain).map((x) => `${csvCell(x.withdrawn ? `${x.name} (withdrew: votes void)` : x.name)},${x.votes}`),
@@ -41,6 +42,35 @@ export function buildCsv(c: CampaignRow, results: ResultsPayload, seal: SealChec
     ...(results.tie ? [`Tie,${csvCell('YES: tie for first place between ' + results.tie.names.join(' and '))}`] : []),
     ...(c.runoff_round ? [`Run-off round,${c.runoff_round}`] : []),
     ...(seal.sealed && seal.seal_hash ? [`Sealed at,${new Date(seal.sealed_at!).toISOString()}`, `Seal fingerprint,${seal.seal_hash}`] : [])];
+  return lines.join('\r\n') + '\r\n';
+}
+
+/**
+ * results.csv of a campaign with SEVERAL positions: one row per candidate (position, candidate, region, votes), then per position its
+ * abstentions, its own turnout, its winner or tie and its own seal fingerprint. Rows are grouped by region when the admin chose that.
+ */
+function buildCsvMulti(c: CampaignRow, results: ResultsPayload, seal: SealCheck): string {
+  const q = results.quorum;
+  const lines: string[] = ['position,candidate,region,votes'];
+  for (const p of results.positions) {
+    const live = p.candidates.filter((x) => !x.is_abstain);
+    const rows = results.group_by_region
+      ? [...live].sort((a, b) => Number(a.region === null) - Number(b.region === null) || (a.region ?? '').localeCompare(b.region ?? '') || b.votes - a.votes)
+      : live;
+    for (const x of rows) lines.push([csvCell(p.title), csvCell(x.withdrawn ? `${x.name} (withdrew: votes void)` : x.name), csvCell(x.region ?? ''), x.votes].join(','));
+    const ab = p.candidates.find((x) => x.is_abstain);
+    if (ab) lines.push([csvCell(p.title), 'Abstentions (not a candidate)', '', ab.votes].join(','));
+    lines.push([csvCell(p.title), 'Members who voted in this position', '', p.turnout.votes].join(','));
+    lines.push([csvCell(p.title), p.tie ? csvCell('Tie for first place: ' + p.tie.names.join(' and ')) : p.winners.length ? csvCell('Winner: ' + p.winners.map((w) => w.name).join(', ')) : 'No winner (no votes)', '', ''].join(','));
+    const sp = seal.positions.find((x) => x.position_id === p.id);
+    if (sp) lines.push([csvCell(p.title), 'Position seal fingerprint', '', sp.fingerprint].join(','));
+  }
+  lines.push('', `Members who voted in at least one position,${results.turnout.votes}`);
+  if (results.turnout.eligible != null) lines.push(`Eligible voters,${results.turnout.eligible}`);
+  if (q) lines.push(`Quorum,${q.met === false ? `NOT MET: ${q.votes} of ${q.needed} votes needed (${q.percent}% of ${q.eligible})` : q.met ? `met: ${q.votes} of ${q.needed} votes needed (${q.percent}% of ${q.eligible})` : `${q.percent}% (eligible count unknown)`}`);
+  if (results.publication) lines.push(`Published by,${csvCell(results.publication.by ?? 'unknown')} on ${results.publication.at.toISOString()}${results.publication.scheduled ? ' (scheduled)' : ''}`);
+  if (results.group_by_region) lines.push('Results grouped by region,yes');
+  if (seal.sealed && seal.seal_hash) lines.push(`Sealed at,${new Date(seal.sealed_at!).toISOString()}`, `Seal fingerprint,${seal.seal_hash}`);
   return lines.join('\r\n') + '\r\n';
 }
 
@@ -63,6 +93,23 @@ export interface ExportData {
   history: { kind: string; at: string; by: string; detail: string }[];
   seal: { sealed: boolean; hash: string | null; sealedAt: string; verified: boolean | null };
   generatedAt: string; generatedBy: string;
+  /** One entry per position (a campaign with a single position reads exactly as before; with several, the exports list each position). */
+  positions: ExportPosition[];
+  groupByRegion: boolean;
+  /** Members who voted in at least one position (the campaign's turnout). */
+  multi: boolean;
+}
+
+export interface ExportPosition {
+  title: string; description: string;
+  turnout: number; turnoutPct: number | null;
+  /** Ranked by votes; ordered by region first when the admin chose to group by region. */
+  candidates: { rank: number; name: string; votes: number; pct: number; region: string }[];
+  withdrawn: { name: string; votes: number }[];
+  abstentions: number | null;
+  tie: boolean; tiedNames: string[]; winners: string[];
+  /** The position's own seal fingerprint, and whether its counters and receipts still equal what was sealed (null = unknown). */
+  fingerprint: string | null; sealOk: boolean | null;
 }
 
 /** Plain-language line for one post-start edit (mirrors the screen's wording). */
@@ -75,6 +122,8 @@ function describeEdit(ch: { what: string; name?: string; from?: string | null; t
     case 'closes_at': return `closing time changed from ${t(ch.from)} to ${t(ch.to)}`;
     case 'candidate_added': return `candidate added: ${ch.name ?? ''}`;
     case 'candidate_removed': return `candidate removed: ${ch.name ?? ''}`;
+    case 'position_title': return `position title changed from ${q(ch.from)} to ${q(ch.to)}`;
+    case 'position_description': return `description of position "${ch.name ?? ''}" changed`;
     default: return ch.from && ch.to ? `candidate renamed from ${ch.from} to ${ch.to}` : `candidate edited: ${ch.name ?? ''}`;
   }
 }
@@ -90,9 +139,27 @@ export async function gatherExport(db: Queryable, c: CampaignRow, generatedBy: s
   const abstain = results.candidates.find((x) => x.is_abstain);
   const withdrawn = results.candidates.filter((x) => x.withdrawn && !x.is_abstain).map((x) => ({ name: x.name, votes: x.votes }));
   const sorted = results.candidates.filter((x) => !x.is_abstain && !x.withdrawn).sort((a, b) => b.votes - a.votes || a.name.localeCompare(b.name));
-  const st = standing(results.candidates);
+  const multi = results.positions.length > 1;
+  // With several positions there is no single winner or tie: each position has its own (see `positions`).
+  const st = multi ? { leader: null, tied: [] as typeof results.candidates } : standing(results.candidates);
   const tiedNames = st.tied.map((x) => x.name);
   const tie = tiedNames.length > 1;
+  const positions: ExportPosition[] = results.positions.map((p) => {
+    const sum = p.candidates.reduce((n, x) => n + x.votes, 0);
+    const ranked = p.candidates.filter((x) => !x.is_abstain && !x.withdrawn).sort((a, b) => b.votes - a.votes || a.name.localeCompare(b.name))
+      .map((x, i) => ({ rank: i + 1, name: x.name, votes: x.votes, pct: sum > 0 ? x.votes / sum : 0, region: x.region ?? '' }));
+    const ordered = results.group_by_region
+      ? [...ranked].sort((a, b) => Number(a.region === '') - Number(b.region === '') || a.region.localeCompare(b.region) || a.rank - b.rank)
+      : ranked;
+    const ab = p.candidates.find((x) => x.is_abstain);
+    const sp = seal.positions.find((x) => x.position_id === p.id);
+    return {
+      title: p.title, description: p.description ?? '', turnout: p.turnout.votes, turnoutPct: p.turnout.eligible && p.turnout.eligible > 0 ? p.turnout.votes / p.turnout.eligible : null,
+      candidates: ordered, withdrawn: p.candidates.filter((x) => x.withdrawn && !x.is_abstain).map((x) => ({ name: x.name, votes: x.votes })),
+      abstentions: ab ? ab.votes : null, tie: !!p.tie, tiedNames: p.tie?.names ?? [], winners: p.winners.map((w) => w.name),
+      fingerprint: sp?.fingerprint ?? null, sealOk: sp ? sp.tallies_match !== false && sp.receipts_match !== false : null,
+    };
+  });
   const link = (await db.query(
     `SELECT (SELECT title FROM campaigns WHERE id = $1) AS parent, (SELECT title FROM campaigns WHERE parent_campaign_id = $2 LIMIT 1) AS child`, [c.parent_campaign_id ?? null, c.id])).rows[0];
   const { votes, eligible } = results.turnout;
@@ -128,6 +195,7 @@ export async function gatherExport(db: Queryable, c: CampaignRow, generatedBy: s
       verified: seal.sealed ? seal.chain_ok && seal.tallies_match !== false && seal.receipts_match !== false : null,
     },
     generatedAt: fmtWindhoek(now), generatedBy,
+    positions, groupByRegion: results.group_by_region, multi,
   };
 }
 
@@ -155,8 +223,9 @@ export async function buildXlsx(d: ExportData): Promise<Buffer> {
     ['Opens (scheduled)', d.opensAt], ['Closes (scheduled)', d.closesAt], ['Started', d.startedAt], ['Closed', d.closedAt],
     ['Who could vote', d.eligibility], ['Eligible voters', d.eligibleCount ?? 'n/a (open to all staff)'],
     ['Turnout (votes cast)', d.turnout], ['Turnout %', d.turnoutPct == null ? 'n/a' : pct(d.turnoutPct)],
-    ['Tie', tieText(d)], ...(d.quorum ? [['Quorum', d.quorum] as [string, string]] : []), ...(d.publication ? [['Publication', d.publication] as [string, string]] : []), ...(d.runoff ? [['Run-off', d.runoff] as [string, string]] : []),
+    ...(d.multi ? [['Positions', String(d.positions.length)] as [string, string], ['Turnout note', 'Turnout counts members who voted in at least one position; each position has its own turnout on the Results sheet'] as [string, string]] : [['Tie', tieText(d)] as [string, string]]), ...(d.quorum ? [['Quorum', d.quorum] as [string, string]] : []), ...(d.publication ? [['Publication', d.publication] as [string, string]] : []), ...(d.runoff ? [['Run-off', d.runoff] as [string, string]] : []),
     ['Results seal', sealText(d)], ['Seal fingerprint (SHA-256)', d.seal.hash ?? 'n/a'], ['Sealed at', d.seal.sealed ? d.seal.sealedAt : 'n/a'],
+    ...(d.multi ? d.positions.map((p) => [`Position seal: ${p.title}`, p.fingerprint ?? 'n/a'] as [string, string]) : []),
     ['Generated at', d.generatedAt], ['Generated by', d.generatedBy],
   ];
   for (const [k, v] of rows) {
@@ -166,16 +235,32 @@ export async function buildXlsx(d: ExportData): Promise<Buffer> {
   }
 
   const r = wb.addWorksheet('Results');
-  r.columns = [{ header: 'Rank', width: 8 }, { header: 'Candidate', width: 40 }, { header: 'Votes', width: 10 }, { header: '% of votes', width: 12 }];
-  r.getRow(1).font = bold;
-  for (const x of d.candidates) {
+  if (d.multi) {
+    r.columns = [{ header: 'Position', width: 30 }, { header: 'Rank', width: 8 }, { header: 'Candidate', width: 40 }, { header: 'Region', width: 18 }, { header: 'Votes', width: 10 }, { header: '% of votes', width: 12 }];
+    r.getRow(1).font = bold;
+    for (const p of d.positions) {
+      for (const x of p.candidates) { const row = r.addRow([safeCell(p.title), x.rank, safeCell(x.name), safeCell(x.region), x.votes, x.pct]); row.getCell(6).numFmt = '0.0%'; }
+      for (const w of p.withdrawn) r.addRow([safeCell(p.title), '', safeCell(`${w.name} (withdrew: votes void)`), '', w.votes]);
+      if (p.abstentions !== null) r.addRow([safeCell(p.title), '', 'Abstentions (not a candidate)', '', p.abstentions]);
+      r.addRow([safeCell(p.title), '', 'Members who voted in this position', '', p.turnout]).font = bold;
+      r.addRow([safeCell(p.title), '', p.tie ? safeCell(`Tie for first place: ${p.tiedNames.join(' and ')}`) : p.winners.length ? safeCell(`Winner: ${p.winners.join(', ')}`) : 'No winner (no votes)']).font = bold;
+      r.addRow([]);
+    }
+    r.addRow(['', '', 'Members who voted in at least one position', '', d.turnout]).font = bold;
+  } else {
+    r.columns = [{ header: 'Rank', width: 8 }, { header: 'Candidate', width: 40 }, { header: 'Votes', width: 10 }, { header: '% of votes', width: 12 }];
+    r.getRow(1).font = bold;
+  }
+  if (!d.multi) for (const x of d.candidates) {
     const row = r.addRow([x.rank, safeCell(x.name), x.votes, x.pct]);
     row.getCell(4).numFmt = '0.0%';
   }
-  for (const w of d.withdrawn) r.addRow(['', safeCell(`${w.name} (withdrew: votes void)`), w.votes]);
-  if (d.abstentions !== null) { const a = r.addRow(['', 'Abstentions (not a candidate)', d.abstentions, d.turnout > 0 ? d.abstentions / d.turnout : 0]); a.getCell(4).numFmt = '0.0%'; }
-  r.addRow([]);
-  r.addRow(['', 'Total votes', d.turnout]).font = bold;
+  if (!d.multi) {
+    for (const w of d.withdrawn) r.addRow(['', safeCell(`${w.name} (withdrew: votes void)`), w.votes]);
+    if (d.abstentions !== null) { const a = r.addRow(['', 'Abstentions (not a candidate)', d.abstentions, d.turnout > 0 ? d.abstentions / d.turnout : 0]); a.getCell(4).numFmt = '0.0%'; }
+    r.addRow([]);
+    r.addRow(['', 'Total votes', d.turnout]).font = bold;
+  }
 
   const h = wb.addWorksheet('Event history');
   h.columns = [{ header: 'Event', width: 22 }, { header: 'When (Windhoek)', width: 26 }, { header: 'By', width: 28 }, { header: 'Details', width: 90 }];
@@ -222,13 +307,42 @@ export async function buildPdf(d: ExportData, opts: { compress?: boolean } = {})
   kv('Opens (scheduled)', d.opensAt); kv('Closes (scheduled)', d.closesAt); kv('Started', d.startedAt); kv('Closed', d.closedAt);
   kv('Who could vote', d.eligibility); kv('Eligible voters', eligibleText(d));
   kv('Turnout', `${d.turnout} vote(s), ${pct(d.turnoutPct)} of eligible voters`);
-  kv('Tie', tieText(d));
+  if (d.multi) kv('Positions', `${d.positions.length}. Turnout counts members who voted in at least one position; each position has its own turnout below.`);
+  else kv('Tie', tieText(d));
   if (d.runoff) kv('Run-off', d.runoff);
   if (d.quorum) kv('Quorum', d.quorum);
   if (d.publication) kv('Publication', d.publication);
 
-  heading('Results');
+  heading(d.multi ? 'Results by position' : 'Results');
   const cx = [L, L + 40, L + W - 150, L + W - 70];
+  if (d.multi) {
+    for (const p of d.positions) {
+      ensure(70);
+      doc.moveDown(0.4).font('Helvetica-Bold').fontSize(11.5).fillColor('#14254a').text(p.title, L, doc.y, { width: W });
+      doc.font('Helvetica').fontSize(9.5).fillColor('#333').text(`Members who voted in this position: ${p.turnout}${p.turnoutPct == null ? '' : ` (${pct(p.turnoutPct)} of eligible voters)`}`, L, doc.y, { width: W });
+      doc.fillColor('#000').moveDown(0.2);
+      let lastRegion: string | null = null;
+      for (const x of p.candidates) {
+        ensure(20);
+        if (d.groupByRegion && x.region !== lastRegion) { lastRegion = x.region; doc.font('Helvetica-BoldOblique').fontSize(9.5).fillColor('#555').text(x.region || 'No region', cx[1], doc.y, { width: W - 40 }); doc.fillColor('#000'); }
+        const y = doc.y;
+        doc.font('Helvetica').fontSize(10).fillColor('#000');
+        doc.text(String(x.rank), cx[0], y, { width: 36 });
+        doc.text(x.name, cx[1], y, { width: cx[2] - cx[1] - 10 });
+        const rowEnd = doc.y;
+        doc.text(String(x.votes), cx[2], y, { width: 60, align: 'right' }); doc.text(pct(x.pct), cx[3], y, { width: 70, align: 'right' });
+        doc.y = rowEnd + 3;
+      }
+      for (const w of p.withdrawn) { ensure(18); const y = doc.y; doc.font('Helvetica-Oblique').fontSize(10).fillColor('#444').text(`${w.name} (withdrew: votes void)`, cx[1], y, { width: cx[2] - cx[1] - 10 }); doc.text(String(w.votes), cx[2], y, { width: 60, align: 'right' }); doc.fillColor('#000'); doc.y += 3; }
+      if (p.abstentions !== null) { ensure(18); const y = doc.y; doc.font('Helvetica-Oblique').fontSize(10).fillColor('#444').text('Abstentions (not a candidate)', cx[1], y, { width: cx[2] - cx[1] - 10 }); doc.text(String(p.abstentions), cx[2], y, { width: 60, align: 'right' }); doc.fillColor('#000'); doc.y += 3; }
+      ensure(18);
+      doc.font('Helvetica-Bold').fontSize(10).fillColor('#000').text(p.tie ? `Tie for first place: ${p.tiedNames.join(' and ')}` : p.winners.length ? `Winner: ${p.winners.join(', ')}` : 'No winner (no votes)', cx[1], doc.y, { width: W - 40 });
+      if (p.fingerprint) doc.font('Courier').fontSize(7.5).fillColor('#555').text(`Position seal: ${p.fingerprint}${p.sealOk === false ? '  (DOES NOT MATCH)' : ''}`, L, doc.y + 1, { width: W });
+      doc.fillColor('#000').moveDown(0.6);
+    }
+    ensure(20);
+    doc.font('Helvetica-Bold').fontSize(10).text(`Members who voted in at least one position: ${d.turnout}`, L, doc.y, { width: W });
+  } else {
   ensure(24);
   const hy = doc.y;
   doc.font('Helvetica-Bold').fontSize(9.5);
@@ -263,6 +377,7 @@ export async function buildPdf(d: ExportData, opts: { compress?: boolean } = {})
   doc.font('Helvetica-Bold').fontSize(10).text('Total votes', cx[1], doc.y, { continued: false, width: 200 });
   doc.text(String(d.turnout), cx[2], doc.y - 12, { width: 60, align: 'right' });
   doc.y += 6;
+  }
 
   heading('History: resets, early close and edits after start');
   if (d.history.length === 0) { doc.font('Helvetica').fontSize(10).text('None.', L, doc.y, { width: W }); }

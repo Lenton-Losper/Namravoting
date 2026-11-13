@@ -211,6 +211,7 @@ function redact(details: Record<string, any> | null, closed: boolean): Record<st
   if (!details || closed) return details;
   const out = { ...details };
   delete out.tallies;
+  delete out.positions;   // per-position seal fingerprints and counts (the seal of a round that was later reset)
   if (out.snapshot && typeof out.snapshot === 'object') out.snapshot = { turnout: (out.snapshot as Record<string, unknown>).turnout };
   return out;
 }
@@ -227,7 +228,7 @@ export function observeRouter(): Router {
     const u = currentUser(req);
     const { rows } = await getPool().query(
       `SELECT c.id, c.title, c.status, c.opens_at, c.closes_at, c.results_published, c.archived_at, o.display_name AS owner,
-              (SELECT count(*)::int FROM vote_receipts v WHERE v.campaign_id = c.id) AS turnout
+              (SELECT count(DISTINCT v.member_key)::int FROM vote_receipts v WHERE v.campaign_id = c.id) AS turnout
          FROM campaign_members m JOIN campaigns c ON c.id = m.campaign_id JOIN users o ON o.entra_oid = c.created_by
         WHERE m.user_oid = $1 AND m.role = 'observer' ORDER BY c.created_at DESC`, [u.oid]);
     res.set('Cache-Control', 'no-store').json({ campaigns: rows });

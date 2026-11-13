@@ -26,7 +26,9 @@ export async function buildSealedBackup(db: Queryable, campaignId: string, now =
     campaign: { id: c.id, title: c.title, eligibility: c.eligibility },
     sealed: { audit_seq: seal.seal_seq, fingerprint: seal.seal_hash, at: seal.sealed_at },
     turnout: results.turnout,
-    tallies: results.candidates.map((x) => ({ name: x.name, votes: x.votes, ...(x.is_abstain ? { abstain: true } : {}), ...(x.withdrawn ? { withdrawn: true } : {}) })),
+    tallies: results.candidates.map((x) => ({ position: results.positions.find((p) => p.id === x.position_id)?.title, name: x.name, region: x.region ?? undefined, votes: x.votes, ...(x.is_abstain ? { abstain: true } : {}), ...(x.withdrawn ? { withdrawn: true } : {}) })),
+    // One entry per position with its own seal fingerprint: a position's result can be checked on its own.
+    positions: results.positions.map((p) => ({ title: p.title, turnout: p.turnout.votes, winners: p.winners.map((w) => w.name), tie: p.tie ? p.tie.names : null, fingerprint: seal.positions.find((x) => x.position_id === p.id)?.fingerprint ?? null })),
     tie: results.tie ? results.tie.names : null,
     audit_head_when_written: head ? { seq: Number(head.seq), hash: head.hash } : null,
     how_to_verify: 'The fingerprint is the hash of audit entry <audit_seq> of this campaign in the NamRA Voting audit log (Verify results integrity on the campaign page, or audit_chain_verify() in the database). The tallies must equal the "tallies" recorded in that entry.',

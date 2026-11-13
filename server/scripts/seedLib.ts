@@ -13,11 +13,16 @@ async function placeholder(initials: string, hue: string): Promise<Buffer> {
   return sharp(Buffer.from(svg)).png().toBuffer();
 }
 
-const CANDIDATES: [string, string, string, string][] = [
-  ['Ndapewa Shikongo', 'Twenty years in customs and excise; focus on service delivery.', 'NS', '#2b6cb0'],
-  ['Tobias Amupanda', 'Former head of domestic taxes; champion of digital filing.', 'TA', '#2f855a'],
-  ['Ruth Kandjii', 'Led the large-taxpayer unit; focus on staff development.', 'RK', '#b7791f'],
+// name, bio, initials, colour, position (index into POSITIONS), region
+const CANDIDATES: [string, string, string, string, number, string][] = [
+  ['Ndapewa Shikongo', 'Twenty years in customs and excise; focus on service delivery.', 'NS', '#2b6cb0', 0, 'Khomas'],
+  ['Tobias Amupanda', 'Former head of domestic taxes; champion of digital filing.', 'TA', '#2f855a', 0, 'Oshana'],
+  ['Ruth Kandjii', 'Led the large-taxpayer unit; focus on staff development.', 'RK', '#b7791f', 0, 'Erongo'],
+  ['Johannes Haufiku', 'Chief accountant for the Walvis Bay office; clear, plain budgets.', 'JH', '#805ad5', 1, 'Erongo'],
+  ['Selma Nakale', 'Audit and risk specialist; wants quarterly reports to members.', 'SN', '#c05621', 1, 'Ohangwena'],
+  ['Petrus Kavetuna', 'Regional collections lead; knows what each office needs.', 'PK', '#2c7a7b', 1, 'Zambezi'],
 ];
+const POSITIONS = ['Press Secretary', 'Finance Officer'];
 
 /**
  * Dev/demo seed (owner connection). Fake data only. Needs src/config to be loadable (SESSION_SECRET, DATABASE_URL set)
@@ -46,19 +51,28 @@ export async function seedDevData(client: pg.Client, opts: { openCampaign: boole
     const camp = await client.query(
       'INSERT INTO campaigns (share_token, created_by, title, description) VALUES ($1,$2,$3,$4) RETURNING id',
       [crypto.randomBytes(24).toString('base64url'), admin.oid, title, description]);
+    // The 14 regions of Namibia, and two positions (each with three approved candidates).
+    const { DEFAULT_REGIONS } = await import('../src/services/positions.js');
+    await client.query('INSERT INTO regions (campaign_id, name, sort_order) SELECT $1, n, o FROM unnest($2::text[]) WITH ORDINALITY AS t(n, o)', [camp.rows[0].id, [...DEFAULT_REGIONS]]);
+    const positionIds: string[] = [];
+    for (const [pi, title] of POSITIONS.entries()) {
+      positionIds.push((await client.query('INSERT INTO positions (campaign_id, title, sort_order) VALUES ($1,$2,$3) RETURNING id', [camp.rows[0].id, title, pi + 1])).rows[0].id);
+    }
     let i = 1;
-    for (const [name, bio, ini, hue] of CANDIDATES) {
+    for (const [name, bio, ini, hue, pi, region] of CANDIDATES) {
       const file = await savePhoto(await placeholder(ini, hue));
-      await client.query('INSERT INTO candidates (campaign_id, name, bio, photo_path, sort_order) VALUES ($1,$2,$3,$4,$5)', [camp.rows[0].id, name, bio, file, i++]);
+      await client.query(
+        'INSERT INTO candidates (campaign_id, position_id, region_id, name, bio, photo_path, sort_order) VALUES ($1,$2,(SELECT id FROM regions WHERE campaign_id = $1 AND name = $3),$4,$5,$6,$7)',
+        [camp.rows[0].id, positionIds[pi], region, name, bio, file, i++]);
     }
     if (status === 'open') {
       await client.query("UPDATE campaigns SET status = 'open' WHERE id = $1", [camp.rows[0].id]);   // owner role: the lock trigger only guards candidates
       // What /start does: one counter per candidate, and the frozen voter list (new campaigns default to Umoja-only).
-      await client.query('INSERT INTO tallies (campaign_id, candidate_id, votes) SELECT campaign_id, id, 0 FROM candidates WHERE campaign_id = $1', [camp.rows[0].id]);
+      await client.query("INSERT INTO tallies (campaign_id, position_id, candidate_id, votes) SELECT campaign_id, position_id, id, 0 FROM candidates WHERE campaign_id = $1 AND status = 'approved'", [camp.rows[0].id]);
       await client.query('INSERT INTO campaign_voters (campaign_id, member_code, entra_oid, active) SELECT $1, employee_code, entra_oid, active FROM umoja_members', [camp.rows[0].id]);
-      await client.query("INSERT INTO audit_log (actor_oid, action, campaign_id, details) VALUES ($1, 'campaign.start', $2, $3)", [admin.oid, camp.rows[0].id, JSON.stringify({ candidates: CANDIDATES.length, seeded: true })]);
+      await client.query("INSERT INTO audit_log (actor_oid, action, campaign_id, details) VALUES ($1, 'campaign.start', $2, $3)", [admin.oid, camp.rows[0].id, JSON.stringify({ candidates: CANDIDATES.length, positions: POSITIONS.length, seeded: true })]);
     }
-    console.log(`Created ${status} campaign "${title}" with ${CANDIDATES.length} candidates.`);
+    console.log(`Created ${status} campaign "${title}" with ${POSITIONS.length} positions and ${CANDIDATES.length} candidates.`);
   };
   await make('Election of the Commissioner (sample)', 'Sample draft campaign created by the seed script.', 'draft');
   if (opts.openCampaign) await make('Staff Council Election (demo)', 'Open demo vote for Umoja members. Fake data only.', 'open');

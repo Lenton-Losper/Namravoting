@@ -28,7 +28,7 @@ import {
 } from '../domain/validation.js';
 import { audit } from '../services/audit.js';
 import {
-  closeInTx, getNotices, getResults, getTurnout, IntegrityBlocked, integrityMessage, openIntegrityBlock, quorumOf, recordIntegrityBlock, refreshStatus, verifySeal, type CampaignRow,
+  closeInTx, getNotices, getResults, getTurnout, positionTurnouts, IntegrityBlocked, integrityMessage, openIntegrityBlock, quorumOf, recordIntegrityBlock, refreshStatus, verifySeal, type CampaignRow,
 } from '../services/campaigns.js';
 import { deletePhoto, MAX_UPLOAD_BYTES, readPhoto, savePhoto } from '../services/images.js';
 
@@ -107,6 +107,13 @@ const loadRunnable: RequestHandler = async (req, res, next) => {
   next();
 };
 const camp = (res: Response) => res.locals.campaign as CampaignRow;
+
+/** While a campaign is open the creator sees turnout per position (receipt counts) and nothing per candidate (SEC-01). */
+async function openPositionTurnouts(campaignId: string) {
+  const turnouts = await positionTurnouts(getPool(), campaignId);
+  return (await getPool().query('SELECT id, title FROM positions WHERE campaign_id = $1 ORDER BY sort_order, created_at', [campaignId])).rows
+    .map((p) => ({ id: p.id as string, title: p.title as string, candidates: null, turnout: { votes: turnouts.get(p.id) ?? 0 } }));
+}
 
 /** Run-off context of a closed campaign: the run-off it led to (if any), the one it is part of (if any), and whether one may be started. */
 async function runoffInfo(c: CampaignRow) {
@@ -650,7 +657,7 @@ export function adminRouter(): Router {
     res.set('Cache-Control', 'no-store');
     res.json({
       status: c.status, results_published: c.results_published, archived: !!c.archived_at,
-      ...(closed ? await getResults(getPool(), c.id) : { candidates: null, turnout: await getTurnout(getPool(), c.id) }),
+      ...(closed ? await getResults(getPool(), c.id) : { candidates: null, turnout: await getTurnout(getPool(), c.id), positions: await openPositionTurnouts(c.id) }),
       ...(closed ? { runoff: await runoffInfo(c) } : {}),
       resets: (await getNotices(getPool(), c.id, closed)).filter((n) => n.kind === 'reset'),
       notices: await getNotices(getPool(), c.id, closed),

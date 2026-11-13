@@ -34,7 +34,9 @@ describe('the sealed-result copy', () => {
     const doc = JSON.parse(raw!.toString('utf8'));
     const fingerprint = (await ownerDb().query('SELECT hash FROM audit_log WHERE campaign_id = $1 AND seq = $2', [c.id, seq])).rows[0].hash;
     expect(doc).toMatchObject({ format: 1, campaign: { id: c.id, title: 'Backed up' }, sealed: { audit_seq: seq, fingerprint }, turnout: { votes: 2 } });
-    expect(doc.tallies).toEqual([{ name: 'One', votes: 2 }, { name: 'Two', votes: 0 }]);
+    expect(doc.tallies).toEqual([{ position: 'Backed up', name: 'One', votes: 2 }, { position: 'Backed up', name: 'Two', votes: 0 }]);
+    expect(doc.positions).toHaveLength(1);
+    expect(doc.positions[0]).toMatchObject({ title: 'Backed up', turnout: 2, winners: ['One'] });
     const text = raw!.toString('utf8');
     for (const personal of [S1.email, S2.email, ADMIN_A.email, S1.oid, S2.oid, ADMIN_A.oid, S1.displayName]) expect(text).not.toContain(personal);
     const a = (await ownerDb().query("SELECT details FROM audit_log WHERE campaign_id = $1 AND action = 'result.backed_up'", [c.id])).rows;

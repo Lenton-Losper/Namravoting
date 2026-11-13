@@ -14,7 +14,7 @@ export function photosRouter(): Router {
     const { cid } = z.object({ cid: z.string().uuid() }).parse(req.params);
     const me = currentUser(req);
     const { rows } = await getPool().query(
-      `SELECT c.photo_path, k.status, k.created_by,
+      `SELECT c.photo_path, c.status AS cand_status, c.submitted_by_oid, k.status, k.created_by,
               EXISTS (SELECT 1 FROM campaign_members m WHERE m.campaign_id = k.id AND m.user_oid = $4 AND m.role = 'co_admin') AS co_admin,
               (k.eligibility = 'all'
                OR (k.eligibility = 'umoja' AND ${isSnapshotMemberSql('k.id', '$3')})
@@ -22,7 +22,8 @@ export function photosRouter(): Router {
          FROM candidates c JOIN campaigns k ON k.id = c.campaign_id WHERE c.id = $1`, [cid, me.email.toLowerCase(), me.oid, me.oid]);
     const row = rows[0];
     // Visible to the campaign's creator, or (once it has started) to voters who are eligible for it. Otherwise 404.
-    const allowed = row && (row.created_by === me.oid || row.co_admin || (row.status !== 'draft' && row.eligible));
+    // A candidate always sees their own photo; voters see only photos of APPROVED candidates, and only once voting has started.
+    const allowed = row && (row.created_by === me.oid || row.co_admin || row.submitted_by_oid === me.oid || (row.status !== 'draft' && row.eligible && row.cand_status === 'approved'));
     if (!row?.photo_path || !allowed) throw notFound();
     const buf = await readPhoto(row.photo_path);
     if (!buf) throw notFound();

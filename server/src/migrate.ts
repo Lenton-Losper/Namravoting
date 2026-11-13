@@ -7,7 +7,7 @@ import { dbClientConfig } from './db.js';
 const dir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../migrations');
 
 /** Applies numbered .sql files in order, each in its own transaction, tracked in schema_migrations. */
-export async function migrate(ownerUrl: string, appDbPassword: string, log = console.log): Promise<void> {
+export async function migrate(ownerUrl: string, appDbPassword: string, log = console.log, upTo?: string): Promise<void> {
   const client = new pg.Client(dbClientConfig(ownerUrl));
   await client.connect();
   try {
@@ -16,7 +16,8 @@ export async function migrate(ownerUrl: string, appDbPassword: string, log = con
     );
     const dbName = (await client.query('SELECT current_database() AS db')).rows[0].db as string;
     const applied = new Set((await client.query('SELECT name FROM schema_migrations')).rows.map((r) => r.name));
-    const files = readdirSync(dir).filter((f) => /^\d+_.+\.sql$/.test(f)).sort();
+    // `upTo` (a file name) stops after that migration: tests use it to build an old database and then migrate it forward.
+    const files = readdirSync(dir).filter((f) => /^\d+_.+\.sql$/.test(f)).sort().filter((f) => !upTo || f <= upTo);
     for (const f of files) {
       if (applied.has(f)) continue;
       const sql = readFileSync(path.join(dir, f), 'utf8')

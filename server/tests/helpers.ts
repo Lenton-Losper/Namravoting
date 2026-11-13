@@ -100,3 +100,31 @@ export async function setMembers(rows: [string, boolean][]) {
   await ownerDb().query('DELETE FROM umoja_members');
   if (rows.length) await ownerDb().query('INSERT INTO umoja_members (employee_code, active) SELECT * FROM unnest($1::text[], $2::boolean[])', [rows.map((r) => r[0]), rows.map((r) => r[1])]);
 }
+
+export interface ElectionSpec {
+  title?: string; eligibility?: 'all' | 'umoja' | 'list'; abstain?: boolean; start?: boolean;
+  positions: { title: string; candidates: (string | { name: string; region?: string })[]; min?: number; max?: number }[];
+}
+export interface Election { id: string; token: string; regions: Record<string, string>; positions: { id: string; title: string; candidates: { id: string; name: string }[] }[] }
+
+/** A multi-position campaign built through the real API: positions, candidates (with regions), optionally started. Eligibility defaults to everyone. */
+export async function makeElection(admin: Session, spec: ElectionSpec): Promise<Election> {
+  const c = (await admin.post('/api/campaigns').send({ title: spec.title ?? 'Umoja Committee 2026', eligibility: spec.eligibility ?? 'all', ...(spec.abstain ? { allow_abstain: true } : {}) }).expect(201)).body;
+  const regionRows = (await admin.get(`/api/campaigns/${c.id}/regions`).expect(200)).body.regions as { id: string; name: string }[];
+  const regions = Object.fromEntries(regionRows.map((r) => [r.name, r.id]));
+  const positions: Election['positions'] = [];
+  for (const p of spec.positions) {
+    const pos = (await admin.post(`/api/campaigns/${c.id}/positions`).send({ title: p.title, ...(p.min ? { min_candidates: p.min } : {}), ...(p.max ? { max_candidates: p.max } : {}) }).expect(201)).body;
+    const candidates: { id: string; name: string }[] = [];
+    for (const cand of p.candidates) {
+      const name = typeof cand === 'string' ? cand : cand.name;
+      const region = typeof cand === 'string' ? undefined : cand.region;
+      let req = admin.post(`/api/campaigns/${c.id}/candidates`).field('name', name).field('position_id', pos.id);
+      if (region) req = req.field('region_id', regions[region]);
+      candidates.push({ id: (await req.expect(201)).body.id, name });
+    }
+    positions.push({ id: pos.id, title: p.title, candidates });
+  }
+  if (spec.start) await admin.post(`/api/campaigns/${c.id}/start`).expect(200);
+  return { id: c.id, token: c.share_token, regions, positions };
+}

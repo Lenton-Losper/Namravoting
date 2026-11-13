@@ -92,6 +92,11 @@ export async function buildAuditBundle(db: Queryable, c: CampaignRow, generatedB
     `  Counters equal the sealed tallies:    ${seal.tallies_match === null ? 'n/a' : seal.tallies_match ? 'yes' : 'NO'}`,
     `  Receipts equal the sealed turnout:    ${seal.receipts_match === null ? 'n/a (receipts removed under the retention schedule, or none)' : seal.receipts_match ? 'yes' : 'NO'}`,
     `  Turnout:                              ${results.turnout.votes}${results.turnout.eligible == null ? '' : ` of ${results.turnout.eligible} eligible`}`,
+    ...(results.positions.length > 1 ? [
+      `  Positions:                            ${results.positions.length}. Turnout above = members who voted in at least one position. Each position has its own turnout and its own`,
+      `                                        seal fingerprint (sealed inside the same audit entry; see the "positions" list in its details):`,
+      ...results.positions.map((p) => `    - ${p.title}: ${p.turnout.votes} voted; fingerprint ${seal.positions.find((x) => x.position_id === p.id)?.fingerprint ?? 'n/a'}${seal.positions.find((x) => x.position_id === p.id) && (seal.positions.find((x) => x.position_id === p.id)!.tallies_match === false || seal.positions.find((x) => x.position_id === p.id)!.receipts_match === false) ? ' (DOES NOT MATCH)' : ''}`),
+    ] : []),
     ``,
     `HOW TO VERIFY THE RESULT YOURSELF`,
     `  1. Run  node verify-audit.mjs audit-log.csv  (Node 18 or newer). Every entry's hash is recomputed from its own fields, so a changed, removed`,
