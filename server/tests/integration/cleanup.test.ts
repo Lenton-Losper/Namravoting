@@ -299,7 +299,7 @@ describe('reset votes', () => {
     expect(a.at).toBeInstanceOf(Date);
     expect(a.details).toEqual({
       reason: REASON, previous_status: 'open', new_closes_at: null,
-      snapshot: { candidates: [{ name: 'Alpha Person', votes: 2 }, { name: 'Bravo Person', votes: 0 }], turnout: { votes: 2, ballots: 2 } },
+      snapshot: { candidates: [{ name: 'Alpha Person', votes: 2, position: 'Cleanup Vote 2026' }, { name: 'Bravo Person', votes: 0, position: 'Cleanup Vote 2026' }], turnout: { votes: 2, ballots: 2 } },
     });
     const raw = JSON.stringify(a);
     expect(raw).not.toContain(S1.oid); expect(raw).not.toContain(S2.oid); expect(raw).not.toContain(S1.email);

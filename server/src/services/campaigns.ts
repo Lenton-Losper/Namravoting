@@ -1,22 +1,24 @@
 import type { Queryable } from '../db.js';
 import { getPool, withTx } from '../db.js';
 import { shouldAutoClose, type Status } from '../domain/status.js';
-import { standing } from '../domain/results.js';
+import crypto from 'node:crypto';
+import { computeResult, type RulePosition } from '../domain/rules.js';
+import type { Counted } from '../domain/results.js';
 import { audit } from './audit.js';
 import { backupSealedResult } from './backup.js';
-import { restampTallies, tallySum } from './tallies.js';
+import { restampTallies } from './tallies.js';
 
 export interface CampaignRow {
   id: string; share_token: string; created_by: string; title: string; description: string | null;
   status: Status; opens_at: Date | null; closes_at: Date | null; eligibility: 'all' | 'list' | 'umoja';
   results_published: boolean; created_at: Date; archived_at: Date | null;
-  parent_campaign_id?: string | null; runoff_round?: number; allow_edits_after_start?: boolean; allow_abstain?: boolean; require_approval?: boolean; quorum_percent?: number | null; publish_at?: Date | null; receipts_purged_at?: Date | null; photos_purged_at?: Date | null;
+  parent_campaign_id?: string | null; runoff_round?: number; allow_edits_after_start?: boolean; allow_abstain?: boolean; require_approval?: boolean; quorum_percent?: number | null; nominations_close_at?: Date | null; nominate_eligibility?: 'all' | 'umoja' | null; results_group_by_region?: boolean; publish_at?: Date | null; receipts_purged_at?: Date | null; photos_purged_at?: Date | null;
   /** The database clock when the row was read (only on queries that ask for it). */
   db_now?: Date;
 }
 
 /** `ballots` is the sum of the candidate tallies (there is no row per ballot, SEC-02); it must equal the receipts. */
-export interface Integrity { ballots: number; receipts: number; match: boolean }
+export interface Integrity { ballots: number; receipts: number; match: boolean; /** Titles of positions whose receipts and tallies differ. */ mismatched?: string[] }
 
 /**
  * SEC-16: receipts and the sum of the tallies must agree. If they do not, the campaign is NOT closed (and a closed one cannot be
@@ -24,7 +26,7 @@ export interface Integrity { ballots: number; receipts: number; match: boolean }
  * transaction, so it rolls back; callers record the block in the audit log afterwards (recordIntegrityBlock).
  */
 export class IntegrityBlocked extends Error {
-  constructor(public ballots: number, public receipts: number) { super(`receipts (${receipts}) and tallies (${ballots}) do not match`); }
+  constructor(public ballots: number, public receipts: number, public positions: string[] = []) { super(`receipts (${receipts}) and tallies (${ballots}) do not match`); }
 }
 
 /** The latest unacknowledged integrity block of a campaign, or null. */
@@ -41,12 +43,28 @@ export async function openIntegrityBlock(db: Queryable, campaignId: string): Pro
 export async function recordIntegrityBlock(campaignId: string, actorOid: string | null, e: IntegrityBlocked, attempt: 'manual' | 'auto'): Promise<void> {
   const db = getPool();
   if (await openIntegrityBlock(db, campaignId)) return;
-  await audit(db, actorOid, 'campaign.integrity.blocked', campaignId, { ballots: e.ballots, receipts: e.receipts, attempt });
+  await audit(db, actorOid, 'campaign.integrity.blocked', campaignId, { ballots: e.ballots, receipts: e.receipts, attempt, ...(e.positions.length ? { positions: e.positions } : {}) });
   console.error(`[integrity] campaign=${campaignId} receipts=${e.receipts} tallies=${e.ballots}: closing is blocked until an admin acknowledges it`);
 }
 
 export const integrityMessage = (e: IntegrityBlocked) =>
-  `Receipts (${e.receipts}) and tallies (${e.ballots}) do not match, so the campaign was NOT closed. Investigate (see the audit log), then acknowledge to allow closing.`;
+  `Receipts (${e.receipts}) and tallies (${e.ballots}) do not match${e.positions.length ? ` (in: ${e.positions.join(', ')})` : ''}, so the campaign was NOT closed. Investigate (see the audit log), then acknowledge to allow closing.`;
+
+/** Receipts and the sum of the counters, per position (in ballot order). */
+export async function positionCounts(db: Queryable, campaignId: string): Promise<{ id: string; title: string; ballots: number; receipts: number }[]> {
+  const { rows } = await db.query(
+    `SELECT p.id, p.title,
+            coalesce((SELECT sum(t.votes) FROM tallies t WHERE t.campaign_id = p.campaign_id AND t.position_id = p.id), 0)::int AS ballots,
+            (SELECT count(*) FROM vote_receipts v WHERE v.campaign_id = p.campaign_id AND v.position_id = p.id)::int AS receipts
+       FROM positions p WHERE p.campaign_id = $1 ORDER BY p.sort_order, p.created_at`, [campaignId]);
+  return rows;
+}
+
+/** SHA-256 over one position's final counters (ordered by candidate id) and its receipt count. */
+export function positionFingerprint(positionId: string, tallies: { candidate_id: string; votes: number }[], receipts: number): string {
+  const body = [...tallies].sort((a, b) => a.candidate_id.localeCompare(b.candidate_id)).map((t) => `${t.candidate_id}:${t.votes}`).join(',');
+  return crypto.createHash('sha256').update(`position:${positionId}|receipts:${receipts}|${body}`).digest('hex');
+}
 
 export interface CloseOptions {
   /** Closed by hand before closes_at: needs a reason, which is shown to voters. */
@@ -62,24 +80,33 @@ export async function closeInTx(
   db: Queryable, campaignId: string, actorOid: string | null, reason: 'manual' | 'auto', opts: CloseOptions = {},
 ): Promise<Integrity> {
   // The caller holds the campaign row FOR UPDATE, so no vote can land between these counts and the status change.
-  const ballots = await tallySum(db, campaignId);
-  const receipts = (await db.query('SELECT count(*)::int AS n FROM vote_receipts WHERE campaign_id = $1', [campaignId])).rows[0].n as number;
-  const integrity = { ballots, receipts, match: ballots === receipts };
+  // Receipts and tallies must agree overall AND in every position.
+  const perPosition = await positionCounts(db, campaignId);
+  const ballots = perPosition.reduce((n, p) => n + p.ballots, 0);
+  const receipts = perPosition.reduce((n, p) => n + p.receipts, 0);
+  const mismatched = perPosition.filter((p) => p.ballots !== p.receipts).map((p) => p.title);
+  const integrity: Integrity = { ballots, receipts, match: ballots === receipts && mismatched.length === 0 };
   let acknowledged = false;
   if (!integrity.match) {
     // acknowledged = an admin has acknowledged the latest block; nothing is blocked yet on the very first attempt
     const everBlocked = (await db.query("SELECT 1 FROM audit_log WHERE campaign_id = $1 AND action = 'campaign.integrity.blocked' LIMIT 1", [campaignId])).rowCount! > 0;
     acknowledged = everBlocked && !(await openIntegrityBlock(db, campaignId));
-    if (!acknowledged) throw new IntegrityBlocked(ballots, receipts);
+    if (!acknowledged) throw new IntegrityBlocked(ballots, receipts, mismatched);
   }
   await db.query("UPDATE campaigns SET status = 'closed' WHERE id = $1 AND status = 'open'", [campaignId]);
   await restampTallies(db, campaignId);   // every tally row now carries this transaction's id, not a voter's
   const tallies = (await db.query(
-    `SELECT k.id AS candidate_id, k.name, coalesce(t.votes, 0)::int AS votes
-       FROM candidates k LEFT JOIN tallies t ON t.candidate_id = k.id AND t.campaign_id = k.campaign_id
-      WHERE k.campaign_id = $1 ORDER BY k.sort_order, k.name`, [campaignId])).rows;
+    `SELECT k.id AS candidate_id, k.name, p.id AS position_id, p.title AS position, coalesce(t.votes, 0)::int AS votes
+       FROM candidates k JOIN positions p ON p.id = k.position_id LEFT JOIN tallies t ON t.candidate_id = k.id AND t.campaign_id = k.campaign_id
+      WHERE k.campaign_id = $1 AND k.status = 'approved' ORDER BY p.sort_order, p.created_at, k.sort_order, k.name`, [campaignId])).rows as { candidate_id: string; position_id: string; votes: number }[];
+  // One fingerprint PER POSITION, sealed inside the same hash-chained entry: it covers that position's counters and receipt count, so a
+  // position's result can be handed over and checked on its own.
+  const positions = perPosition.map((p) => ({
+    position_id: p.id, title: p.title, ballots: p.ballots, receipts: p.receipts,
+    fingerprint: positionFingerprint(p.id, tallies.filter((t) => t.position_id === p.id), p.receipts),
+  }));
   await audit(db, actorOid, integrity.match ? 'campaign.close' : 'campaign.close.INTEGRITY_MISMATCH', campaignId,
-    { reason, ...integrity, tallies, ...(acknowledged ? { acknowledged: true } : {}), ...(opts.early ? { early: true, why: opts.why ?? '' } : {}) });
+    { reason, ballots, receipts, match: integrity.match, tallies, positions, ...(acknowledged ? { acknowledged: true } : {}), ...(opts.early ? { early: true, why: opts.why ?? '' } : {}) });
   return integrity;
 }
 
@@ -138,7 +165,7 @@ export interface Notice {
   changes?: { what: string; name?: string; from?: string | null; to?: string | null }[];
   votes_cleared?: number;
   /** Per-candidate counts before the reset. Only included for the campaign's creator. */
-  candidates?: { name: string; votes: number }[];
+  candidates?: { name: string; votes: number; position?: string }[];
 }
 
 /**
@@ -155,7 +182,7 @@ export async function getNotices(db: Queryable, campaignId: string, withTallies:
     if (r.action === 'campaign.reset') {
       const snap = r.details?.snapshot ?? {};
       const e: Notice = { kind: 'reset', at: r.at, by: r.by ?? null, reason: String(r.details?.reason ?? ''), votes_cleared: Number(snap.turnout?.votes ?? 0) };
-      if (withTallies) e.candidates = (snap.candidates ?? []) as { name: string; votes: number }[];
+      if (withTallies) e.candidates = (snap.candidates ?? []) as { name: string; votes: number; position?: string }[];
       return e;
     }
     if (r.action === 'candidate.withdrawn') return { kind: 'candidate_withdrawn', at: r.at, by: r.by ?? null, reason: String(r.details?.reason ?? ''), candidate: String(r.details?.name ?? '') } as Notice;
@@ -179,11 +206,29 @@ export function quorumOf(percent: number | null | undefined, turnout: { votes: n
   return { percent, eligible: turnout.eligible, needed, votes: turnout.votes, met: needed == null ? null : turnout.votes >= needed };
 }
 
-export interface ResultsPayload {
-  candidates: { id: string; name: string; votes: number; is_abstain?: boolean; withdrawn?: boolean }[];
+export interface ResultCandidate extends Counted { position_id: string; region: string | null }
+
+/** One position's result. `winners` comes from the rules hook (domain/rules.ts); a tie has no winner. */
+export interface PositionResult {
+  id: string; title: string; description: string | null; seats: number; sort_order: number;
+  candidates: ResultCandidate[];
+  /** Members who voted in this position (receipts) and how many could have. */
   turnout: { votes: number; eligible: number | null };
-  /** Candidates sharing first place (2 or more), or null. A tie has no winner: the creator can start a run-off. */
+  winners: { id: string; name: string; votes: number }[];
   tie: { ids: string[]; names: string[]; votes: number } | null;
+}
+
+export interface ResultsPayload {
+  /** Every candidate of every position (each carries `position_id`). For a one-position campaign this is the whole result. */
+  candidates: ResultCandidate[];
+  /** Per position: counters, turnout, winner(s) and tie. */
+  positions: PositionResult[];
+  /** Members who voted in at least one position, and how many could have. */
+  turnout: { votes: number; eligible: number | null };
+  /** Candidates sharing first place (2 or more) in a ONE-position campaign, or null. A tie has no winner: the creator can start a run-off. */
+  tie: { ids: string[]; names: string[]; votes: number } | null;
+  /** The admin chose to show results grouped by region. */
+  group_by_region: boolean;
   /** The minimum turnout set for this campaign and whether it was met (null = none set). A result below it is flagged. */
   quorum: Quorum | null;
   /** Who published the results and when (null = not published, or published before this was recorded). */
@@ -193,22 +238,42 @@ export interface ResultsPayload {
 /** Per-candidate counts. Only ever returned for a CLOSED campaign (SEC-01): while it is open nobody sees these. */
 export async function getResults(db: Queryable, campaignId: string): Promise<ResultsPayload> {
   const cands = await db.query(
-    `SELECT c.id, c.name, c.is_abstain, (c.withdrawn_at IS NOT NULL) AS withdrawn, coalesce(t.votes, 0)::int AS votes
-       FROM candidates c LEFT JOIN tallies t ON t.candidate_id = c.id AND t.campaign_id = c.campaign_id
-      WHERE c.campaign_id = $1 ORDER BY c.sort_order, c.name`, [campaignId]);
-  const s = standing(cands.rows);
+    `SELECT c.id, c.name, c.position_id, c.is_abstain, (c.withdrawn_at IS NOT NULL) AS withdrawn, r.name AS region, coalesce(t.votes, 0)::int AS votes
+       FROM candidates c JOIN positions p ON p.id = c.position_id LEFT JOIN regions r ON r.id = c.region_id
+       LEFT JOIN tallies t ON t.candidate_id = c.id AND t.campaign_id = c.campaign_id
+      WHERE c.campaign_id = $1 AND c.status = 'approved' ORDER BY p.sort_order, p.created_at, c.sort_order, c.name`, [campaignId]);
   const turnout = await getTurnout(db, campaignId);
+  const perPos = await positionTurnouts(db, campaignId);
+  const posRows = (await db.query('SELECT id, title, description, seats, sort_order, rules, min_candidates, max_candidates FROM positions WHERE campaign_id = $1 ORDER BY sort_order, created_at', [campaignId])).rows;
+  const positions: PositionResult[] = posRows.map((p) => {
+    const list = (cands.rows as ResultCandidate[]).filter((x) => x.position_id === p.id);
+    const rp: RulePosition = { id: p.id, title: p.title, seats: p.seats, rules: p.rules ?? {}, minCandidates: p.min_candidates, maxCandidates: p.max_candidates };
+    const out = computeResult(rp, list);
+    return {
+      id: p.id, title: p.title, description: p.description, seats: p.seats, sort_order: p.sort_order, candidates: list,
+      turnout: { votes: perPos.get(p.id) ?? 0, eligible: turnout.eligible },
+      winners: out.winners.map((w) => ({ id: w.id, name: w.name, votes: w.votes })),
+      tie: out.tied.length ? { ids: out.tied.map((x) => x.id), names: out.tied.map((x) => x.name), votes: out.tied[0].votes } : null,
+    };
+  });
   const meta = (await db.query(
-    `SELECT c.quorum_percent, c.results_published, c.published_at, c.publish_scheduled, u.display_name AS by
+    `SELECT c.quorum_percent, c.results_group_by_region, c.results_published, c.published_at, c.publish_scheduled, u.display_name AS by
        FROM campaigns c LEFT JOIN users u ON u.entra_oid = c.published_by WHERE c.id = $1`, [campaignId])).rows[0];
-  return { candidates: cands.rows, turnout, quorum: quorumOf(meta?.quorum_percent, turnout),
-    publication: meta?.results_published && meta.published_at ? { by: meta.by ?? null, at: meta.published_at, scheduled: !!meta.publish_scheduled } : null, tie: s.tied.length ? { ids: s.tied.map((x) => x.id), names: s.tied.map((x) => x.name), votes: s.tied[0].votes } : null };
+  return { candidates: cands.rows, positions, turnout, quorum: quorumOf(meta?.quorum_percent, turnout), group_by_region: !!meta?.results_group_by_region,
+    publication: meta?.results_published && meta.published_at ? { by: meta.by ?? null, at: meta.published_at, scheduled: !!meta.publish_scheduled } : null,
+    tie: positions.length === 1 ? positions[0].tie : null };
 }
 
-/** Turnout only (votes cast, and how many people could have voted). Safe to show while voting is open. */
+/** Members who voted in each position (a receipt count; no candidate is involved). */
+export async function positionTurnouts(db: Queryable, campaignId: string): Promise<Map<string, number>> {
+  const { rows } = await db.query('SELECT position_id, count(*)::int AS n FROM vote_receipts WHERE campaign_id = $1 GROUP BY position_id', [campaignId]);
+  return new Map(rows.map((r) => [r.position_id as string, r.n as number]));
+}
+
+/** Turnout only (members who voted in at least one position, and how many people could have voted). Safe to show while voting is open. */
 export async function getTurnout(db: Queryable, campaignId: string): Promise<ResultsPayload['turnout']> {
   const t = await db.query(
-    `SELECT (SELECT count(*)::int FROM vote_receipts WHERE campaign_id = $1) AS votes,
+    `SELECT (SELECT count(DISTINCT member_key)::int FROM vote_receipts WHERE campaign_id = $1) AS votes,
             CASE (SELECT eligibility FROM campaigns WHERE id = $1)
                  WHEN 'list' THEN (SELECT count(*)::int FROM eligible_voters WHERE campaign_id = $1)
                  WHEN 'umoja' THEN (SELECT CASE WHEN (SELECT status FROM campaigns WHERE id = $1) = 'draft'
@@ -221,13 +286,15 @@ export interface SealCheck {
   chain_ok: boolean; chain_checked: number;
   sealed: boolean; sealed_at: Date | null; seal_hash: string | null; seal_seq: number | null;
   tallies_match: boolean | null; receipts_match: boolean | null;
-  sealed_tallies: { name: string; votes: number }[]; sealed_turnout: number | null;
+  sealed_tallies: { name: string; votes: number; position?: string }[]; sealed_turnout: number | null;
+  /** One entry per position: its own fingerprint and whether its counters and receipts still equal what was sealed. */
+  positions: { position_id: string; title: string; fingerprint: string; sealed_turnout: number; tallies_match: boolean | null; receipts_match: boolean | null }[];
 }
 
 /**
  * "Verify results integrity" (SEC-04): the audit chain is intact, the campaign's latest close entry is sealed in it, and the
- * counters and receipts still equal what that entry recorded. null = the data it would compare with no longer exists
- * (permanently deleted); the sealed entry itself stays.
+ * counters and receipts still equal what that entry recorded, overall and for each position. null = the data it would compare with no
+ * longer exists (permanently deleted); the sealed entry itself stays.
  */
 export async function verifySeal(db: Queryable, campaignId: string): Promise<SealCheck> {
   const chain = (await db.query('SELECT audit_chain_verify() AS r')).rows[0].r as { ok: boolean; checked: number };
@@ -235,21 +302,34 @@ export async function verifySeal(db: Queryable, campaignId: string): Promise<Sea
     `SELECT seq, hash, at, details FROM audit_log WHERE campaign_id = $1 AND action LIKE 'campaign.close%' ORDER BY seq DESC LIMIT 1`, [campaignId])).rows[0];
   const reset = seal ? (await db.query(`SELECT 1 FROM audit_log WHERE campaign_id = $1 AND action = 'campaign.reset' AND seq > $2`, [campaignId, seal.seq])).rowCount : 0;
   const out: SealCheck = { chain_ok: chain.ok, chain_checked: Number(chain.checked), sealed: !!seal && !reset, sealed_at: null, seal_hash: null, seal_seq: null,
-    tallies_match: null, receipts_match: null, sealed_tallies: [], sealed_turnout: null };
+    tallies_match: null, receipts_match: null, sealed_tallies: [], sealed_turnout: null, positions: [] };
   if (!seal || reset) return out;
   out.sealed_at = seal.at; out.seal_hash = seal.hash; out.seal_seq = Number(seal.seq);
-  const sealed = (seal.details?.tallies ?? []) as { candidate_id: string; name: string; votes: number }[];
-  out.sealed_tallies = sealed.map((t) => ({ name: t.name, votes: t.votes }));
+  const sealed = (seal.details?.tallies ?? []) as { candidate_id: string; name: string; votes: number; position?: string; position_id?: string }[];
+  out.sealed_tallies = sealed.map((t) => ({ name: t.name, votes: t.votes, ...(t.position ? { position: t.position } : {}) }));
   out.sealed_turnout = Number(seal.details?.receipts ?? 0);
-  const now = (await db.query('SELECT candidate_id, votes FROM tallies WHERE campaign_id = $1', [campaignId])).rows as { candidate_id: string; votes: number }[];
+  const now = (await db.query('SELECT candidate_id, position_id, votes FROM tallies WHERE campaign_id = $1', [campaignId])).rows as { candidate_id: string; position_id: string; votes: number }[];
   // Once the retention job has removed the receipts (their personal data), "receipts equal the sealed turnout" no longer applies (null);
   // the sealed turnout itself stays in the audit chain.
   const purged = (await db.query('SELECT receipts_purged_at FROM campaigns WHERE id = $1', [campaignId])).rows[0]?.receipts_purged_at;
   if (now.length > 0) {
     const cur = new Map(now.map((r) => [r.candidate_id, r.votes]));
     out.tallies_match = sealed.length === now.length && sealed.every((t) => cur.get(t.candidate_id) === t.votes);
-    const receipts = (await db.query('SELECT count(*)::int AS n FROM vote_receipts WHERE campaign_id = $1', [campaignId])).rows[0].n as number;
+    const byPos = await positionTurnouts(db, campaignId);
+    const receipts = [...byPos.values()].reduce((n, x) => n + x, 0);
     out.receipts_match = purged ? null : receipts === out.sealed_turnout;
+    const sealedPositions = (seal.details?.positions ?? []) as { position_id: string; title: string; receipts: number; fingerprint: string }[];
+    out.positions = sealedPositions.map((p) => {
+      const mine = sealed.filter((t) => t.position_id === p.position_id);
+      return {
+        position_id: p.position_id, title: p.title, fingerprint: p.fingerprint, sealed_turnout: Number(p.receipts),
+        tallies_match: mine.length === now.filter((r) => r.position_id === p.position_id).length && mine.every((t) => cur.get(t.candidate_id) === t.votes),
+        receipts_match: purged ? null : (byPos.get(p.position_id) ?? 0) === Number(p.receipts),
+      };
+    });
+    if (out.positions.some((p) => p.tallies_match === false)) out.tallies_match = false;
+    if (!purged && out.positions.some((p) => p.receipts_match === false)) out.receipts_match = false;
   }
   return out;
 }
+

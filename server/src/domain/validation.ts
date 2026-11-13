@@ -30,6 +30,12 @@ export const createCampaignBody = z.object({
   require_approval: z.boolean().optional(),
   /** Minimum turnout as a percentage of the eligible voters; a result below it is flagged. Needs a vote with a voter list. */
   quorum_percent: z.number().int().min(1).max(100).nullable().optional(),
+  /** Nominations (candidate self-nomination) close at this time; they also close when the campaign starts. */
+  nominations_close_at: isoDate.optional(),
+  /** Who may nominate themselves: null = the same people who may vote. */
+  nominate_eligibility: z.enum(['all', 'umoja']).nullable().optional(),
+  /** Show the results grouped by region. */
+  results_group_by_region: z.boolean().optional(),
 }).strict().refine(windowOk, windowMsg)
   .refine((v) => v.eligibility !== 'list' || (v.emails?.length ?? 0) > 0, { message: 'Add at least one email address for a listed vote', path: ['emails'] })
   .refine((v) => v.eligibility === 'list' || v.emails === undefined, { message: 'emails only applies to a listed vote', path: ['emails'] })
@@ -43,12 +49,42 @@ export const patchCampaignBody = z.object({
   allow_edits_after_start: z.boolean().optional(),
   allow_abstain: z.boolean().optional(),
   quorum_percent: z.number().int().min(1).max(100).nullable().optional(),
+  nominations_close_at: isoDate.optional(),
+  nominate_eligibility: z.enum(['all', 'umoja']).nullable().optional(),
+  results_group_by_region: z.boolean().optional(),
 }).strict().refine(windowOk, windowMsg);
 
 export const candidateBody = z.object({
   name: line(120),
   bio: lines(500).optional(),
+  /** Which position the candidate stands for. Optional only while the campaign has a single position. */
+  position_id: uuid.optional(),
+  region_id: uuid.optional(),
 }).strict();
+
+export const positionBody = z.object({
+  title: line(200),
+  description: lines(2000).nullable().optional(),
+  seats: z.number().int().min(1).max(50).optional(),
+  min_candidates: z.number().int().min(1).max(500).nullable().optional(),
+  max_candidates: z.number().int().min(1).max(500).nullable().optional(),
+}).strict().refine((v) => v.min_candidates == null || v.max_candidates == null || v.max_candidates >= v.min_candidates, { message: 'The maximum cannot be below the minimum', path: ['max_candidates'] });
+export const positionPatchBody = z.object({
+  title: line(200).optional(),
+  description: lines(2000).nullable().optional(),
+  seats: z.number().int().min(1).max(50).optional(),
+  min_candidates: z.number().int().min(1).max(500).nullable().optional(),
+  max_candidates: z.number().int().min(1).max(500).nullable().optional(),
+  /** Nominations for this position: open or closed by hand. */
+  status: z.enum(['open', 'closed']).optional(),
+}).strict();
+export const reorderBody = z.object({ ids: z.array(uuid).min(1).max(200) }).strict();
+export const regionBody = z.object({ name: line(80) }).strict();
+export const rejectBody = z.object({ reason: z.string().transform(cleanMultiline).pipe(z.string().trim().min(5, 'Give a reason of at least 5 characters').max(1000)) }).strict();
+/** A candidate's own profile (the nomination form). The photo travels as a multipart file. */
+export const profileBody = z.object({ name: line(120), bio: lines(500).optional(), region_id: uuid }).strict();
+export const positionParams = z.object({ id: uuid, pid: uuid });
+export const regionParams = z.object({ id: uuid, rid: uuid });
 /** Schedule (or clear) the automatic publication of a closed result. */
 export const publishScheduleBody = z.object({ publish_at: z.string().datetime({ offset: true }).nullable() }).strict();
 export const publishBody = z.object({ acknowledge_below_quorum: z.boolean().optional() }).strict();
@@ -59,6 +95,7 @@ export const candidatePatchBody = z.object({
   name: line(120).optional(),
   bio: lines(500).optional(),
   removePhoto: z.enum(['true', 'false']).optional(),
+  region_id: uuid.nullable().optional(),
 }).strict();
 
 export const eligibleBody = z.discriminatedUnion('mode', [
@@ -69,7 +106,7 @@ export const eligibleBody = z.discriminatedUnion('mode', [
 
 export const closeBody = z.object({ reason: z.string().transform(cleanMultiline).pipe(z.string().trim().min(10, 'Give a reason of at least 10 characters').max(1000)).optional() }).strict();
 export const ackBody = z.object({ note: z.string().transform(cleanMultiline).pipe(z.string().trim().min(10, 'Write what you found, at least 10 characters').max(1000)) }).strict();
-export const voteBody = z.object({ candidateId: uuid }).strict();
+export const voteBody = z.object({ candidateId: uuid, positionId: uuid.optional() }).strict();
 export const idParams = z.object({ id: uuid });
 export const candParams = z.object({ id: uuid, cid: uuid });
 export const tokenParams = z.object({ shareToken: z.string().regex(/^[A-Za-z0-9_-]{32,128}$/) });

@@ -208,7 +208,8 @@ describe('vote rules', () => {
     const db = new pg.Client({ connectionString: TEST_APP_URL });
     await db.connect();
     try {
-      await expect(db.query('INSERT INTO tallies (campaign_id, candidate_id) VALUES ($1, $2)', [c1.id, c2.candidates[0]])).rejects.toThrow(/foreign key/);
+      const pos = (await ownerDb().query('SELECT id FROM positions WHERE campaign_id = $1', [c1.id])).rows[0].id;
+      await expect(db.query('INSERT INTO tallies (campaign_id, position_id, candidate_id) VALUES ($1, $2, $3)', [c1.id, pos, c2.candidates[0]])).rejects.toThrow(/foreign key/);
     } finally { await db.end(); }
   });
 
@@ -378,9 +379,9 @@ describe('ballot secrecy (schema)', () => {
   it('SEC-02: there is no row per vote: no ballots table, and a tally row holds only counts', async () => {
     expect((await ownerDb().query("SELECT to_regclass('public.ballots') AS t")).rows[0].t).toBeNull();
     const cols = await ownerDb().query("SELECT column_name FROM information_schema.columns WHERE table_name = 'tallies' ORDER BY column_name");
-    expect(cols.rows.map((r) => r.column_name)).toEqual(['campaign_id', 'candidate_id', 'votes']);
+    expect(cols.rows.map((r) => r.column_name)).toEqual(['campaign_id', 'candidate_id', 'position_id', 'votes']);
     const receipts = await ownerDb().query("SELECT column_name FROM information_schema.columns WHERE table_name = 'vote_receipts' ORDER BY column_name");
-    expect(receipts.rows.map((r) => r.column_name)).toEqual(['campaign_id', 'member_key', 'voter_oid']);   // no candidate, no timestamp
+    expect(receipts.rows.map((r) => r.column_name)).toEqual(['campaign_id', 'member_key', 'position_id', 'voter_oid']);   // no candidate, no timestamp
   });
 
   it('SEC-02 regression: no tally row shares its hidden xmin with any receipt (the old ballots/receipts join is dead)', async () => {

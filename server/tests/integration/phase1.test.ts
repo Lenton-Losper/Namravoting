@@ -152,7 +152,7 @@ describe('SEC-03: one vote per member, not per account', () => {
     const c = await umojaCampaign();
     await c.admin.post(`/api/campaigns/${c.id}/start`).expect(200);
     await vote(await login(app, { ...S1, employeeCode: 'NAM0101' }), c).expect(201);
-    await expect(ownerDb().query("INSERT INTO vote_receipts (campaign_id, voter_oid, member_key) VALUES ($1, $2, 'code:NAM0101')", [c.id, S3.oid])).rejects.toThrow(/vote_receipts_member_unique|unique|duplicate|foreign key/);
+    await expect(ownerDb().query("INSERT INTO vote_receipts (campaign_id, position_id, voter_oid, member_key) VALUES ($1, (SELECT id FROM positions WHERE campaign_id = $1 LIMIT 1), $2, 'code:NAM0101')", [c.id, S3.oid])).rejects.toThrow(/vote_receipts_member_unique|unique|duplicate|foreign key/);
   });
 });
 

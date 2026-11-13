@@ -1,5 +1,7 @@
 import { activeMemberCount, snapshotVoters } from '../services/umoja.js';
 import { createTallies } from '../services/tallies.js';
+import { defaultPosition, positionBlocks, seedRegions, setAbstain, startProblems } from '../services/positions.js';
+import { positionsRouter } from './positions.js';
 import crypto from 'node:crypto';
 import { Router, type Request, type RequestHandler, type Response } from 'express';
 import multer from 'multer';
@@ -151,13 +153,7 @@ const trunc = (v: string | null | undefined) => (v == null ? null : v.length > 3
 const auditEdit = (tx: PoolClient, actor: string, id: string, changes: EditChange[]) => audit(tx, actor, 'campaign.edit_after_start', id, { changes });
 const sameInstant = (a: string | null | undefined, b: Date | null) => (a == null ? b == null : b != null && new Date(a).getTime() === b.getTime());
 
-/** The ballot's Abstain line: a candidate row flagged is_abstain (sorted last), so it gets a tally counter like everyone else. */
-export const ABSTAIN_NAME = 'Abstain (none of the above)';
-async function setAbstain(tx: PoolClient, id: string, on: boolean): Promise<void> {
-  await tx.query('UPDATE campaigns SET allow_abstain = $2 WHERE id = $1', [id, on]);
-  if (on) await tx.query('INSERT INTO candidates (campaign_id, name, sort_order, is_abstain) VALUES ($1, $2, 2000000000, true) ON CONFLICT DO NOTHING', [id, ABSTAIN_NAME]);
-  else await tx.query('DELETE FROM candidates WHERE campaign_id = $1 AND is_abstain', [id]);
-}
+export { ABSTAIN_NAME } from '../services/positions.js';
 
 /** Validates and de-duplicates a list of voter emails (shared by creating a campaign and by setting eligibility). */
 function cleanEmails(raw: string[]): string[] {
@@ -212,7 +208,7 @@ export function adminRouter(): Router {
     const open = await getPool().query("SELECT id FROM campaigns c WHERE " + VISIBLE + " AND status = 'open'", [u.oid]);
     for (const row of open.rows) await refreshStatus(row.id);
     const { rows } = await getPool().query(
-      `SELECT c.*, (SELECT count(*)::int FROM vote_receipts v WHERE v.campaign_id = c.id) AS turnout,
+      `SELECT c.*, (SELECT count(DISTINCT v.member_key)::int FROM vote_receipts v WHERE v.campaign_id = c.id) AS turnout,
               CASE c.eligibility WHEN 'list' THEN (SELECT count(*)::int FROM eligible_voters e WHERE e.campaign_id = c.id)
                                 WHEN 'umoja' THEN (CASE WHEN c.status = 'draft' THEN (SELECT count(*)::int FROM umoja_members WHERE active)
                                                      ELSE (SELECT count(*)::int FROM campaign_voters v WHERE v.campaign_id = c.id AND v.active) END) END AS eligible_count
@@ -230,7 +226,7 @@ export function adminRouter(): Router {
     for (const row of mine.rows) await refreshStatus(row.id);
     const { rows } = await getPool().query(
       `SELECT c.id, c.title, c.status, c.created_at, c.opens_at, c.closes_at, c.eligibility, c.results_published, c.archived_at,
-              (SELECT count(*)::int FROM vote_receipts v WHERE v.campaign_id = c.id) AS turnout,
+              (SELECT count(DISTINCT v.member_key)::int FROM vote_receipts v WHERE v.campaign_id = c.id) AS turnout,
               CASE c.eligibility WHEN 'list' THEN (SELECT count(*)::int FROM eligible_voters e WHERE e.campaign_id = c.id)
                                 WHEN 'umoja' THEN (CASE WHEN c.status = 'draft' THEN (SELECT count(*)::int FROM umoja_members WHERE active)
                                                      ELSE (SELECT count(*)::int FROM campaign_voters v WHERE v.campaign_id = c.id AND v.active) END) END AS eligible_count,
@@ -243,7 +239,8 @@ export function adminRouter(): Router {
       ? (await getPool().query(
           `SELECT c.campaign_id, c.id, c.name, c.photo_path, coalesce(t.votes, 0)::int AS votes
              FROM candidates c LEFT JOIN tallies t ON t.candidate_id = c.id AND t.campaign_id = c.campaign_id
-            WHERE c.campaign_id = ANY($1::uuid[]) AND NOT c.is_abstain AND c.withdrawn_at IS NULL`, [closedIds])).rows
+            WHERE c.campaign_id = ANY($1::uuid[]) AND NOT c.is_abstain AND c.withdrawn_at IS NULL AND c.status = 'approved'
+              AND (SELECT count(*) FROM positions p WHERE p.campaign_id = c.campaign_id) = 1`, [closedIds])).rows
       : [];
     const winnerOf = (cid: string) => {
       const t = tallies.filter((x) => x.campaign_id === cid).sort((a, b) => b.votes - a.votes);
@@ -277,9 +274,11 @@ export function adminRouter(): Router {
     const emails = eligibility === 'list' ? cleanEmails(b.emails ?? []) : [];
     const created = await withTx(async (c) => {
       const { rows } = await c.query(
-        `INSERT INTO campaigns (share_token, created_by, title, description, opens_at, closes_at, eligibility, allow_edits_after_start, allow_abstain, require_approval, quorum_percent)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
-        [token, u.oid, b.title, b.description ?? null, b.opens_at ?? null, b.closes_at ?? null, eligibility, b.allow_edits_after_start === true, b.allow_abstain === true, b.require_approval === true, b.quorum_percent ?? null]);
+        `INSERT INTO campaigns (share_token, created_by, title, description, opens_at, closes_at, eligibility, allow_edits_after_start, allow_abstain, require_approval, quorum_percent, nominations_close_at, nominate_eligibility, results_group_by_region)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
+        [token, u.oid, b.title, b.description ?? null, b.opens_at ?? null, b.closes_at ?? null, eligibility, b.allow_edits_after_start === true, b.allow_abstain === true, b.require_approval === true, b.quorum_percent ?? null,
+         b.nominations_close_at ?? null, b.nominate_eligibility ?? null, b.results_group_by_region === true]);
+      await seedRegions(c, rows[0].id);   // the 14 regions of Namibia; the admin can rename, add or remove them while the campaign is a draft
       if (b.allow_abstain === true) await setAbstain(c, rows[0].id, true);
       if (emails.length) await c.query('INSERT INTO eligible_voters (campaign_id, voter_email) SELECT $1, unnest($2::text[])', [rows[0].id, emails]);
       await audit(c, u.oid, 'campaign.create', rows[0].id, { title: b.title, eligibility, allow_edits_after_start: b.allow_edits_after_start === true, allow_abstain: b.allow_abstain === true, require_approval: b.require_approval === true, quorum_percent: b.quorum_percent ?? null, ...(emails.length ? { count: emails.length } : {}) });
@@ -291,14 +290,19 @@ export function adminRouter(): Router {
   r.get('/:id', loadRunnable, async (_req, res) => {
     const c = camp(res);
     const cands = await getPool().query(
-      'SELECT id, name, bio, photo_path, sort_order, withdrawn_at, withdrawn_reason FROM candidates WHERE campaign_id = $1 AND NOT is_abstain ORDER BY sort_order, name', [c.id]);
+      `SELECT k.id, k.name, k.bio, k.photo_path, k.sort_order, k.withdrawn_at, k.withdrawn_reason, k.position_id, k.region_id, r.name AS region, k.status,
+              k.submitted_by_oid IS NOT NULL AS self_nominated, k.submitted_at, k.review_reason
+         FROM candidates k LEFT JOIN regions r ON r.id = k.region_id WHERE k.campaign_id = $1 AND NOT k.is_abstain ORDER BY k.sort_order, k.name`, [c.id]);
     const el = await getPool().query('SELECT voter_email FROM eligible_voters WHERE campaign_id = $1 ORDER BY voter_email', [c.id]);
     res.json({
       ...present(c),
       my_role: res.locals.myRole as string,
-      candidates: cands.rows.map((x) => ({ id: x.id, name: x.name, bio: x.bio, photo_url: c.photos_purged_at ? null : photoUrl(x), sort_order: x.sort_order, withdrawn_at: x.withdrawn_at, withdrawn_reason: x.withdrawn_reason })),
+      candidates: cands.rows.map((x) => ({ id: x.id, name: x.name, bio: x.bio, photo_url: c.photos_purged_at ? null : photoUrl(x), sort_order: x.sort_order, withdrawn_at: x.withdrawn_at, withdrawn_reason: x.withdrawn_reason,
+        position_id: x.position_id, region_id: x.region_id, region: x.region, status: x.status, self_nominated: x.self_nominated, submitted_at: x.submitted_at, review_reason: x.review_reason })),
+      positions: await positionBlocks(c),
+      regions: (await getPool().query('SELECT id, name, sort_order FROM regions WHERE campaign_id = $1 ORDER BY sort_order, name', [c.id])).rows,
       eligible_emails: el.rows.map((x) => x.voter_email),
-      turnout: (await getPool().query('SELECT count(*)::int AS n FROM vote_receipts WHERE campaign_id = $1', [c.id])).rows[0].n,
+      turnout: (await getPool().query('SELECT count(DISTINCT member_key)::int AS n FROM vote_receipts WHERE campaign_id = $1', [c.id])).rows[0].n,
       umoja_active_count: await activeMemberCount(getPool()),   // count only; never the members themselves
       integrity_block: c.status === 'open' ? await openIntegrityBlock(getPool(), c.id) : null,   // SEC-16
       edited_after_start: (await getNotices(getPool(), c.id, false)).filter((n) => n.kind === 'edited_after_start'),
@@ -323,6 +327,16 @@ export function adminRouter(): Router {
            b.opens_at !== undefined, b.opens_at ?? null, b.closes_at !== undefined, b.closes_at ?? null,
            b.allow_edits_after_start !== undefined, b.allow_edits_after_start ?? false]);
         const row = rows[0] as CampaignRow;
+        if (b.nominations_close_at !== undefined || b.nominate_eligibility !== undefined || b.results_group_by_region !== undefined) {
+          const u2 = await tx.query(
+            `UPDATE campaigns SET
+               nominations_close_at = CASE WHEN $2::boolean THEN $3::timestamptz ELSE nominations_close_at END,
+               nominate_eligibility = CASE WHEN $4::boolean THEN $5 ELSE nominate_eligibility END,
+               results_group_by_region = CASE WHEN $6::boolean THEN $7 ELSE results_group_by_region END
+             WHERE id = $1 RETURNING nominations_close_at, nominate_eligibility, results_group_by_region`,
+            [c.id, b.nominations_close_at !== undefined, b.nominations_close_at ?? null, b.nominate_eligibility !== undefined, b.nominate_eligibility ?? null, b.results_group_by_region !== undefined, b.results_group_by_region ?? false]);
+          Object.assign(row, u2.rows[0]);
+        }
         if (b.allow_abstain !== undefined && b.allow_abstain !== row.allow_abstain) { await setAbstain(tx, c.id, b.allow_abstain); row.allow_abstain = b.allow_abstain; }
         if (b.quorum_percent !== undefined) {
           if (b.quorum_percent !== null && row.eligibility === 'all') throw new HttpError(409, 'A quorum needs a known list of voters: choose Umoja members or a list of emails first', 'quorum_needs_list');
@@ -341,6 +355,7 @@ export function adminRouter(): Router {
       if (b.allow_abstain !== undefined && b.allow_abstain !== cur.allow_abstain) throw new HttpError(409, 'The Abstain option cannot be changed once voting has started', 'locked');
       if (b.quorum_percent !== undefined && (b.quorum_percent ?? null) !== (cur.quorum_percent ?? null)) throw new HttpError(409, 'The quorum cannot be changed once voting has started', 'locked');
       if (b.opens_at !== undefined && !sameInstant(b.opens_at, cur.opens_at)) throw new HttpError(409, 'The opening time cannot be changed once voting has started', 'locked');
+      if (b.nominations_close_at !== undefined || b.nominate_eligibility !== undefined) throw new HttpError(409, 'Nominations closed when voting started', 'locked');
       const changes: EditChange[] = [];
       if (b.title !== undefined && b.title !== cur.title) changes.push({ what: 'title', from: cur.title, to: b.title });
       if (b.description !== undefined && (b.description ?? null) !== (cur.description ?? null)) changes.push({ what: 'description', from: trunc(cur.description), to: trunc(b.description) });
@@ -366,19 +381,30 @@ export function adminRouter(): Router {
 
   r.post('/:id/candidates', loadRunnable, upload.single('photo'), async (req, res) => {
     const c = camp(res);
-    const b = candidateBody.parse({ name: req.body?.name, ...(req.body?.bio !== undefined ? { bio: req.body.bio } : {}) });
+    const b = candidateBody.parse({
+      name: req.body?.name, ...(req.body?.bio !== undefined ? { bio: req.body.bio } : {}),
+      ...(req.body?.position_id ? { position_id: req.body.position_id } : {}), ...(req.body?.region_id ? { region_id: req.body.region_id } : {}) });
     const photo = req.file ? await savePhoto(req.file.buffer) : null;
     try {
       const cand = await inEditTx(c.id, async (tx, live) => {
         if (live) await requireNoVotes(tx, c.id);
+        // The position: given, or (single-question campaigns) the campaign's only position, created on first use.
+        const positionId = b.position_id ?? await defaultPosition(tx, c.id, c.title);
+        if (!positionId) throw new HttpError(400, 'Choose the position this candidate stands for', 'position_required');
+        const pos = (await tx.query('SELECT max_candidates FROM positions WHERE id = $1 AND campaign_id = $2 FOR UPDATE', [positionId, c.id])).rows[0];
+        if (!pos) throw new HttpError(400, 'That position does not belong to this campaign', 'invalid_position');
+        if (b.region_id && !(await tx.query('SELECT 1 FROM regions WHERE id = $1 AND campaign_id = $2', [b.region_id, c.id])).rowCount) throw new HttpError(400, 'That region does not belong to this campaign', 'invalid_region');
+        if (pos.max_candidates != null && (await tx.query("SELECT count(*)::int AS n FROM candidates WHERE position_id = $1 AND NOT is_abstain AND status = 'approved'", [positionId])).rows[0].n >= pos.max_candidates) {
+          throw new HttpError(409, `This position allows at most ${pos.max_candidates} candidates`, 'position_full');
+        }
         const { rows } = await tx.query(
-          `INSERT INTO candidates (campaign_id, name, bio, photo_path, sort_order)
-           VALUES ($1,$2,$3,$4,(SELECT COALESCE(max(sort_order),0)+1 FROM candidates WHERE campaign_id = $1 AND NOT is_abstain))
-           RETURNING id, name, bio, photo_path, sort_order`, [c.id, b.name, b.bio || null, photo]);
+          `INSERT INTO candidates (campaign_id, position_id, region_id, name, bio, photo_path, sort_order)
+           VALUES ($1,$2,$3,$4,$5,$6,(SELECT COALESCE(max(sort_order),0)+1 FROM candidates WHERE position_id = $2 AND NOT is_abstain))
+           RETURNING id, name, bio, photo_path, sort_order, position_id, region_id, status`, [c.id, positionId, b.region_id ?? null, b.name, b.bio || null, photo]);
         if (live) {
-          await tx.query('INSERT INTO tallies (campaign_id, candidate_id, votes) VALUES ($1, $2, 0)', [c.id, rows[0].id]);   // a started campaign has a counter per candidate
+          await tx.query('INSERT INTO tallies (campaign_id, position_id, candidate_id, votes) VALUES ($1, $2, $3, 0)', [c.id, positionId, rows[0].id]);   // a started campaign has a counter per candidate
           await auditEdit(tx, currentUser(req).oid, c.id, [{ what: 'candidate_added', name: b.name }]);
-        } else await audit(tx, currentUser(req).oid, 'candidate.add', c.id, { candidate_id: rows[0].id });
+        } else await audit(tx, currentUser(req).oid, 'candidate.add', c.id, { candidate_id: rows[0].id, position_id: positionId });
         return rows[0];
       });
       res.status(201).json({ ...cand, photo_url: photoUrl(cand), photo_path: undefined });
@@ -392,6 +418,7 @@ export function adminRouter(): Router {
       ...(req.body?.name !== undefined ? { name: req.body.name } : {}),
       ...(req.body?.bio !== undefined ? { bio: req.body.bio } : {}),
       ...(req.body?.removePhoto !== undefined ? { removePhoto: req.body.removePhoto } : {}),
+      ...(req.body?.region_id !== undefined ? { region_id: req.body.region_id === '' ? null : req.body.region_id } : {}),
     });
     const newPhoto = req.file ? await savePhoto(req.file.buffer) : null;
     try {
@@ -403,9 +430,10 @@ export function adminRouter(): Router {
         const { rows } = await tx.query(
           `UPDATE candidates SET name = COALESCE($3, name),
              bio = CASE WHEN $4::boolean THEN NULLIF($5, '') ELSE bio END,
-             photo_path = CASE WHEN $6::boolean THEN $7 ELSE photo_path END
-           WHERE id = $1 AND campaign_id = $2 RETURNING id, name, bio, photo_path, sort_order`,
-          [cid, c.id, b.name ?? null, b.bio !== undefined, b.bio ?? null, setPhoto, newPhoto]);
+             photo_path = CASE WHEN $6::boolean THEN $7 ELSE photo_path END,
+             region_id = CASE WHEN $8::boolean THEN $9::uuid ELSE region_id END
+           WHERE id = $1 AND campaign_id = $2 RETURNING id, name, bio, photo_path, sort_order, position_id, region_id, status`,
+          [cid, c.id, b.name ?? null, b.bio !== undefined, b.bio ?? null, setPhoto, newPhoto, b.region_id !== undefined, b.region_id ?? null]);
         if (live) {
           const oldName = old.rows[0].name as string;
           await auditEdit(tx, currentUser(req).oid, c.id, [{ what: 'candidate_edited', name: rows[0].name, ...(rows[0].name !== oldName ? { from: oldName, to: rows[0].name as string } : {}) }]);
@@ -423,7 +451,7 @@ export function adminRouter(): Router {
     const photo = await inEditTx(c.id, async (tx, live) => {
       if (live) {
         await requireNoVotes(tx, c.id);
-        const n = (await tx.query('SELECT count(*)::int AS n FROM candidates WHERE campaign_id = $1 AND NOT is_abstain', [c.id])).rows[0].n as number;
+        const n = (await tx.query("SELECT count(*)::int AS n FROM candidates WHERE position_id = (SELECT position_id FROM candidates WHERE id = $2 AND campaign_id = $1) AND NOT is_abstain AND status = 'approved'", [c.id, cid])).rows[0].n as number;
         if (n <= 2) throw new HttpError(409, 'A running vote needs at least 2 candidates', 'needs_candidates');
       }
       const { rows } = await tx.query('DELETE FROM candidates WHERE id = $1 AND campaign_id = $2 AND NOT is_abstain RETURNING name, photo_path', [cid, c.id]);
@@ -448,13 +476,13 @@ export function adminRouter(): Router {
     await withTx(async (tx) => {
       const st = (await tx.query('SELECT status FROM campaigns WHERE id = $1 FOR UPDATE', [c.id])).rows[0]?.status;
       if (st !== 'open') throw new HttpError(409, st === 'draft' ? 'Before voting starts, remove the candidate instead' : 'Voting has closed', st === 'draft' ? 'not_started' : 'closed');
-      const cand = (await tx.query('SELECT name, is_abstain, withdrawn_at FROM candidates WHERE id = $1 AND campaign_id = $2 FOR UPDATE', [cid, c.id])).rows[0];
+      const cand = (await tx.query('SELECT name, is_abstain, withdrawn_at, position_id FROM candidates WHERE id = $1 AND campaign_id = $2 FOR UPDATE', [cid, c.id])).rows[0];
       if (!cand || cand.is_abstain) throw notFound();
       if (cand.withdrawn_at) throw new HttpError(409, 'This candidate has already withdrawn', 'already_withdrawn');
-      const left = (await tx.query('SELECT count(*)::int AS n FROM candidates WHERE campaign_id = $1 AND NOT is_abstain AND withdrawn_at IS NULL AND id <> $2', [c.id, cid])).rows[0].n as number;
-      if (left < 2) throw new HttpError(409, 'At least 2 candidates must stay in the running. Close the vote or reset it instead.', 'needs_candidates');
+      const left = (await tx.query('SELECT count(*)::int AS n FROM candidates WHERE position_id = $1 AND NOT is_abstain AND withdrawn_at IS NULL AND status = \'approved\' AND id <> $2', [cand.position_id, cid])).rows[0].n as number;
+      if (left < 2) throw new HttpError(409, 'At least 2 candidates must stay in the running in this position. Close the vote or reset it instead.', 'needs_candidates');
       await tx.query('UPDATE candidates SET withdrawn_at = now(), withdrawn_by = $3, withdrawn_reason = $4 WHERE id = $1 AND campaign_id = $2', [cid, c.id, u.oid, b.reason]);
-      await audit(tx, u.oid, 'candidate.withdrawn', c.id, { candidate_id: cid, name: cand.name, reason: b.reason });
+      await audit(tx, u.oid, 'candidate.withdrawn', c.id, { candidate_id: cid, name: cand.name, reason: b.reason, position_id: cand.position_id });
     });
     res.json({ withdrawn: true });
   });
@@ -479,8 +507,11 @@ export function adminRouter(): Router {
   r.post('/:id/start', loadRunnable, async (req, res) => {
     const c = camp(res);
     await inDraftTx(c.id, async (tx) => {
-      const n = (await tx.query('SELECT count(*)::int AS n FROM candidates WHERE campaign_id = $1 AND NOT is_abstain', [c.id])).rows[0].n;
-      if (n < 2) throw new HttpError(409, 'At least 2 candidates are required to start', 'needs_candidates');
+      // Every position needs enough APPROVED candidates (at least 2, or that position's own minimum). Pending or rejected nominations stay off the ballot.
+      const problems = await startProblems(tx, c.id);
+      if (problems.length) throw new HttpError(409, problems.length === 1 && problems[0].startsWith('Add at least') ? problems[0] : `At least 2 approved candidates are required in every position to start. ${problems.join('; ')}`, 'needs_candidates');
+      const n = (await tx.query("SELECT count(*)::int AS n FROM candidates WHERE campaign_id = $1 AND NOT is_abstain AND status = 'approved'", [c.id])).rows[0].n;
+      const nPos = (await tx.query('SELECT count(*)::int AS n FROM positions WHERE campaign_id = $1', [c.id])).rows[0].n;
       const fresh = (await tx.query('SELECT eligibility, closes_at, (closes_at <= clock_timestamp()) AS closes_in_past FROM campaigns WHERE id = $1', [c.id])).rows[0];
       if (fresh.eligibility === 'umoja' && (await activeMemberCount(tx)) < 1) {
         throw new HttpError(409, 'There are no active Umoja members loaded (run the Umoja import first)', 'needs_voters');
@@ -493,7 +524,7 @@ export function adminRouter(): Router {
       await tx.query("UPDATE campaigns SET status = 'open' WHERE id = $1", [c.id]);
       await createTallies(tx, c.id);                                  // one counter per candidate (SEC-02)
       const frozen = fresh.eligibility === 'umoja' ? await snapshotVoters(tx, c.id) : 0;   // the voter list is frozen now (SEC-05)
-      await audit(tx, currentUser(req).oid, 'campaign.start', c.id, { candidates: n, ...(fresh.eligibility === 'umoja' ? { frozen_members: frozen } : {}) });
+      await audit(tx, currentUser(req).oid, 'campaign.start', c.id, { candidates: n, positions: nPos, ...(fresh.eligibility === 'umoja' ? { frozen_members: frozen } : {}) });
     });
     res.json({ status: 'open' });
   });
@@ -606,6 +637,7 @@ export function adminRouter(): Router {
   // Team (co-admins, observers) and the second-approver flow
   r.use('/:id', notifyRouter({ loadRunnable, camp }));
   r.use('/:id', lateRouter({ loadOwned, loadRunnable, camp }));
+  r.use('/:id', positionsRouter({ loadRunnable, camp, inDraftTx, inEditTx }));
   r.use('/:id', teamRouter({ loadOwned, loadRunnable, camp, shouldAuditDenied, doReset, doPermanentDelete }));
 
   /**
@@ -725,7 +757,10 @@ export function adminRouter(): Router {
     if (!results.tie) throw new HttpError(409, 'There is no tie for first place', 'no_tie');
     const max = getConfig().maxRunoffs;
     if ((c.runoff_round ?? 0) >= max) throw new HttpError(409, `The limit of ${max} run-off round${max === 1 ? '' : 's'} has been reached. Decide the tie another way.`, 'runoff_limit');
-    const tied = (await getPool().query('SELECT name, bio, photo_path FROM candidates WHERE id = ANY($1::uuid[]) ORDER BY sort_order, name', [results.tie.ids])).rows;
+    // A run-off is a single contest between the tied candidates. A campaign with several positions has no run-off yet: the rules for it
+    // (which position, how ties across positions interact) come with the election rules (docs/rules-hooks.md).
+    if (results.positions.length !== 1) throw new HttpError(409, 'Run-offs are not available for campaigns with several positions yet', 'runoff_multi_position');
+    const tied = (await getPool().query('SELECT k.name, k.bio, k.photo_path, g.name AS region FROM candidates k LEFT JOIN regions g ON g.id = k.region_id WHERE k.id = ANY($1::uuid[]) ORDER BY k.sort_order, k.name', [results.tie.ids])).rows;
     // Photo files are copied first (a new file per candidate), so deleting one campaign can never delete the other's photos.
     const photos: (string | null)[] = [];
     for (const t of tied) { const buf = t.photo_path ? await readPhoto(t.photo_path) : null; photos.push(buf ? await savePhoto(buf) : null); }
@@ -742,8 +777,12 @@ export function adminRouter(): Router {
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
           [token, u.oid, title, c.description, c.eligibility, c.allow_edits_after_start === true, c.id, round]);
         const id = rows[0].id as string;
+        // The run-off keeps the position and the regions of the original, so its ballot and results read the same way.
+        const pos = (await tx.query('SELECT title, description, seats, rules FROM positions WHERE campaign_id = $1 ORDER BY sort_order, created_at LIMIT 1', [c.id])).rows[0];
+        const newPos = (await tx.query('INSERT INTO positions (campaign_id, title, description, seats, rules, sort_order) VALUES ($1,$2,$3,$4,$5,0) RETURNING id', [id, pos.title, pos.description, pos.seats, pos.rules])).rows[0].id as string;
+        await tx.query('INSERT INTO regions (campaign_id, name, sort_order) SELECT $1, name, sort_order FROM regions WHERE campaign_id = $2', [id, c.id]);
         for (let i = 0; i < tied.length; i++) {
-          await tx.query('INSERT INTO candidates (campaign_id, name, bio, photo_path, sort_order) VALUES ($1,$2,$3,$4,$5)', [id, tied[i].name, tied[i].bio, photos[i], i + 1]);
+          await tx.query('INSERT INTO candidates (campaign_id, position_id, region_id, name, bio, photo_path, sort_order) VALUES ($1,$2,(SELECT id FROM regions WHERE campaign_id = $1 AND name = $3),$4,$5,$6,$7)', [id, newPos, tied[i].region, tied[i].name, tied[i].bio, photos[i], i + 1]);
         }
         if (c.eligibility === 'list') await tx.query('INSERT INTO eligible_voters (campaign_id, voter_email) SELECT $1, voter_email FROM eligible_voters WHERE campaign_id = $2', [id, c.id]);
         await audit(tx, u.oid, 'campaign.runoff_created', c.id, { runoff_id: id, round, tied: results.tie!.names, votes_each: results.tie!.votes });

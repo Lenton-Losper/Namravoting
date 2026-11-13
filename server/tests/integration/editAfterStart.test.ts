@@ -244,7 +244,7 @@ describe('the database enforces the same limits, whatever the application does (
     const c = await make(admin, { allow: false, start: true });
     await expect(appRole.query('UPDATE campaigns SET title = $2 WHERE id = $1', [c.id, 'sneaky'])).rejects.toThrow(/locked/);
     await expect(appRole.query("UPDATE campaigns SET closes_at = now() + interval '1 day' WHERE id = $1", [c.id])).rejects.toThrow(/locked/);
-    await expect(appRole.query("INSERT INTO candidates (campaign_id, name, sort_order) VALUES ($1, 'x', 99)", [c.id])).rejects.toThrow(/locked/);
+    await expect(appRole.query("INSERT INTO candidates (campaign_id, position_id, name, sort_order) VALUES ($1, (SELECT id FROM positions WHERE campaign_id = $1 LIMIT 1), 'x', 99)", [c.id])).rejects.toThrow(/locked/);
   });
 
   it('as the app role: with the flag, only title, description and closing time can change; never the opening time, eligibility or the flag', async () => {
@@ -259,10 +259,10 @@ describe('the database enforces the same limits, whatever the application does (
   it('as the app role: candidate changes stop at the first receipt, even with the flag', async () => {
     const admin = await login(app, ADMIN_A);
     const c = await make(admin, { allow: true, start: true, n: 3 });
-    await appRole.query("INSERT INTO candidates (campaign_id, name, sort_order) VALUES ($1, 'before', 99)", [c.id]);   // no receipt yet: allowed
+    await appRole.query("INSERT INTO candidates (campaign_id, position_id, name, sort_order) VALUES ($1, (SELECT id FROM positions WHERE campaign_id = $1 LIMIT 1), 'before', 99)", [c.id]);   // no receipt yet: allowed
     const s1 = await login(app, S1);
     await s1.post(`/api/vote/${c.token}`).send({ candidateId: c.candidates[0] }).expect(201);
-    await expect(appRole.query("INSERT INTO candidates (campaign_id, name, sort_order) VALUES ($1, 'after', 100)", [c.id])).rejects.toThrow(/locked/);
+    await expect(appRole.query("INSERT INTO candidates (campaign_id, position_id, name, sort_order) VALUES ($1, (SELECT id FROM positions WHERE campaign_id = $1 LIMIT 1), 'after', 100)", [c.id])).rejects.toThrow(/locked/);
     await expect(appRole.query("UPDATE candidates SET name = 'x' WHERE id = $1", [c.candidates[1]])).rejects.toThrow(/locked/);
     await expect(appRole.query('DELETE FROM candidates WHERE id = $1', [c.candidates[1]])).rejects.toThrow(/locked/);
   });
@@ -272,7 +272,7 @@ describe('the database enforces the same limits, whatever the application does (
     const c = await make(admin, { allow: true, start: true });
     await admin.post(`/api/campaigns/${c.id}/close`).send({}).expect(200);
     await expect(appRole.query("UPDATE campaigns SET title = 'x' WHERE id = $1", [c.id])).rejects.toThrow(/locked/);
-    await expect(appRole.query("INSERT INTO candidates (campaign_id, name, sort_order) VALUES ($1, 'x', 99)", [c.id])).rejects.toThrow(/locked/);
+    await expect(appRole.query("INSERT INTO candidates (campaign_id, position_id, name, sort_order) VALUES ($1, (SELECT id FROM positions WHERE campaign_id = $1 LIMIT 1), 'x', 99)", [c.id])).rejects.toThrow(/locked/);
   });
 });
 

@@ -19,9 +19,9 @@ export async function restampAfterVote(campaignId: string): Promise<void> {
   try { await withTx((c) => restampTallies(c, campaignId)); } catch { /* the next vote or the close re-stamps */ }
 }
 
-/** One counter row per candidate, created when a campaign starts (candidates are locked from then on). */
+/** One counter row per APPROVED candidate (grouped by position), created when a campaign starts (candidates are locked from then on). */
 export async function createTallies(db: Queryable, campaignId: string): Promise<void> {
-  await db.query('INSERT INTO tallies (campaign_id, candidate_id, votes) SELECT campaign_id, id, 0 FROM candidates WHERE campaign_id = $1 ON CONFLICT DO NOTHING', [campaignId]);
+  await db.query("INSERT INTO tallies (campaign_id, position_id, candidate_id, votes) SELECT campaign_id, position_id, id, 0 FROM candidates WHERE campaign_id = $1 AND status = 'approved' ON CONFLICT DO NOTHING", [campaignId]);
 }
 
 /** Sum of all counters of a campaign (compared with the number of receipts as the integrity check). */
