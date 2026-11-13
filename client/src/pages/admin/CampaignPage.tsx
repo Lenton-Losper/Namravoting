@@ -112,7 +112,9 @@ function IntegrityBanner({ c, reload }: { c: CampaignDetail; reload: () => Promi
   );
 }
 
-function SealPanel({ id }: { id: string }) {
+// TODO(re-enable): not rendered at the moment (see ResultsTab). Kept so it can be switched back on.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export function SealPanel({ id }: { id: string }) {
   const [v, setV] = useState<SealCheck | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -223,7 +225,8 @@ function ResultsTab({ c, reload }: { c: CampaignDetail; reload: () => Promise<vo
       )}
       {c.status === 'closed' && r?.runoff && <RunoffPanel id={c.id} tie={r.tie ?? null} info={r.runoff} />}
       {c.status === 'closed' && c.receipts_purged_at && <p className="muted small" role="note">The personal data of this campaign (who voted, the voter list, photos) was removed on {fmtDate(c.receipts_purged_at)} under the retention schedule. The sealed result and the audit trail remain.</p>}
-      {c.status === 'closed' && <SealPanel id={c.id} />}
+      {/* TODO(re-enable): the "Verify results integrity" panel is hidden for now. Sealing, GET /api/campaigns/:id/verify and the publish block on a
+          mismatch are unchanged on the server. Restore with:  {c.status === 'closed' && <SealPanel id={c.id} />}  */}
       <NoticeList notices={r?.notices} />
     </>
   );
