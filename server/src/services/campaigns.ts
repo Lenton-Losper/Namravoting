@@ -289,6 +289,29 @@ export interface SealCheck {
   sealed_tallies: { name: string; votes: number; position?: string }[]; sealed_turnout: number | null;
   /** One entry per position: its own fingerprint and whether its counters and receipts still equal what was sealed. */
   positions: { position_id: string; title: string; fingerprint: string; sealed_turnout: number; tallies_match: boolean | null; receipts_match: boolean | null }[];
+  /**
+   * The seal was written before migration 009 started recording each candidate's counter: it holds only the totals (ballots, receipts).
+   * Such a seal is checked against its totals: the sum of the counters must equal the sealed ballots.
+   */
+  legacy_totals_only?: boolean;
+}
+
+/**
+ * Whether the counters of a closed campaign still equal what its close entry sealed. A seal with a `tallies` list is compared per
+ * candidate. An older seal (before migration 009) that recorded only totals is compared by total: the sum of the counters must equal
+ * its `ballots`. Shared by verifySeal and the restore check, so both judge a seal the same way. null = no counters to compare.
+ */
+export function sealedCountersMatch(details: Record<string, unknown> | null | undefined, now: { candidate_id: string; votes: number }[]): { match: boolean | null; legacy: boolean } {
+  const tallies = details?.tallies;
+  if (!Array.isArray(tallies)) {
+    const ballots = Number(details?.ballots);
+    if (!Number.isFinite(ballots)) return { match: now.length ? false : null, legacy: true };   // no tallies and no totals: cannot be trusted
+    return { match: now.length ? now.reduce((n, r) => n + r.votes, 0) === ballots : null, legacy: true };
+  }
+  if (!now.length) return { match: null, legacy: false };
+  const cur = new Map(now.map((r) => [r.candidate_id, r.votes]));
+  const sealed = tallies as { candidate_id: string; votes: number }[];
+  return { match: sealed.length === now.length && sealed.every((t) => cur.get(t.candidate_id) === t.votes), legacy: false };
 }
 
 /**
@@ -314,7 +337,9 @@ export async function verifySeal(db: Queryable, campaignId: string): Promise<Sea
   const purged = (await db.query('SELECT receipts_purged_at FROM campaigns WHERE id = $1', [campaignId])).rows[0]?.receipts_purged_at;
   if (now.length > 0) {
     const cur = new Map(now.map((r) => [r.candidate_id, r.votes]));
-    out.tallies_match = sealed.length === now.length && sealed.every((t) => cur.get(t.candidate_id) === t.votes);
+    const check = sealedCountersMatch(seal.details, now);
+    out.tallies_match = check.match;
+    if (check.legacy) out.legacy_totals_only = true;
     const byPos = await positionTurnouts(db, campaignId);
     const receipts = [...byPos.values()].reduce((n, x) => n + x, 0);
     out.receipts_match = purged ? null : receipts === out.sealed_turnout;

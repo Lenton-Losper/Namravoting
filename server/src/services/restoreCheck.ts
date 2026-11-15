@@ -1,3 +1,4 @@
+import { sealedCountersMatch } from './campaigns.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -42,10 +43,9 @@ export async function checkDatabase(db: Queryable, storage?: PhotoStorage): Prom
 
   let drift = 0;
   for (const c of closed) {
-    const sealed = (c.details?.tallies ?? []) as { candidate_id: string; votes: number }[];
     const now = (await db.query('SELECT candidate_id, votes FROM tallies WHERE campaign_id = $1', [c.id])).rows as { candidate_id: string; votes: number }[];
-    const cur = new Map(now.map((r) => [r.candidate_id, r.votes]));
-    if (now.length && (sealed.length !== now.length || sealed.some((t) => cur.get(t.candidate_id) !== t.votes))) drift++;
+    // Same rule as verifySeal: per candidate, or by total for a seal from before migration 009 that recorded only totals.
+    if (sealedCountersMatch(c.details, now).match === false) drift++;
   }
   add('Sealed results equal the counters', drift === 0, drift ? `${drift} campaign(s) differ from what was sealed` : 'every closed campaign');
 
