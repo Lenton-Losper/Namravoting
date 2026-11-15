@@ -242,10 +242,10 @@ export function PositionBallot({ token, position, campaign, single, onBack, onDo
 
   if (step === 'receipt') {
     return (
-      <div className="ballot-screen">
+      <div className="ballot-screen ballot-screen-receipt">
         <BallotState tone="success" icon="check" title="Your vote is in"
           actions={<button type="button" className="ballot-btn ballot-btn-primary" onClick={onDone}>Done</button>}>
-          <p className="ballot-state-text">Thank you for voting{single ? '' : ` for ${position.title}`}. {release ? `Results will be shared on ${fmtDate(release)}.` : 'Results will be shared after voting closes.'}</p>
+          <p className="ballot-state-text">Thank you for voting. {release ? `Results will be shared on ${fmtDate(release)}.` : 'Results will be shared after voting closes.'}</p>
           <ReceiptCode code={receipt} />
         </BallotState>
       </div>
@@ -295,7 +295,7 @@ export function PositionBallot({ token, position, campaign, single, onBack, onDo
       </div>
       {ballot?.position.description && <p className="ballot-intro">{ballot.position.description}</p>}
       <p className="ballot-intro">Pick one candidate. You'll see your choice again before anything is submitted.</p>
-      <ErrorBox message={error} />
+      <ErrorBox message={uncertain ? null : error} />   {/* the "may not have been recorded" screen says it better */}
       {!ballot && !error && !uncertain && <Spinner />}
       {uncertain && (
         <BallotState tone="warn" icon="alert" title="Your vote may not have been recorded"

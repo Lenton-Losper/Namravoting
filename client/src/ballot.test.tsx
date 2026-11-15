@@ -287,13 +287,56 @@ describe('the stylesheet follows the card design', () => {
   it('the photo is 96px and centred above the name; the card has a 2px #8A94A3 border', () => {
     expect(rule('.avatar-lg')).toMatch(/width: 96px; height: 96px/);
     expect(rule('.ballot-card-main')).toMatch(/flex-direction: column; align-items: center/);
-    expect(rule('.ballot-card')).toMatch(/border: 2px solid var\(--ballot-border\)/);
-    expect(css).toMatch(/--ballot-border: #8A94A3/);
+    expect(rule('.ballot-card')).toMatch(/border: 2px solid var\(--b-border\)/);
+    expect(css).toMatch(/--b-border: #8A94A3/);
   });
-  it('a selected card has a navy border and a navy glow', () => {
-    expect(rule('.ballot-card.is-selected')).toMatch(/border-color: var\(--navy\)/);
+  it('a selected card has the #12355B border, a 3px rgba(18,53,91,.18) glow and the #EEF3F9 fill', () => {
+    expect(rule('.ballot-card.is-selected')).toMatch(/border-color: var\(--b-navy\)/);
     expect(rule('.ballot-card.is-selected')).toMatch(/box-shadow: var\(--glow\)/);
-    expect(css).toMatch(/--glow: 0 0 0 4px rgba\(30, 68, 98, \.22\)/);   // 30, 68, 98 = #1E4462, the navy
+    expect(rule('.ballot-card.is-selected')).toMatch(/background: var\(--b-selected\)/);
+    expect(css).toMatch(/--b-navy: #12355B/); expect(css).toMatch(/--b-selected: #EEF3F9/);
+    expect(css).toMatch(/--glow: 0 0 0 3px rgba\(18, 53, 91, \.18\)/);
+  });
+  it('the card: 16px radius, 24px 20px 20px select area, 12px gaps, 14px radio inset, 44px statement row', () => {
+    expect(rule('.ballot-card')).toMatch(/border-radius: 16px/);
+    expect(rule('.ballot-card-main')).toMatch(/gap: 12px; width: 100%; padding: 24px 20px 20px/);
+    expect(rule('.ballot-cards')).toMatch(/gap: 12px/);
+    expect(rule('.ballot-radio')).toMatch(/top: 14px; right: 14px; width: 24px; height: 24px/);
+    expect(rule('.statement-link')).toMatch(/min-height: 44px/);
+    expect(rule('.ballot-card-name')).toMatch(/font-size: 18px; line-height: 1.3/);
+    expect(rule('.ballot-card-line')).toMatch(/font-size: 15px; line-height: 1.5/);
+  });
+  it('the compact card has a 52px photo and a two-line pledge', () => {
+    expect(rule('.avatar-sm')).toMatch(/width: 52px; height: 52px/);
+    expect(rule('.ballot-card.is-compact .ballot-card-line')).toMatch(/line-clamp: 2/);
+  });
+  it('the sheet: 20px top radius, 12px 20px 24px padding, 16px gap, 55% scrim, 40x4 handle, 22px heading, 52px and 48px buttons', () => {
+    expect(rule('.ballot-sheet')).toMatch(/gap: 16px; padding: 12px 20px 24px; background: #fff; border-radius: 20px 20px 0 0/);
+    expect(rule('.sheet-backdrop')).toMatch(/rgba\(15, 27, 45, \.55\)/);
+    expect(rule('.sheet-handle')).toMatch(/width: 40px; height: 4px/);
+    expect(css).toMatch(/--b-sheet-line: #C9D0DA/);
+    expect(rule('.sheet-title')).toMatch(/font-size: 22px; font-weight: 700/);
+    expect(rule('.confirm-choice')).toMatch(/background: var\(--b-selected\); border: 2px solid var\(--b-navy\); border-radius: 14px/);
+    expect(rule('.ballot-sheet .confirm-warning')).toMatch(/padding: 12px 14px; border: 0; border-radius: 12px; background: #FFF6E5; color: #6B4200; font-size: 14px; font-weight: 400; line-height: 1.45/);
+    expect(rule('.ballot-btn-primary')).toMatch(/min-height: 52px/);
+    expect(rule('.ballot-btn-secondary')).toMatch(/min-height: 48px/);
+    expect(rule('.ballot-btn')).toMatch(/border-radius: 12px[^}]*font: 600 16px/);
+  });
+  it('the receipt: 72px #E6F2EB check circle, 24px title, left-aligned box with a 17px/600 code', () => {
+    expect(rule('.ballot-state-icon')).toMatch(/width: 72px; height: 72px/);
+    expect(rule('.ballot-state-success .ballot-state-icon')).toMatch(/#E6F2EB; color: #1E6B43/);
+    expect(rule('.ballot-state-title')).toMatch(/font-size: 24px; font-weight: 700/);
+    expect(rule('.ballot-state')).toMatch(/gap: 16px[^}]*padding: 32px 28px/);
+    expect(rule('.receipt-box')).toMatch(/padding: 14px 16px; background: var\(--b-page\); border: 1px solid var\(--b-hair\); border-radius: 12px; text-align: left/);
+    expect(rule('.receipt-code')).toMatch(/font: 600 17px[^}]*letter-spacing: \.04em/);
+    expect(rule('.receipt-label')).toMatch(/font-size: 13px/);
+  });
+  it('the header block: 13px/600 uppercase step label, 24px/700 title, chips, 15px helper, footer', () => {
+    expect(rule('.ballot-step')).toMatch(/font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: \.04em/);
+    expect(rule('.ballot-title')).toMatch(/font-size: 24px; font-weight: 700; line-height: 1.25/);
+    expect(rule('.ballot-chip')).toMatch(/gap: 8px; padding: 6px 10px[^}]*border: 1px solid var\(--b-line\)[^}]*color: #334155; font-size: 13px/);
+    expect(rule('.ballot-intro')).toMatch(/font-size: 15px; line-height: 1\.5; color: var\(--b-secondary\)/);
+    expect(rule('.ballot-footer')).toMatch(/padding: 12px 20px 20px[^}]*border-top: 1px solid var\(--b-hair\)/);
   });
   it('every class the ballot screens use has a rule', () => {
     const src = readFileSync(path.resolve(__dirname, 'pages/VoteBlocks.tsx'), 'utf8');

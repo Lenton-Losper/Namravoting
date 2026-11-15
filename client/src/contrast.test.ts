@@ -38,9 +38,17 @@ describe('text contrast (AA: 4.5:1)', () => {
     ['white text on the navy bar and primary buttons', white, token('navy')],
     ['white text on a hovered primary button', white, token('navy-text')],
     ['secondary button text on white', token('navy'), white],
-    ['ballot step label (orange text) on the page', token('orange-text'), token('bg')],
-    ['confirm warning text on white', '#9B1C1C', white],
-    ['navy link text on the muted surface (statement link hover)', token('navy'), token('surface-muted')],
+    ['ballot step label and links (navy) on the ballot page', token('b-navy'), token('b-page')],
+    ['ballot secondary text on the ballot page', token('b-secondary'), token('b-page')],
+    ['ballot secondary text on a selected card', token('b-secondary'), token('b-selected')],
+    ['ballot name text on a selected card', token('b-text'), token('b-selected')],
+    ['ballot pledge text on a selected card', token('b-body'), token('b-selected')],
+    ['chip text on white', '#334155', white],
+    ['the disabled review button label on its fill', token('b-disabled'), token('b-hair')],
+    ['white text on the ballot primary button', white, token('b-navy')],
+    ['confirm warning text on its amber fill', '#6B4200', '#FFF6E5'],
+    ['receipt check icon on its green circle', '#1E6B43', '#E6F2EB'],
+    ['initials on their tint', token('b-navy'), token('b-tint')],
     ['operator banner text', '#78350f', '#fffbeb'],
     ['operator danger banner text', '#7f1d1d', '#fef2f2'],
   ];
@@ -54,11 +62,11 @@ describe('non-text contrast (AA: 3:1)', () => {
     expect(rule).toMatch(/border: 1px solid var\(--muted\)/);
   });
   it('the ballot card, radio and filter border (#8A94A3) against the page, and against the muted surface of a withdrawn card', () => {
-    expect(ratio(token('ballot-border'), token('bg'))).toBeGreaterThanOrEqual(UI);
-    expect(ratio(token('ballot-border'), token('surface-muted'))).toBeGreaterThanOrEqual(UI - 0.3);
+    expect(ratio(token('b-border'), token('bg'))).toBeGreaterThanOrEqual(UI);
+    expect(ratio(token('b-border'), token('b-page'))).toBeGreaterThanOrEqual(UI - 0.2);
   });
-  it('a selected card: the navy border against the page', () => { expect(ratio(token('navy'), token('bg'))).toBeGreaterThanOrEqual(UI); });
-  it('the success icon against its tint on the receipt screen', () => { expect(ratio(token('success'), '#E6F4EA')).toBeGreaterThanOrEqual(UI); });
+  it('a selected card: the navy border against the page and against its own fill', () => { expect(ratio(token('b-navy'), token('bg'))).toBeGreaterThanOrEqual(UI); expect(ratio(token('b-navy'), token('b-selected'))).toBeGreaterThanOrEqual(UI); });
+  it('the unselected radio ring against white', () => { expect(ratio(token('b-ring'), token('bg'))).toBeGreaterThanOrEqual(UI); });
   it('the keyboard focus outline against white and against the navy bar', () => {
     const rule = /:focus-visible \{ outline: 2px solid (var\(--[a-z-]+\)|#[0-9a-fA-F]+)/.exec(css)!;
     const colour = rule[1].startsWith('var(') ? token(rule[1].slice(6, -1)) : rule[1];
