@@ -62,7 +62,7 @@ export async function api<T = unknown>(method: string, url: string, body?: unkno
 
 export interface User { oid: string; email: string; displayName: string; roles: string[] }
 export interface Candidate {
-  id: string; name: string; bio: string | null; photo_url: string | null; withdrawn_at?: string | null; withdrawn_reason?: string | null;
+  id: string; name: string; bio: string | null; pledge?: string | null; photo_url: string | null; withdrawn_at?: string | null; withdrawn_reason?: string | null;
   position_id?: string; region_id?: string | null; region?: string | null; status?: CandidateStatus; self_nominated?: boolean; submitted_at?: string | null; review_reason?: string | null;
 }
 /** invited / submitted (waiting for the admin) / approved (on the ballot) / rejected / withdrawn (the candidate stood down before the start). */
@@ -76,7 +76,7 @@ export interface Position {
   counts: { approved: number; submitted: number; rejected: number; withdrawn: number; invited: number };
   result: { turnout: number; winners: string[]; tie: string[] | null } | null;
 }
-export interface Nomination { id: string; name: string; bio: string | null; photo_url: string | null; status: CandidateStatus; region_id: string | null; region: string | null; submitted_at: string | null; submitted_by: string | null; submitted_by_email: string | null; review_reason: string | null }
+export interface Nomination { id: string; name: string; bio: string | null; pledge?: string | null; photo_url: string | null; status: CandidateStatus; region_id: string | null; region: string | null; submitted_at: string | null; submitted_by: string | null; submitted_by_email: string | null; review_reason: string | null }
 export interface Campaign {
   id: string; title: string; description: string | null; status: 'draft' | 'open' | 'closed';
   opens_at: string | null; closes_at: string | null; eligibility: 'all' | 'list' | 'umoja'; results_published: boolean;
@@ -95,6 +95,8 @@ export interface Campaign {
   quorum_percent?: number | null;
   /** When the closed result is published automatically (set by the creator or a co-admin). */
   publish_at?: string | null;
+  /** Display only: the voter's receipt says "Results will be shared on <date>". Publishing stays manual. */
+  results_release_at?: string | null;
 }
 export interface IntegrityBlock { ballots: number; receipts: number; at: string }
 export interface CampaignDetail extends Campaign { positions?: Position[]; regions?: Region[]; nominations_close_at?: string | null; nominate_eligibility?: 'all' | 'umoja' | null; results_group_by_region?: boolean; turnout: number; candidates: Candidate[]; eligible_emails: string[]; umoja_active_count: number; integrity_block?: IntegrityBlock | null; edited_after_start?: Notice[] }

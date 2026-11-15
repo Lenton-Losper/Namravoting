@@ -281,10 +281,10 @@ export function adminRouter(): Router {
     const emails = eligibility === 'list' ? cleanEmails(b.emails ?? []) : [];
     const created = await withTx(async (c) => {
       const { rows } = await c.query(
-        `INSERT INTO campaigns (share_token, created_by, title, description, opens_at, closes_at, eligibility, allow_edits_after_start, allow_abstain, require_approval, quorum_percent, nominations_close_at, nominate_eligibility, results_group_by_region)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
+        `INSERT INTO campaigns (share_token, created_by, title, description, opens_at, closes_at, eligibility, allow_edits_after_start, allow_abstain, require_approval, quorum_percent, nominations_close_at, nominate_eligibility, results_group_by_region, results_release_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *`,
         [token, u.oid, b.title, b.description ?? null, b.opens_at ?? null, b.closes_at ?? null, eligibility, b.allow_edits_after_start === true, b.allow_abstain === true, b.require_approval === true, b.quorum_percent ?? null,
-         b.nominations_close_at ?? null, b.nominate_eligibility ?? null, b.results_group_by_region === true]);
+         b.nominations_close_at ?? null, b.nominate_eligibility ?? null, b.results_group_by_region === true, b.results_release_at ?? null]);
       await seedRegions(c, rows[0].id);   // the 14 regions of Namibia; the admin can rename, add or remove them while the campaign is a draft
       if (b.allow_abstain === true) await setAbstain(c, rows[0].id, true);
       if (emails.length) await c.query('INSERT INTO eligible_voters (campaign_id, voter_email) SELECT $1, unnest($2::text[])', [rows[0].id, emails]);
@@ -297,14 +297,14 @@ export function adminRouter(): Router {
   r.get('/:id', loadRunnable, async (_req, res) => {
     const c = camp(res);
     const cands = await getPool().query(
-      `SELECT k.id, k.name, k.bio, k.photo_path, k.sort_order, k.withdrawn_at, k.withdrawn_reason, k.position_id, k.region_id, r.name AS region, k.status,
+      `SELECT k.id, k.name, k.bio, k.pledge, k.photo_path, k.sort_order, k.withdrawn_at, k.withdrawn_reason, k.position_id, k.region_id, r.name AS region, k.status,
               k.submitted_by_oid IS NOT NULL AS self_nominated, k.submitted_at, k.review_reason
          FROM candidates k LEFT JOIN regions r ON r.id = k.region_id WHERE k.campaign_id = $1 AND NOT k.is_abstain ORDER BY k.sort_order, k.name`, [c.id]);
     const el = await getPool().query('SELECT voter_email FROM eligible_voters WHERE campaign_id = $1 ORDER BY voter_email', [c.id]);
     res.json({
       ...present(c),
       my_role: res.locals.myRole as string,
-      candidates: cands.rows.map((x) => ({ id: x.id, name: x.name, bio: x.bio, photo_url: c.photos_purged_at ? null : photoUrl(x), sort_order: x.sort_order, withdrawn_at: x.withdrawn_at, withdrawn_reason: x.withdrawn_reason,
+      candidates: cands.rows.map((x) => ({ id: x.id, name: x.name, bio: x.bio, pledge: x.pledge, photo_url: c.photos_purged_at ? null : photoUrl(x), sort_order: x.sort_order, withdrawn_at: x.withdrawn_at, withdrawn_reason: x.withdrawn_reason,
         position_id: x.position_id, region_id: x.region_id, region: x.region, status: x.status, self_nominated: x.self_nominated, submitted_at: x.submitted_at, review_reason: x.review_reason })),
       positions: await positionBlocks(c),
       regions: (await getPool().query('SELECT id, name, sort_order FROM regions WHERE campaign_id = $1 ORDER BY sort_order, name', [c.id])).rows,
@@ -320,6 +320,16 @@ export function adminRouter(): Router {
     const c = camp(res);
     const b = patchCampaignBody.parse(req.body);
     const actor = currentUser(req).oid;
+    // The results-release date is DISPLAY ONLY (the receipt says when results will be shared; publishing stays manual), so it may be
+    // set in any state, even when the rest of the campaign is locked. It is recorded, and taken out of the normal edit below.
+    if (b.results_release_at !== undefined) {
+      await withTx(async (tx) => {
+        await tx.query('UPDATE campaigns SET results_release_at = $2 WHERE id = $1', [c.id, b.results_release_at ?? null]);
+        await audit(tx, actor, 'campaign.results_release_set', c.id, { results_release_at: b.results_release_at ?? null });
+      });
+      delete (b as { results_release_at?: unknown }).results_release_at;
+      if (Object.keys(b).length === 0) { res.json(present((await getPool().query('SELECT * FROM campaigns WHERE id = $1', [c.id])).rows[0])); return; }
+    }
     const updated = await inEditTx(c.id, async (tx, live) => {
       if (!live) {
         const { rows } = await tx.query(
@@ -389,7 +399,7 @@ export function adminRouter(): Router {
   r.post('/:id/candidates', loadRunnable, upload.single('photo'), async (req, res) => {
     const c = camp(res);
     const b = candidateBody.parse({
-      name: req.body?.name, ...(req.body?.bio !== undefined ? { bio: req.body.bio } : {}),
+      name: req.body?.name, ...(req.body?.bio !== undefined ? { bio: req.body.bio } : {}), ...(req.body?.pledge ? { pledge: req.body.pledge } : {}),
       ...(req.body?.position_id ? { position_id: req.body.position_id } : {}), ...(req.body?.region_id ? { region_id: req.body.region_id } : {}) });
     const photo = req.file ? await savePhoto(req.file.buffer) : null;
     try {
@@ -405,9 +415,9 @@ export function adminRouter(): Router {
           throw new HttpError(409, `This position allows at most ${pos.max_candidates} candidates`, 'position_full');
         }
         const { rows } = await tx.query(
-          `INSERT INTO candidates (campaign_id, position_id, region_id, name, bio, photo_path, sort_order)
-           VALUES ($1,$2,$3,$4,$5,$6,(SELECT COALESCE(max(sort_order),0)+1 FROM candidates WHERE position_id = $2 AND NOT is_abstain))
-           RETURNING id, name, bio, photo_path, sort_order, position_id, region_id, status`, [c.id, positionId, b.region_id ?? null, b.name, b.bio || null, photo]);
+          `INSERT INTO candidates (campaign_id, position_id, region_id, name, bio, pledge, photo_path, sort_order)
+           VALUES ($1,$2,$3,$4,$5,$7,$6,(SELECT COALESCE(max(sort_order),0)+1 FROM candidates WHERE position_id = $2 AND NOT is_abstain))
+           RETURNING id, name, bio, pledge, photo_path, sort_order, position_id, region_id, status`, [c.id, positionId, b.region_id ?? null, b.name, b.bio || null, photo, b.pledge || null]);
         if (live) {
           await tx.query('INSERT INTO tallies (campaign_id, position_id, candidate_id, votes) VALUES ($1, $2, $3, 0)', [c.id, positionId, rows[0].id]);   // a started campaign has a counter per candidate
           await auditEdit(tx, currentUser(req).oid, c.id, [{ what: 'candidate_added', name: b.name }]);
@@ -424,6 +434,7 @@ export function adminRouter(): Router {
     const b = candidatePatchBody.parse({
       ...(req.body?.name !== undefined ? { name: req.body.name } : {}),
       ...(req.body?.bio !== undefined ? { bio: req.body.bio } : {}),
+      ...(req.body?.pledge !== undefined ? { pledge: req.body.pledge } : {}),
       ...(req.body?.removePhoto !== undefined ? { removePhoto: req.body.removePhoto } : {}),
       ...(req.body?.region_id !== undefined ? { region_id: req.body.region_id === '' ? null : req.body.region_id } : {}),
     });
@@ -438,9 +449,10 @@ export function adminRouter(): Router {
           `UPDATE candidates SET name = COALESCE($3, name),
              bio = CASE WHEN $4::boolean THEN NULLIF($5, '') ELSE bio END,
              photo_path = CASE WHEN $6::boolean THEN $7 ELSE photo_path END,
-             region_id = CASE WHEN $8::boolean THEN $9::uuid ELSE region_id END
-           WHERE id = $1 AND campaign_id = $2 RETURNING id, name, bio, photo_path, sort_order, position_id, region_id, status`,
-          [cid, c.id, b.name ?? null, b.bio !== undefined, b.bio ?? null, setPhoto, newPhoto, b.region_id !== undefined, b.region_id ?? null]);
+             region_id = CASE WHEN $8::boolean THEN $9::uuid ELSE region_id END,
+             pledge = CASE WHEN $10::boolean THEN NULLIF($11, '') ELSE pledge END
+           WHERE id = $1 AND campaign_id = $2 RETURNING id, name, bio, pledge, photo_path, sort_order, position_id, region_id, status`,
+          [cid, c.id, b.name ?? null, b.bio !== undefined, b.bio ?? null, setPhoto, newPhoto, b.region_id !== undefined, b.region_id ?? null, b.pledge !== undefined, b.pledge ?? null]);
         if (live) {
           const oldName = old.rows[0].name as string;
           await auditEdit(tx, currentUser(req).oid, c.id, [{ what: 'candidate_edited', name: rows[0].name, ...(rows[0].name !== oldName ? { from: oldName, to: rows[0].name as string } : {}) }]);
@@ -767,7 +779,7 @@ export function adminRouter(): Router {
     // A run-off is a single contest between the tied candidates. A campaign with several positions has no run-off yet: the rules for it
     // (which position, how ties across positions interact) come with the election rules (docs/rules-hooks.md).
     if (results.positions.length !== 1) throw new HttpError(409, 'Run-offs are not available for campaigns with several positions yet', 'runoff_multi_position');
-    const tied = (await getPool().query('SELECT k.name, k.bio, k.photo_path, g.name AS region FROM candidates k LEFT JOIN regions g ON g.id = k.region_id WHERE k.id = ANY($1::uuid[]) ORDER BY k.sort_order, k.name', [results.tie.ids])).rows;
+    const tied = (await getPool().query('SELECT k.name, k.bio, k.pledge, k.photo_path, g.name AS region FROM candidates k LEFT JOIN regions g ON g.id = k.region_id WHERE k.id = ANY($1::uuid[]) ORDER BY k.sort_order, k.name', [results.tie.ids])).rows;
     // Photo files are copied first (a new file per candidate), so deleting one campaign can never delete the other's photos.
     const photos: (string | null)[] = [];
     for (const t of tied) { const buf = t.photo_path ? await readPhoto(t.photo_path) : null; photos.push(buf ? await savePhoto(buf) : null); }
@@ -789,7 +801,7 @@ export function adminRouter(): Router {
         const newPos = (await tx.query('INSERT INTO positions (campaign_id, title, description, seats, rules, sort_order) VALUES ($1,$2,$3,$4,$5,0) RETURNING id', [id, pos.title, pos.description, pos.seats, pos.rules])).rows[0].id as string;
         await tx.query('INSERT INTO regions (campaign_id, name, sort_order) SELECT $1, name, sort_order FROM regions WHERE campaign_id = $2', [id, c.id]);
         for (let i = 0; i < tied.length; i++) {
-          await tx.query('INSERT INTO candidates (campaign_id, position_id, region_id, name, bio, photo_path, sort_order) VALUES ($1,$2,(SELECT id FROM regions WHERE campaign_id = $1 AND name = $3),$4,$5,$6,$7)', [id, newPos, tied[i].region, tied[i].name, tied[i].bio, photos[i], i + 1]);
+          await tx.query('INSERT INTO candidates (campaign_id, position_id, region_id, name, bio, pledge, photo_path, sort_order) VALUES ($1,$2,(SELECT id FROM regions WHERE campaign_id = $1 AND name = $3),$4,$5,$8,$6,$7)', [id, newPos, tied[i].region, tied[i].name, tied[i].bio, photos[i], i + 1, tied[i].pledge]);
         }
         if (c.eligibility === 'list') await tx.query('INSERT INTO eligible_voters (campaign_id, voter_email) SELECT $1, voter_email FROM eligible_voters WHERE campaign_id = $2', [id, c.id]);
         await audit(tx, u.oid, 'campaign.runoff_created', c.id, { runoff_id: id, round, tied: results.tie!.names, votes_each: results.tie!.votes });

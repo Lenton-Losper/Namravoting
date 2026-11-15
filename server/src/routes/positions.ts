@@ -181,13 +181,13 @@ export function positionsRouter(d: Deps): Router {
     const { pid } = positionParams.parse(req.params);
     if (!(await getPool().query('SELECT 1 FROM positions WHERE id = $1 AND campaign_id = $2', [pid, c.id])).rowCount) throw notFound();
     const { rows } = await getPool().query(
-      `SELECT k.id, k.name, k.bio, k.photo_path, k.status, k.region_id, g.name AS region, k.submitted_at, k.review_reason, k.reviewed_at,
+      `SELECT k.id, k.name, k.bio, k.pledge, k.photo_path, k.status, k.region_id, g.name AS region, k.submitted_at, k.review_reason, k.reviewed_at,
               s.display_name AS submitted_by, s.email AS submitted_by_email, v.display_name AS reviewed_by
          FROM candidates k LEFT JOIN regions g ON g.id = k.region_id LEFT JOIN users s ON s.entra_oid = k.submitted_by_oid LEFT JOIN users v ON v.entra_oid = k.reviewed_by
         WHERE k.position_id = $1 AND NOT k.is_abstain ORDER BY k.submitted_at NULLS FIRST, k.sort_order, k.name`, [pid]);
     res.set('Cache-Control', 'no-store').json({
       nominations: rows.map((x) => ({
-        id: x.id, name: x.name, bio: x.bio, photo_url: x.photo_path && !c.photos_purged_at ? `/api/photos/${x.id}` : null, status: x.status, region_id: x.region_id, region: x.region,
+        id: x.id, name: x.name, bio: x.bio, pledge: x.pledge, photo_url: x.photo_path && !c.photos_purged_at ? `/api/photos/${x.id}` : null, status: x.status, region_id: x.region_id, region: x.region,
         submitted_at: x.submitted_at, submitted_by: x.submitted_by, submitted_by_email: x.submitted_by_email, review_reason: x.review_reason, reviewed_at: x.reviewed_at, reviewed_by: x.reviewed_by,
       })),
     });

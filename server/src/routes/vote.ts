@@ -42,23 +42,26 @@ async function standing(c: CampaignRow, u: AuthUser) {
   }
   // One vote per member and position (SEC-03): a second account of the same member sees "already voted" too. `votedPositions` are the
   // caller's own receipts (positions only: a receipt holds no candidate). "Already voted" for the campaign means every position is done.
-  const votedPositions = new Set((await getPool().query('SELECT DISTINCT position_id FROM vote_receipts WHERE campaign_id = $1 AND (voter_oid = $2 OR member_key = $3)', [c.id, u.oid, memberKey])).rows.map((x) => x.position_id as string));
+  // The receipt code of each voted position comes along: it is the caller's own (it names no candidate), shown again on "already voted".
+  const own = (await getPool().query('SELECT position_id, receipt_code FROM vote_receipts WHERE campaign_id = $1 AND (voter_oid = $2 OR member_key = $3)', [c.id, u.oid, memberKey])).rows;
+  const votedPositions = new Set(own.map((x) => x.position_id as string));
+  const receiptCodes = new Map(own.map((x) => [x.position_id as string, (x.receipt_code as string | null) ?? null]));
   const total = (await getPool().query('SELECT count(*)::int AS n FROM positions WHERE campaign_id = $1', [c.id])).rows[0].n as number;
   const hasVoted = total > 0 && votedPositions.size >= total;
-  return { eligible, notMember, hasVoted, votedPositions, total, state: voterState(c, c.db_now ?? new Date(), { eligible, notMember, hasVoted }) };
+  return { eligible, notMember, hasVoted, votedPositions, receiptCodes, total, state: voterState(c, c.db_now ?? new Date(), { eligible, notMember, hasVoted }) };
 }
 
-interface BallotCandidate { id: string; name: string; bio: string | null; photo_path: string | null; is_abstain: boolean; withdrawn_at: Date | null; position_id: string; region_id: string | null; region: string | null }
+interface BallotCandidate { id: string; name: string; bio: string | null; pledge: string | null; photo_path: string | null; is_abstain: boolean; withdrawn_at: Date | null; position_id: string; region_id: string | null; region: string | null }
 
 /** Approved candidates only: a pending, rejected or withdrawn nomination is never on a ballot. */
 async function ballotCandidates(campaignId: string, positionIds: string[]): Promise<BallotCandidate[]> {
   return (await getPool().query(
-    `SELECT k.id, k.name, k.bio, k.photo_path, k.is_abstain, k.withdrawn_at, k.position_id, k.region_id, g.name AS region
+    `SELECT k.id, k.name, k.bio, k.pledge, k.photo_path, k.is_abstain, k.withdrawn_at, k.position_id, k.region_id, g.name AS region
        FROM candidates k JOIN positions p ON p.id = k.position_id LEFT JOIN regions g ON g.id = k.region_id
       WHERE k.campaign_id = $1 AND k.position_id = ANY($2::uuid[]) AND k.status = 'approved' ORDER BY p.sort_order, p.created_at, k.sort_order, k.name`, [campaignId, positionIds])).rows;
 }
 const candidateOut = (x: BallotCandidate) => ({
-  id: x.id, name: x.name, bio: x.bio, photoUrl: x.photo_path ? `/api/photos/${x.id}` : null, isAbstain: x.is_abstain, withdrawn: x.withdrawn_at !== null,
+  id: x.id, name: x.name, bio: x.bio, pledge: x.pledge, photoUrl: x.photo_path ? `/api/photos/${x.id}` : null, isAbstain: x.is_abstain, withdrawn: x.withdrawn_at !== null,
   positionId: x.position_id, regionId: x.region_id, region: x.region,
 });
 
@@ -121,6 +124,8 @@ export function voteRouter(): Router {
     const regions = showCandidates ? (await getPool().query('SELECT id, name FROM regions WHERE campaign_id = $1 ORDER BY sort_order, name', [c.id])).rows : [];
     res.set('Cache-Control', 'no-store').json({
       title: c.title, description: c.description, opensAt: c.opens_at, closesAt: c.closes_at,
+      resultsReleaseAt: c.results_release_at ?? null,          // display only: publishing stays manual
+      groupByRegion: !!c.results_group_by_region,
       resultsPublished: c.results_published && c.status === 'closed',
       voterState: s.state,
       notices: await getNotices(getPool(), c.id, false),   // resets and early closes, with their reasons (SEC-01)
@@ -129,6 +134,7 @@ export function voteRouter(): Router {
       progress: { voted: s.votedPositions.size, total: s.total },
       positions: showCandidates ? posRows.map((p) => ({
         id: p.id, title: p.title, description: p.description, seats: p.seats, voted: s.votedPositions.has(p.id),
+        receiptCode: s.receiptCodes.get(p.id) ?? null,
         candidateCount: cands.filter((x) => x.position_id === p.id && !x.is_abstain && !x.withdrawn_at).length,
       })) : [],
     });
@@ -152,11 +158,26 @@ export function voteRouter(): Router {
     const cands = await ballotCandidates(c.id, [pos.id]);
     res.set('Cache-Control', 'no-store').json({
       position: { id: pos.id, title: pos.title, description: pos.description },
-      campaign: { title: c.title, closesAt: c.closes_at },
+      campaign: { title: c.title, closesAt: c.closes_at, resultsReleaseAt: c.results_release_at ?? null },
+      groupByRegion: !!c.results_group_by_region,
       voterState: s.state,
       regions: (await getPool().query('SELECT id, name FROM regions WHERE campaign_id = $1 ORDER BY sort_order, name', [c.id])).rows,
       candidates: cands.map(candidateOut),
       progress: { voted: s.votedPositions.size, total: s.total },
+    });
+  });
+
+  /**
+   * The caller's own receipt codes in this campaign, one per position voted. A code proves that the member voted in that position and
+   * nothing more: the receipt row holds no candidate. Codes from before migration 020 are null.
+   */
+  r.get('/:shareToken/receipts', async (req, res) => {
+    const shareToken = parseToken(req);
+    const c = await loadByToken(shareToken);
+    const s = await standing(c, currentUser(req));
+    const titles = new Map((await getPool().query('SELECT id, title, sort_order FROM positions WHERE campaign_id = $1 ORDER BY sort_order, created_at', [c.id])).rows.map((p) => [p.id as string, p.title as string]));
+    res.set('Cache-Control', 'no-store').json({
+      receipts: [...titles].filter(([id]) => s.votedPositions.has(id)).map(([id, title]) => ({ positionId: id, position: title, receiptCode: s.receiptCodes.get(id) ?? null })),
     });
   });
 
@@ -165,8 +186,8 @@ export function voteRouter(): Router {
     const shareToken = parseToken(req);
     const { candidateId, positionId } = voteBody.parse(req.body);
     const u = currentUser(req);
-    await castVote(u.oid, u.email, shareToken, candidateId, positionId);
-    res.status(201).set('Cache-Control', 'no-store').json({ recorded: true });
+    const { receiptCode } = await castVote(u.oid, u.email, shareToken, candidateId, positionId);
+    res.status(201).set('Cache-Control', 'no-store').json({ recorded: true, receiptCode });
   });
 
   /** Vote in one position. Each position is its own transaction and its own receipt; positions can be voted in any order. */
@@ -176,8 +197,8 @@ export function voteRouter(): Router {
     if (!pid.success) throw notFound();
     const { candidateId } = z.object({ candidateId: uuid }).strict().parse(req.body);
     const u = currentUser(req);
-    await castVote(u.oid, u.email, shareToken, candidateId, pid.data);
-    res.status(201).set('Cache-Control', 'no-store').json({ recorded: true });
+    const { receiptCode } = await castVote(u.oid, u.email, shareToken, candidateId, pid.data);
+    res.status(201).set('Cache-Control', 'no-store').json({ recorded: true, receiptCode });
   });
 
   r.get('/:shareToken/results', async (req, res) => {

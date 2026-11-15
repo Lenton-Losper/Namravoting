@@ -10,6 +10,7 @@ function DetailsSection({ c, live, onSaved }: { c: CampaignDetail; live: boolean
   const [description, setDescription] = useState(c.description ?? '');
   const [opens, setOpens] = useState(toLocalInput(c.opens_at));
   const [closes, setCloses] = useState(toLocalInput(c.closes_at));
+  const [release, setRelease] = useState(toLocalInput(c.results_release_at ?? null));
   const [allowEdits, setAllowEdits] = useState(!!c.allow_edits_after_start);
   const [allowAbstain, setAllowAbstain] = useState(!!c.allow_abstain);
   const [quorum, setQuorum] = useState(c.quorum_percent ? String(c.quorum_percent) : '');
@@ -21,8 +22,8 @@ function DetailsSection({ c, live, onSaved }: { c: CampaignDetail; live: boolean
     try {
       // Live: the opening time and the setting itself are locked, so they are not sent at all.
       const body = live
-        ? { title, description: description || null, closes_at: fromLocalInput(closes) }
-        : { title, description: description || null, opens_at: fromLocalInput(opens), closes_at: fromLocalInput(closes), allow_edits_after_start: allowEdits, allow_abstain: allowAbstain, quorum_percent: quorum ? Number(quorum) : null };
+        ? { title, description: description || null, closes_at: fromLocalInput(closes), results_release_at: fromLocalInput(release) }
+        : { title, description: description || null, opens_at: fromLocalInput(opens), closes_at: fromLocalInput(closes), results_release_at: fromLocalInput(release), allow_edits_after_start: allowEdits, allow_abstain: allowAbstain, quorum_percent: quorum ? Number(quorum) : null };
       await api('PATCH', `/api/campaigns/${c.id}`, body);
       setMsg(live ? 'Saved. Recorded as “Edited after start”.' : 'Saved.'); onSaved();
     } catch (err) { setError((err as Error).message); }
@@ -38,6 +39,7 @@ function DetailsSection({ c, live, onSaved }: { c: CampaignDetail; live: boolean
       <div className="field-grid">
         <label>Opens at<span className="field-helper">{live ? 'Locked: voting has started.' : 'Optional. Windhoek time (CAT).'}</span><input type="datetime-local" value={opens} onChange={(e) => setOpens(e.target.value)} disabled={live} /></label>
         <label>Closes at<span className="field-helper">Optional. Windhoek time (CAT). Closes automatically.</span><input type="datetime-local" value={closes} onChange={(e) => setCloses(e.target.value)} /></label>
+        <label>Results will be shared on<span className="field-helper">Optional, display only. Shown to voters on their receipt. Publishing stays manual.</span><input type="datetime-local" value={release} onChange={(e) => setRelease(e.target.value)} /></label>
       </div>
       {!live && (
         <>

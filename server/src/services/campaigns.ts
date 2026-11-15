@@ -12,7 +12,7 @@ export interface CampaignRow {
   id: string; share_token: string; created_by: string; title: string; description: string | null;
   status: Status; opens_at: Date | null; closes_at: Date | null; eligibility: 'all' | 'list' | 'umoja';
   results_published: boolean; created_at: Date; archived_at: Date | null;
-  parent_campaign_id?: string | null; runoff_round?: number; allow_edits_after_start?: boolean; allow_abstain?: boolean; require_approval?: boolean; quorum_percent?: number | null; nominations_close_at?: Date | null; nominate_eligibility?: 'all' | 'umoja' | null; results_group_by_region?: boolean; publish_at?: Date | null; receipts_purged_at?: Date | null; photos_purged_at?: Date | null;
+  parent_campaign_id?: string | null; runoff_round?: number; allow_edits_after_start?: boolean; allow_abstain?: boolean; require_approval?: boolean; quorum_percent?: number | null; nominations_close_at?: Date | null; nominate_eligibility?: 'all' | 'umoja' | null; results_group_by_region?: boolean; results_release_at?: Date | null; publish_at?: Date | null; receipts_purged_at?: Date | null; photos_purged_at?: Date | null;
   /** The database clock when the row was read (only on queries that ask for it). */
   db_now?: Date;
 }

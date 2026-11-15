@@ -3,7 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import { api, ApiError, fmtDate, type Notice, type Results } from '../api';
 import { Icon } from '../icons';
 import { closesIn, useNow } from '../time';
-import { CampaignBlocks, type BlockPosition } from './VoteBlocks';
+import { BallotState, CampaignBlocks, type BlockPosition } from './VoteBlocks';
 import { BackLink, Dialog, ErrorBox, NoticeBanner, NoticeList, ResultsChart, Spinner, Thumb, initials } from '../ui';
 
 type VoterState = 'can_vote' | 'already_voted' | 'not_eligible' | 'not_member' | 'not_open' | 'closed';
@@ -120,28 +120,34 @@ export function VotePage() {
 
   if (invalid) {
     return (
-      <section className="card card-pad state-card" aria-live="polite">
-        <span className="state-icon"><Icon name="alert" size={22} /></span>
-        <h2>This voting link isn't valid</h2>
-        <p className="muted">Check that you opened the full link or scanned the whole QR code.</p>
-        <Link className="btn btn-secondary" to="/votes">Go to My votes</Link>
-      </section>
+      <div className="ballot-screen">
+        <BallotState tone="warn" icon="alert" title="This voting link isn't valid" actions={<Link className="ballot-btn ballot-btn-secondary" to="/votes">Go to My votes</Link>}>
+          <p className="ballot-state-text">Check that you opened the full link or scanned the whole QR code. If it still doesn't work, ask the organiser for a new link.</p>
+        </BallotState>
+      </div>
     );
   }
   if (notMember) {
     return (
-      <StateCard icon="ban" title="This vote is for Umoja members">
-        <p className="muted">This vote is for Umoja members. You're not on the Umoja membership list. Sign up as an Umoja member to take part, or contact Human Capital if you think this is a mistake.</p>
-        <Link className="btn btn-secondary" to="/votes">Go to My votes</Link>
-      </StateCard>
+      <div className="ballot-screen">
+        <BallotState tone="warn" icon="ban" title="This vote is for Umoja members" actions={<Link className="ballot-btn ballot-btn-secondary" to="/votes">Go to My votes</Link>}>
+          <p className="ballot-state-text">You're not on the Umoja membership list. Sign up as an Umoja member to take part, or contact Human Capital if you think this is a mistake.</p>
+        </BallotState>
+      </div>
     );
   }
   if (ineligible) {
-    return <StateCard icon="ban" title="You are not eligible to vote here"><p className="muted">Your account is not on the voter list for this vote. Contact the organiser if you think this is a mistake.</p><Link className="btn btn-secondary" to="/votes">Go to My votes</Link></StateCard>;
+    return (
+      <div className="ballot-screen">
+        <BallotState tone="warn" icon="ban" title="You can't vote in this one" actions={<Link className="ballot-btn ballot-btn-secondary" to="/votes">Go to My votes</Link>}>
+          <p className="ballot-state-text">Your account is not on the voter list for this vote. Contact the organiser if you think this is a mistake.</p>
+        </BallotState>
+      </div>
+    );
   }
   if (error && !info) return <StateCard icon="alert" title="Can't open this vote"><p className="muted">{error}</p><button className="btn btn-secondary" onClick={() => void load()}>Try again</button></StateCard>;
   if (!info) return <Spinner />;
-  if (info.positions) return <CampaignBlocks token={shareToken} info={{ ...info, positions: info.positions }} now={now} reload={load} />;
+  if (info.positions) return <CampaignBlocks token={shareToken} info={{ ...info, positions: info.positions }} reload={load} />;
 
   const chosen = info.candidates.find((c) => c.id === selected);
   const left = info.voterState === 'can_vote' ? closesIn(info.closesAt, now) : null;

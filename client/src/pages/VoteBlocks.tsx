@@ -1,110 +1,231 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { Link } from 'react-router-dom';
 import { api, ApiError, fmtDate, type Notice, type Results } from '../api';
 import { Icon } from '../icons';
-import { closesIn } from '../time';
-import { BackLink, Dialog, ErrorBox, NoticeBanner, NoticeList, PositionResults, Spinner, Thumb, initials } from '../ui';
+import { BackLink, ErrorBox, NoticeBanner, NoticeList, PositionResults, Spinner, initials } from '../ui';
 
 /**
- * A campaign with positions (e.g. "Umoja Committee 2026": Press Secretary, Finance Officer ...).
- * The voter opens the campaign, taps a position block, votes in it, and the block is greyed out as done. Each position is its own vote,
- * in any order. A position that is done is never opened again (the server refuses its ballot too: 409).
+ * The voter's side of a campaign with positions (e.g. "Umoja Committee 2026": Press Secretary, Finance Officer ...).
+ *
+ *   campaign home   a block per position, with progress; a block that is done is greyed "Voted" with its receipt code.
+ *                   A campaign with ONE position skips this screen and opens the ballot directly.
+ *   ballot          per position: Step 1 choose (cards; optional region filter; abstain apart) -> Step 2 confirm (a sheet) -> the receipt
+ *                   ("Your vote is in", the results date, the receipt code) -> Done goes back to the blocks.
+ * Each position is its own vote, in any order; a done position is never opened again (the server refuses its ballot: 409).
  */
 
-export interface BlockPosition { id: string; title: string; description: string | null; voted: boolean; candidateCount: number }
+export interface BlockPosition { id: string; title: string; description: string | null; voted: boolean; candidateCount: number; receiptCode?: string | null }
 export interface BlocksInfo {
   title: string; description: string | null; opensAt: string | null; closesAt: string | null; resultsPublished: boolean;
+  resultsReleaseAt?: string | null; groupByRegion?: boolean;
   voterState: 'can_vote' | 'already_voted' | 'not_eligible' | 'not_member' | 'not_open' | 'closed';
   notices?: Notice[]; positions: BlockPosition[]; progress?: { voted: number; total: number };
 }
-interface BallotCandidate { id: string; name: string; bio: string | null; photoUrl: string | null; isAbstain: boolean; withdrawn: boolean; regionId: string | null; region: string | null }
+export interface BallotCandidate {
+  id: string; name: string; bio: string | null; pledge?: string | null; photoUrl: string | null; isAbstain: boolean; withdrawn: boolean;
+  regionId: string | null; region: string | null;
+}
 interface Ballot {
   position: { id: string; title: string; description: string | null };
   regions: { id: string; name: string }[]; candidates: BallotCandidate[]; progress: { voted: number; total: number };
-  campaign?: { title: string; closesAt: string | null };
+  campaign?: { title: string; closesAt: string | null; resultsReleaseAt?: string | null };
+  groupByRegion?: boolean;
 }
 
-function StateCard({ icon, title, children }: { icon: string; title: string; children?: ReactNode }) {
-  return (
-    <section className="card card-pad state-card" aria-live="polite">
-      <span className="state-icon"><Icon name={icon} size={22} /></span>
-      <h2>{title}</h2>
-      {children}
-    </section>
-  );
+/** Above this many candidates in a position, the cards are compact (photo left, one line of pledge). */
+export const COMPACT_ABOVE = 6;
+/** Above this many candidates (or when the campaign groups by region), the ballot shows the region filter and groups. */
+export const REGIONS_ABOVE = 8;
+/** Placeholder until Umoja names its contact for voting questions. */
+export const HELP_CONTACT = '[Umoja contact: name, phone or email]';
+
+const firstName = (name: string) => name.trim().split(/\s+/)[0] ?? name;
+/** The one line on the card: the candidate's pledge, or the start of their bio (about 140 characters, cut at a word). */
+export function cardLine(c: Pick<BallotCandidate, 'pledge' | 'bio'>): string {
+  const pledge = c.pledge?.trim();
+  if (pledge) return pledge;
+  const bio = (c.bio ?? '').trim().replace(/\s+/g, ' ');
+  if (bio.length <= 140) return bio;
+  const cut = bio.slice(0, 140);
+  return `${cut.slice(0, Math.max(cut.lastIndexOf(' '), 100))}…`;
 }
 
 const pendingKey = (token: string, pid: string) => `namra:pending-vote:${token}:${pid}`;
 const clearPending = (token: string, pid: string) => { try { sessionStorage.removeItem(pendingKey(token, pid)); } catch { /* storage unavailable */ } };
-const NO_REGION = 'No region';
 
-/** Candidates grouped by region, in the campaign's region order; the Abstain line (no region) comes last, outside any group. */
-export function groupByRegion(candidates: BallotCandidate[], regions: { id: string; name: string }[]): { key: string; name: string; items: BallotCandidate[] }[] {
-  const order = new Map(regions.map((r, i) => [r.id, i]));
-  const groups = new Map<string, { key: string; name: string; items: BallotCandidate[] }>();
-  for (const c of candidates.filter((x) => !x.isAbstain)) {
-    const key = c.regionId ?? 'none';
-    if (!groups.has(key)) groups.set(key, { key, name: c.region ?? NO_REGION, items: [] });
-    groups.get(key)!.items.push(c);
-  }
-  return [...groups.values()].sort((a, b) => (order.get(a.key) ?? 1e6) - (order.get(b.key) ?? 1e6));
+// ---- building blocks -------------------------------------------------------------------------------------------------------------
+
+/** A full-width state screen in the ballot's style: an icon in a tinted circle, a heading, text and actions. */
+export function BallotState({ tone = 'info', icon, title, children, actions }: { tone?: 'info' | 'success' | 'warn'; icon: string; title: string; children?: ReactNode; actions?: ReactNode }) {
+  return (
+    <section className={`ballot-state ballot-state-${tone}`} aria-live="polite">
+      <span className="ballot-state-icon" aria-hidden="true"><Icon name={icon} size={30} /></span>
+      <h1 className="ballot-state-title">{title}</h1>
+      {children}
+      {actions && <div className="ballot-state-actions">{actions}</div>}
+    </section>
+  );
 }
 
-/** One position's ballot: region filter, candidates grouped by region, one choice, then confirm. */
-export function PositionBallot({ token, position, onBack, onVoted }: {
-  token: string; position: { id: string; title: string }; onBack: () => void; onVoted: (title: string) => void;
+/** A receipt code panel: "Receipt number", the code, and what it proves. */
+function ReceiptCode({ code }: { code: string | null | undefined }) {
+  if (!code) return null;
+  return (
+    <div className="receipt-box">
+      <span className="receipt-label">Receipt number</span>
+      <span className="receipt-code">{code}</span>
+      <span className="receipt-note">Proves you voted. It doesn't show who you voted for.</span>
+    </div>
+  );
+}
+
+/** A round photo, or initials when there is none. */
+function Avatar({ url, name, size }: { url: string | null; name: string; size: 'sm' | 'md' | 'lg' | 'xl' }) {
+  return url
+    ? <img className={`avatar avatar-${size}`} src={url} alt={`Photo of ${name}`} />
+    : <span className={`avatar avatar-${size} avatar-empty`} aria-hidden="true">{initials(name)}</span>;
+}
+
+/**
+ * A bottom sheet (a centred dialog on a wide screen). Focus moves into it, Tab stays inside it, Escape closes it (unless `busy`), and
+ * focus goes back to what opened it.
+ */
+function Sheet({ label, onClose, busy, children, className }: { label: string; onClose: () => void; busy?: boolean; children: ReactNode; className?: string }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const closeRef = useRef(onClose); useEffect(() => { closeRef.current = onClose; });
+  const busyRef = useRef(busy); useEffect(() => { busyRef.current = busy; });
+  useEffect(() => {
+    const before = document.activeElement as HTMLElement | null;
+    ref.current?.focus();
+    return () => { before?.focus?.(); };
+  }, []);
+  const onKey = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === 'Escape' && !busyRef.current) { e.stopPropagation(); closeRef.current(); return; }
+    if (e.key !== 'Tab' || !ref.current) return;
+    const f = [...ref.current.querySelectorAll<HTMLElement>('button:not([disabled]), a[href], select, input, textarea, [tabindex]:not([tabindex="-1"])')];
+    if (!f.length) { e.preventDefault(); return; }
+    const first = f[0]; const last = f[f.length - 1];
+    if (e.shiftKey && (document.activeElement === first || document.activeElement === ref.current)) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  };
+  return (
+    <div className="sheet-backdrop" onClick={() => { if (!busyRef.current) closeRef.current(); }}>
+      <div className={`ballot-sheet${className ? ` ${className}` : ''}`} role="dialog" aria-modal="true" aria-label={label} tabIndex={-1} ref={ref}
+        onKeyDown={onKey} onClick={(e) => e.stopPropagation()}>
+        <span className="sheet-handle" aria-hidden="true" />
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function HelpSheet({ onClose }: { onClose: () => void }) {
+  return (
+    <Sheet label="How voting works" onClose={onClose}>
+      <h2 className="sheet-title">How voting works</h2>
+      <ol className="help-steps">
+        <li><strong>Choose</strong> one candidate. Tap a card to select it; tap "Read full statement" to read more first.</li>
+        <li><strong>Review</strong> your choice. Nothing is sent until you press "Submit my vote".</li>
+        <li><strong>Submit.</strong> You get a receipt number that proves you voted.</li>
+      </ol>
+      <ul className="help-facts">
+        <li><Icon name="lock" size={16} /> Your vote is anonymous: nobody, including the administrators, can see who you voted for.</li>
+        <li><Icon name="check" size={16} /> You can vote once in each position, and a vote can't be changed after you submit it.</li>
+        <li><Icon name="info" size={16} /> Need help? Contact {HELP_CONTACT}.</li>
+      </ul>
+      <button type="button" className="ballot-btn ballot-btn-secondary" onClick={onClose}>Close</button>
+    </Sheet>
+  );
+}
+
+function StatementSheet({ c, onChoose, onClose }: { c: BallotCandidate; onChoose: () => void; onClose: () => void }) {
+  const id = useId();
+  return (
+    <Sheet label={`Statement of ${c.name}`} onClose={onClose} className="statement-sheet">
+      <div className="statement-head">
+        <Avatar url={c.photoUrl} name={c.name} size="xl" />
+        <h2 className="sheet-title" id={id}>{c.name}</h2>
+        {c.region && <p className="statement-region">{c.region}</p>}
+      </div>
+      {c.pledge && <p className="statement-pledge">“{c.pledge}”</p>}
+      {c.bio ? <p className="statement-bio">{c.bio}</p> : <p className="statement-bio muted">This candidate has not written a statement.</p>}
+      {!c.withdrawn && <button type="button" className="ballot-btn ballot-btn-primary" onClick={onChoose}>Choose {firstName(c.name)}</button>}
+      <button type="button" className="ballot-btn ballot-btn-secondary" onClick={onClose}>Close</button>
+    </Sheet>
+  );
+}
+
+// ---- one position's ballot ---------------------------------------------------------------------------------------------------------
+
+type Step = 'choose' | 'confirm' | 'receipt';
+
+/** Step 1 (choose) -> Step 2 (confirm sheet) -> the receipt. `single` = the campaign has one position (no "All positions" link). */
+export function PositionBallot({ token, position, campaign, single, onBack, onDone }: {
+  token: string; position: { id: string; title: string }; single?: boolean;
+  campaign: { title: string; closesAt: string | null; resultsReleaseAt?: string | null };
+  onBack: () => void; onDone: () => void;
 }) {
   const [ballot, setBallot] = useState<Ballot | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [region, setRegion] = useState('');
   const [selected, setSelected] = useState<string | null>(null);
-  const [confirming, setConfirming] = useState(false);
+  const [step, setStep] = useState<Step>('choose');
+  const [receipt, setReceipt] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [uncertain, setUncertain] = useState(false);
+  const [statement, setStatement] = useState<BallotCandidate | null>(null);
+  const [help, setHelp] = useState(false);
   const submitting = useRef(false);   // synchronous guard: a double tap can never send two requests
   const url = `/api/vote/${token}/positions/${position.id}`;
 
   const load = useCallback(async (): Promise<Ballot | 'gone' | null> => {
     try { const b = await api<Ballot>('GET', url); setBallot(b); setError(null); return b; }
     catch (e) {
-      // Already voted here / closed / not open: this block is not available; go back to the list, which shows the true state.
+      // Already voted here / closed / not open: this ballot is not available; the campaign page shows the true state.
       if (e instanceof ApiError && [403, 404, 409].includes(e.status)) return 'gone';
       setError((e as Error).message); return null;
     }
   }, [url]);
   useEffect(() => { void load().then((b) => { if (b === 'gone') onBack(); }); }, [load, onBack]);
-  // Back from a re-sign-in with the choice kept: restore it (once). The person still presses Cast vote and confirms.
+  // Back from a re-sign-in with the choice kept: restore it (once). The person still reviews and submits.
   useEffect(() => {
     let id: string | null = null;
     try { id = sessionStorage.getItem(pendingKey(token, position.id)); sessionStorage.removeItem(pendingKey(token, position.id)); } catch { /* storage unavailable */ }
     if (id) setSelected(id);
   }, [token, position.id]);
 
-  const visible = useMemo(() => (ballot?.candidates ?? []).filter((c) => c.isAbstain || !region || c.regionId === region), [ballot, region]);
-  const groups = useMemo(() => groupByRegion(visible, ballot?.regions ?? []), [visible, ballot]);
-  const abstain = visible.find((c) => c.isAbstain);
+  const all = ballot?.candidates ?? [];
+  const people = all.filter((c) => !c.isAbstain);
+  const abstain = all.find((c) => c.isAbstain);
+  const compact = people.length > COMPACT_ABOVE;
+  const showRegions = !!ballot && (!!ballot.groupByRegion || people.length > REGIONS_ABOVE);
+  // Regions that actually have candidates, in the campaign's order. Candidates with no region are listed WITHOUT any heading.
+  const regionsUsed = useMemo(() => (ballot?.regions ?? []).filter((r) => people.some((c) => c.regionId === r.id)), [ballot, people]);
+  const visible = useMemo(() => (showRegions && region ? people.filter((c) => c.regionId === region) : people), [people, region, showRegions]);
   // A choice that the filter hides (or that no longer exists) is dropped, so nobody confirms a candidate they cannot see.
-  useEffect(() => { if (selected && ballot && !visible.some((c) => c.id === selected)) setSelected(null); }, [visible, selected, ballot]);
-  const chosen = ballot?.candidates.find((c) => c.id === selected);
-  const count = (ballot?.candidates ?? []).filter((c) => !c.isAbstain).length;
-  const shown = visible.filter((c) => !c.isAbstain).length;
+  useEffect(() => {
+    if (selected && ballot && selected !== abstain?.id && !visible.some((c) => c.id === selected)) setSelected(null);
+  }, [visible, selected, ballot, abstain]);
+  const chosen = all.find((c) => c.id === selected) ?? null;
 
   async function submit() {
     if (!selected || submitting.current) return;
     submitting.current = true; setBusy(true);
     try { sessionStorage.setItem(pendingKey(token, position.id), selected); } catch { /* storage unavailable */ }
     try {
-      await api('POST', url, { candidateId: selected });
-      clearPending(token, position.id); setSelected(null); setConfirming(false);
-      onVoted(position.title);   // the chosen candidate's name is intentionally NOT kept on screen
+      const r = await api<{ recorded: boolean; receiptCode?: string }>('POST', url, { candidateId: selected });
+      clearPending(token, position.id);
+      setSelected(null);                                   // the chosen candidate is intentionally NOT kept on screen
+      setReceipt(r.receiptCode ?? null); setStep('receipt');
     } catch (e) {
-      setConfirming(false);
+      setStep('choose');
       if (e instanceof ApiError && e.status === 401) return;   // being signed back in; the ballot comes back with the choice selected
       clearPending(token, position.id);
-      if (e instanceof ApiError && [403, 404, 409].includes(e.status)) { setSelected(null); onBack(); }   // definitive answer: show the true state
+      if (e instanceof ApiError && [403, 404, 409].includes(e.status)) { setSelected(null); onBack(); }   // definitive: show the true state
       else {
-        // Network or server error: the outcome is unknown. Ask the server; if the vote landed this block is "already voted" (409).
+        // Network or server error: the outcome is unknown. Ask the server; if the vote landed this ballot is "already voted" (409).
         const fresh = await load();
-        if (fresh === 'gone') { onVoted(position.title); }
+        if (fresh === 'gone') onBack();
         else if (!fresh) setUncertain(true);                                // could not even ask: do NOT invite a second attempt yet
         else setError('Your vote was not recorded. Please try again.');     // the server says there is no receipt, so voting again is safe
       }
@@ -112,89 +233,139 @@ export function PositionBallot({ token, position, onBack, onVoted }: {
   }
   async function recheck() {
     const fresh = await load();
-    if (fresh === 'gone') { onVoted(position.title); return; }
+    if (fresh === 'gone') { onBack(); return; }
     if (!fresh) return;
     setUncertain(false); setError('Your vote was not recorded. You can vote again.');
   }
 
-  const card = (c: BallotCandidate) => (
-    <button key={c.id} role="radio" aria-checked={selected === c.id} disabled={c.withdrawn}
-      className={`candidate${selected === c.id ? ' selected' : ''}${c.isAbstain ? ' candidate-abstain' : ''}${c.withdrawn ? ' candidate-withdrawn' : ''}`} onClick={() => setSelected(c.id)}>
-      {!c.isAbstain && <Thumb url={c.photoUrl} name={c.name} size="lg" />}
-      <span className="candidate-text">
-        <strong>{c.name}</strong>
-        {c.region && !c.isAbstain && <span className="candidate-region">{c.region}</span>}
-        {c.withdrawn && <span className="muted">Withdrawn: this candidate can no longer be chosen</span>}
-        {c.bio && !c.withdrawn && <span className="muted">{c.bio}</span>}
-      </span>
-      <span className="candidate-check" aria-hidden="true"><Icon name="check" size={14} /></span>
-    </button>
-  );
+  const release = campaign.resultsReleaseAt ?? ballot?.campaign?.resultsReleaseAt ?? null;
+
+  if (step === 'receipt') {
+    return (
+      <div className="ballot-screen">
+        <BallotState tone="success" icon="check" title="Your vote is in"
+          actions={<button type="button" className="ballot-btn ballot-btn-primary" onClick={onDone}>Done</button>}>
+          <p className="ballot-state-text">Thank you for voting{single ? '' : ` for ${position.title}`}. {release ? `Results will be shared on ${fmtDate(release)}.` : 'Results will be shared after voting closes.'}</p>
+          <ReceiptCode code={receipt} />
+        </BallotState>
+      </div>
+    );
+  }
+
+  const card = (c: BallotCandidate) => {
+    const on = selected === c.id;
+    const line = cardLine(c);
+    return (
+      <li key={c.id} className={`ballot-card${on ? ' is-selected' : ''}${compact ? ' is-compact' : ''}${c.withdrawn ? ' is-withdrawn' : ''}`}>
+        <button type="button" className="ballot-card-main" aria-pressed={on} disabled={c.withdrawn} onClick={() => setSelected(c.id)}>
+          <span className="ballot-radio" aria-hidden="true">{on && <span className="ballot-radio-dot" />}</span>
+          <Avatar url={c.photoUrl} name={c.name} size={compact ? 'sm' : 'lg'} />
+          <span className="ballot-card-text">
+            <span className="ballot-card-name"><strong>{c.name}</strong>{c.region && <span className="ballot-card-region"> – {c.region}</span>}</span>
+            {c.withdrawn ? <span className="ballot-card-line">Withdrawn: this candidate can no longer be chosen</span> : line && <span className="ballot-card-line">{line}</span>}
+          </span>
+          {on && <span className="sr-only">Selected</span>}
+        </button>
+        {(c.bio || c.pledge) && (
+          <button type="button" className="statement-link" onClick={() => setStatement(c)} aria-label={`Read full statement of ${c.name}`}>
+            Read full statement <Icon name="chevron" size={16} />
+          </button>
+        )}
+      </li>
+    );
+  };
+
+  const groups = showRegions && !region
+    ? [...regionsUsed.map((r) => ({ key: r.id, name: r.name as string | null, items: visible.filter((c) => c.regionId === r.id) })),
+       { key: 'none', name: null, items: visible.filter((c) => !c.regionId || !regionsUsed.some((r) => r.id === c.regionId)) }].filter((g) => g.items.length)
+    : [{ key: 'all', name: null as string | null, items: visible }];
 
   return (
-    <>
-      <button type="button" className="back-link back-button" onClick={onBack}>← All positions</button>
-      <section className="card card-accent head-card">
-        <div className="head-inner">
-          <div className="initials-box" aria-hidden="true">{initials(position.title)}</div>
-          <div className="grow">
-            {ballot?.campaign?.title && <p className="meta ballot-campaign">{ballot.campaign.title}</p>}
-            <h1 className="head-title">{position.title}</h1>
-            {ballot?.position.description && <p className="head-desc">{ballot.position.description}</p>}
-          </div>
-        </div>
-      </section>
+    <div className="ballot-screen">
+      <div className="ballot-topline">
+        {single ? <BackLink to="/votes">My votes</BackLink> : <button type="button" className="back-link back-button" onClick={onBack}>← All positions</button>}
+        <button type="button" className="help-button" aria-label="Help: how voting works" onClick={() => setHelp(true)}><Icon name="help" size={22} /></button>
+      </div>
+      <p className="ballot-eyebrow">{campaign.title}</p>
+      <p className="ballot-step">Step 1 of 2 · Choose</p>
+      <h1 className="ballot-title">{position.title}</h1>
+      <div className="ballot-chips">
+        {campaign.closesAt && <span className="ballot-chip"><Icon name="clock" size={14} /> Closes {fmtDate(campaign.closesAt)}</span>}
+        <span className="ballot-chip"><Icon name="lock" size={14} /> Your vote is anonymous</span>
+      </div>
+      {ballot?.position.description && <p className="ballot-intro">{ballot.position.description}</p>}
+      <p className="ballot-intro">Pick one candidate. You'll see your choice again before anything is submitted.</p>
       <ErrorBox message={error} />
       {!ballot && !error && !uncertain && <Spinner />}
       {uncertain && (
-        <section className="card card-pad state-card" role="alert">
-          <span className="state-icon"><Icon name="alert" size={22} /></span>
-          <h2>Your vote may not have been recorded</h2>
-          <p className="muted">The connection dropped before we heard back, and we could not reach the server to check. Please do not vote again until you have checked: press “Check again”.</p>
-          <div className="form-actions"><button className="btn btn-primary" onClick={() => void recheck()}>Check again</button><button className="btn btn-secondary" onClick={onBack}>All positions</button></div>
-        </section>
+        <BallotState tone="warn" icon="alert" title="Your vote may not have been recorded"
+          actions={<><button type="button" className="ballot-btn ballot-btn-primary" onClick={() => void recheck()}>Check again</button><button type="button" className="ballot-btn ballot-btn-secondary" onClick={onBack}>Back</button></>}>
+          <p className="ballot-state-text">The connection dropped before we heard back, and we could not reach the server to check. Please do not vote again until you have checked: press “Check again”.</p>
+        </BallotState>
       )}
       {ballot && !uncertain && (
         <>
-          <div className="region-filter">
-            <label>Region
-              <select value={region} onChange={(e) => setRegion(e.target.value)} aria-describedby="region-count">
-                <option value="">All regions</option>
-                {ballot.regions.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-              </select>
-            </label>
-            <p id="region-count" className="muted small" role="status">{region ? `Showing ${shown} of ${count} candidates` : `${count} candidate${count === 1 ? '' : 's'}`}</p>
-          </div>
-          <p className="field-label hint">Select one candidate</p>
-          {shown === 0 && !abstain && <p className="muted">No candidates in this region. Choose “All regions” to see everyone.</p>}
-          <div className="candidate-groups">
-            {groups.map((g, i) => (
-              <section key={g.key} aria-labelledby={`region-h-${i}`} className="candidate-group">
-                <h2 id={`region-h-${i}`} className="region-heading">{g.name} <span className="muted count">({g.items.length})</span></h2>
-                <div className="list radio-list" role="radiogroup" aria-labelledby={`region-h-${i}`}>{g.items.map(card)}</div>
+          {showRegions && (
+            <div className="region-filter">
+              <label>Region
+                <select value={region} onChange={(e) => setRegion(e.target.value)} aria-describedby="region-count">
+                  <option value="">All regions</option>
+                  {regionsUsed.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+                </select>
+              </label>
+              <p id="region-count" className="muted small" role="status">{region ? `Showing ${visible.length} of ${people.length} candidates` : `${people.length} candidates`}</p>
+            </div>
+          )}
+          <div className="ballot-list">
+            {groups.map((g) => (
+              <section key={g.key} className="ballot-group" aria-label={g.name ?? undefined}>
+                {g.name && <h2 className="region-heading">{g.name} <span className="muted count">({g.items.length})</span></h2>}
+                <ul className="ballot-cards">{g.items.map(card)}</ul>
               </section>
             ))}
-            {abstain && <div className="list radio-list abstain-group" role="radiogroup" aria-label="Or abstain">{card(abstain)}</div>}
           </div>
-          <div className="sticky-bar">
-            <button className="btn btn-primary btn-block" disabled={!selected || busy} onClick={() => setConfirming(true)}>Cast vote</button>
+          {abstain && (
+            <div className="abstain-block">
+              <p className="abstain-or">Or, if you don't want to choose a candidate:</p>
+              <button type="button" className={`abstain-option${selected === abstain.id ? ' is-selected' : ''}`} aria-pressed={selected === abstain.id} onClick={() => setSelected(abstain.id)}>
+                <span className="ballot-radio" aria-hidden="true">{selected === abstain.id && <span className="ballot-radio-dot" />}</span>
+                <span><strong>Abstain</strong> (none of the above)<span className="abstain-note">Counts as a vote cast, for no candidate.</span></span>
+              </button>
+            </div>
+          )}
+          <div className="ballot-footer">
+            {chosen
+              ? <button type="button" className="ballot-btn ballot-btn-primary" onClick={() => setStep('confirm')}>{chosen.isAbstain ? 'Review: abstain' : `Review vote for ${firstName(chosen.name)}`}</button>
+              : <><button type="button" className="ballot-btn ballot-btn-primary" disabled>Review vote</button><p className="ballot-footer-hint">Select a candidate to continue</p></>}
           </div>
         </>
       )}
-      {confirming && chosen && (
-        <Dialog title={chosen.isAbstain ? `Abstain from ${position.title}?` : `Vote for ${chosen.name} as ${position.title}?`} confirmLabel="Confirm vote" cancelLabel="Go back" busy={busy}
-          onConfirm={() => void submit()} onCancel={() => setConfirming(false)}>
-          <p>This can't be changed.</p>
-        </Dialog>
+
+      {step === 'confirm' && chosen && (
+        <Sheet label="Confirm your vote" onClose={() => setStep('choose')} busy={busy}>
+          <p className="ballot-step">Step 2 of 2 · Confirm</p>
+          <h2 className="sheet-title">Confirm your vote</h2>
+          <div className="confirm-choice">
+            {chosen.isAbstain
+              ? <span className="confirm-text"><strong>Abstain</strong><span>{position.title}: none of the above</span></span>
+              : <><Avatar url={chosen.photoUrl} name={chosen.name} size="md" /><span className="confirm-text"><strong>{chosen.name}</strong><span>{[position.title, chosen.region].filter(Boolean).join(' · ')}</span></span></>}
+          </div>
+          <p className="confirm-warning"><Icon name="alert" size={20} /> <span>Once you submit, your vote can't be changed.</span></p>
+          <button type="button" className="ballot-btn ballot-btn-primary ballot-btn-submit" disabled={busy} onClick={() => void submit()}>{busy ? 'Submitting…' : 'Submit my vote'}</button>
+          <button type="button" className="ballot-btn ballot-btn-secondary" disabled={busy} onClick={() => setStep('choose')}>Change my choice</button>
+        </Sheet>
       )}
-    </>
+      {statement && <StatementSheet c={statement} onClose={() => setStatement(null)} onChoose={() => { setSelected(statement.id); setRegion((r) => (r && statement.regionId !== r ? '' : r)); setStatement(null); }} />}
+      {help && <HelpSheet onClose={() => setHelp(false)} />}
+    </div>
   );
 }
 
-/** The campaign page: header, progress, and a grid of position blocks. */
-export function CampaignBlocks({ token, info, now, reload }: { token: string; info: BlocksInfo; now: Date; reload: () => Promise<unknown> }) {
+// ---- the campaign home ------------------------------------------------------------------------------------------------------------
+
+/** The campaign home: a block per position (or, with one position, the ballot itself), and the states around it. */
+export function CampaignBlocks({ token, info, reload }: { token: string; info: BlocksInfo; now?: Date; reload: () => Promise<unknown> }) {
   const [open, setOpen] = useState<{ id: string; title: string } | null>(null);
-  const [justVoted, setJustVoted] = useState<string | null>(null);
   const [results, setResults] = useState<(Results & { title: string }) | null>(null);
   useEffect(() => {
     if (info.resultsPublished) void api<Results & { title: string }>('GET', `/api/vote/${token}/results`).then(setResults).catch(() => undefined);
@@ -202,62 +373,90 @@ export function CampaignBlocks({ token, info, now, reload }: { token: string; in
 
   const total = info.positions.length;
   const voted = info.positions.filter((p) => p.voted).length;
-  const left = info.voterState === 'can_vote' ? closesIn(info.closesAt, now) : null;
+  const single = total === 1;
   const back = useCallback(() => { setOpen(null); void reload(); }, [reload]);
-  const done = useCallback((title: string) => { setOpen(null); setJustVoted(title); void reload(); }, [reload]);
+  const campaign = { title: info.title, closesAt: info.closesAt, resultsReleaseAt: info.resultsReleaseAt ?? null };
+  const goVotes = <Link className="ballot-btn ballot-btn-secondary" to="/votes">Go to My votes</Link>;
 
-  if (open && info.voterState === 'can_vote') return <PositionBallot token={token} position={open} onBack={back} onVoted={done} />;
+  const published = info.resultsPublished && results && (
+    <section className="card card-pad">
+      <h2>Results</h2>
+      {results.positions ? <PositionResults r={results} /> : null}
+      {results.publication && <p className="muted small">Published by {results.publication.by ?? 'the campaign administrators'} on {fmtDate(results.publication.at)}{results.publication.scheduled ? ' (scheduled in advance; approved by the person who scheduled it)' : ''}.</p>}
+      <NoticeList notices={results.notices} />
+    </section>
+  );
+
+  if (info.voterState === 'can_vote') {
+    // One position: straight to its ballot. Several: the chosen block's ballot.
+    const target = open ?? (single && !info.positions[0].voted ? { id: info.positions[0].id, title: info.positions[0].title } : null);
+    if (target) {
+      return (
+        <>
+          <NoticeBanner notices={info.notices} />
+          <PositionBallot key={target.id} token={token} position={target} campaign={campaign} single={single} onBack={back} onDone={back} />
+        </>
+      );
+    }
+  }
+
+  if (info.voterState === 'not_open') {
+    return <div className="ballot-screen"><p className="ballot-eyebrow">{info.title}</p><BallotState icon="clock" title="Voting hasn't opened yet" actions={goVotes}><p className="ballot-state-text">{info.opensAt ? `Voting opens ${fmtDate(info.opensAt)}. Come back then.` : 'Please check back soon.'}</p></BallotState></div>;
+  }
+  if (info.voterState === 'closed') {
+    return (
+      <div className="ballot-screen">
+        <p className="ballot-eyebrow">{info.title}</p>
+        <BallotState icon="lock" title="Voting has closed" actions={goVotes}>
+          <p className="ballot-state-text">{info.resultsPublished ? 'The results are below.' : info.resultsReleaseAt ? `Results will be shared on ${fmtDate(info.resultsReleaseAt)}.` : 'The results have not been published yet.'}</p>
+        </BallotState>
+        <NoticeBanner notices={info.notices} />
+        {published}
+      </div>
+    );
+  }
+  if (info.voterState === 'already_voted' && single) {
+    const p = info.positions[0];
+    return (
+      <div className="ballot-screen">
+        <p className="ballot-eyebrow">{info.title}</p>
+        <BallotState tone="success" icon="check" title="You've already voted" actions={goVotes}>
+          <p className="ballot-state-text">Your vote for {p.title} is recorded and can't be changed. {info.resultsReleaseAt ? `Results will be shared on ${fmtDate(info.resultsReleaseAt)}.` : 'Results will be shared after voting closes.'}</p>
+          <ReceiptCode code={p.receiptCode} />
+        </BallotState>
+      </div>
+    );
+  }
 
   return (
-    <>
+    <div className="ballot-screen">
       <BackLink to="/votes">Back to My votes</BackLink>
-      <section className="card card-accent head-card">
-        <div className="head-inner">
-          <div className="initials-box" aria-hidden="true">{initials(info.title)}</div>
-          <div className="grow">
-            <h1 className="head-title">{info.title}</h1>
-            {info.description && <p className="head-desc">{info.description}</p>}
-            {info.closesAt && <p className="meta"><Icon name="clock" /> Closes {fmtDate(info.closesAt)}{left ? ` · ${left.replace('Closes in ', '')} left` : ''}</p>}
-          </div>
-        </div>
-      </section>
+      <p className="ballot-eyebrow">{info.title}</p>
+      <h1 className="ballot-title">{info.voterState === 'already_voted' ? "You've voted in every position" : 'Choose a position to vote in'}</h1>
+      <div className="ballot-chips">
+        {info.closesAt && <span className="ballot-chip"><Icon name="clock" size={14} /> Closes {fmtDate(info.closesAt)}</span>}
+        <span className="ballot-chip"><Icon name="lock" size={14} /> Your vote is anonymous</span>
+      </div>
+      {info.description && <p className="ballot-intro">{info.description}</p>}
       <NoticeBanner notices={info.notices} />
-      {info.voterState === 'not_open' && <StateCard icon="clock" title="Voting has not opened yet"><p className="muted">{info.opensAt ? `Voting opens ${fmtDate(info.opensAt)}.` : 'Please check back soon.'}</p></StateCard>}
-      {info.voterState === 'closed' && <StateCard icon="lock" title="Voting has closed"><p className="muted">{info.resultsPublished ? 'The results are below.' : 'The results have not been published yet.'}</p></StateCard>}
-      {justVoted && info.voterState === 'can_vote' && <p className="vote-recorded" role="status"><Icon name="check" size={16} /> Your vote for {justVoted} was recorded. Your choice is secret and cannot be changed.</p>}
-
-      {info.voterState === 'already_voted' && (
-        <StateCard icon="check" title="You have voted in every position"><p className="muted">Thank you. Your choices are secret and cannot be changed.</p></StateCard>
-      )}
-      {(info.voterState === 'can_vote' || info.voterState === 'already_voted') && total > 0 && (
-        <>
-          <p className="vote-progress" role="status"><strong>{voted} of {total}</strong> position{total === 1 ? '' : 's'} voted</p>
-          {info.voterState === 'can_vote' && <p className="muted small">Choose a position to vote in. You can vote in the positions in any order, and each vote is separate.</p>}
-          <ul className="position-grid" aria-label="Positions">
-            {info.positions.map((p) => (
-              <li key={p.id}>
-                <button type="button" className={`position-block${p.voted ? ' position-voted' : ''}`} disabled={p.voted || info.voterState !== 'can_vote'}
-                  onClick={() => { setJustVoted(null); setOpen({ id: p.id, title: p.title }); }}
-                  aria-label={p.voted ? `${p.title}: voted` : `${p.title}: ${p.candidateCount} candidates, not voted yet`}>
-                  <span className="position-title">{p.title}</span>
-                  {p.description && <span className="muted small excerpt">{p.description}</span>}
-                  {p.voted
-                    ? <span className="chip chip-closed position-status"><Icon name="check" size={14} /> Voted</span>
-                    : <span className="chip chip-open position-status">{p.candidateCount} candidate{p.candidateCount === 1 ? '' : 's'}</span>}
-                </button>
-              </li>
-            ))}
-          </ul>
-        </>
-      )}
-      {info.resultsPublished && results && (
-        <section className="card card-pad">
-          <h2>Results</h2>
-          {results.positions ? <PositionResults r={results} /> : null}
-          {results.publication && <p className="muted small">Published by {results.publication.by ?? 'the campaign administrators'} on {fmtDate(results.publication.at)}{results.publication.scheduled ? ' (scheduled in advance; approved by the person who scheduled it)' : ''}.</p>}
-          <NoticeList notices={results.notices} />
-        </section>
-      )}
-    </>
+      <p className="vote-progress" role="status"><strong>{voted} of {total}</strong> position{total === 1 ? '' : 's'} voted</p>
+      {info.voterState === 'can_vote' && <p className="ballot-intro">You can vote in the positions in any order, and each vote is separate.</p>}
+      <ul className="position-grid" aria-label="Positions">
+        {info.positions.map((p) => (
+          <li key={p.id}>
+            <button type="button" className={`position-block${p.voted ? ' position-voted' : ''}`} disabled={p.voted || info.voterState !== 'can_vote'}
+              onClick={() => setOpen({ id: p.id, title: p.title })}
+              aria-label={p.voted ? `${p.title}: voted${p.receiptCode ? `, receipt ${p.receiptCode}` : ''}` : `${p.title}: ${p.candidateCount} candidates, not voted yet`}>
+              <span className="position-title">{p.title}</span>
+              {p.description && <span className="muted small excerpt">{p.description}</span>}
+              {p.voted
+                ? <><span className="chip chip-closed position-status"><Icon name="check" size={14} /> Voted</span>{p.receiptCode && <span className="position-receipt">Receipt {p.receiptCode}</span>}</>
+                : <span className="chip chip-open position-status">{p.candidateCount} candidate{p.candidateCount === 1 ? '' : 's'}</span>}
+            </button>
+          </li>
+        ))}
+      </ul>
+      {published}
+    </div>
   );
 }

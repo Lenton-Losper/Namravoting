@@ -14,7 +14,7 @@ type State = 'not_invited' | 'open' | 'closed' | 'expired' | 'ended';
 interface Info {
   campaign: { title: string }; position: { id: string; title: string; description: string | null };
   state: State; closesAt: string | null; regions: { id: string; name: string }[]; defaultName: string; canEdit: boolean;
-  profile: { id: string; name: string; bio: string | null; regionId: string | null; status: 'invited' | 'submitted' | 'approved' | 'rejected' | 'withdrawn'; reviewReason: string | null; photoUrl: string | null } | null;
+  profile: { id: string; name: string; bio: string | null; pledge?: string | null; regionId: string | null; status: 'invited' | 'submitted' | 'approved' | 'rejected' | 'withdrawn'; reviewReason: string | null; photoUrl: string | null } | null;
 }
 
 function StateCard({ icon, title, children }: { icon: string; title: string; children?: ReactNode }) {
@@ -43,6 +43,7 @@ export function NominatePage() {
   const [denied, setDenied] = useState<string | null>(null);
   const [name, setName] = useState('');
   const [bio, setBio] = useState('');
+  const [pledge, setPledge] = useState('');
   const [region, setRegion] = useState('');
   const [file, setFile] = useState<File | null>(null);
   const [removePhoto, setRemovePhoto] = useState(false);
@@ -56,7 +57,7 @@ export function NominatePage() {
     try {
       const i = await api<Info>('GET', `/api/nominate/${token}`);
       setInfo(i); setError(null);
-      setName(i.profile?.name ?? i.defaultName); setBio(i.profile?.bio ?? ''); setRegion(i.profile?.regionId ?? ''); setFile(null); setRemovePhoto(false);
+      setName(i.profile?.name ?? i.defaultName); setBio(i.profile?.bio ?? ''); setPledge(i.profile?.pledge ?? ''); setRegion(i.profile?.regionId ?? ''); setFile(null); setRemovePhoto(false);
     } catch (e) {
       if (e instanceof ApiError && e.status === 404) setInvalid(true);
       else if (e instanceof ApiError && e.status === 403) setDenied(e.message);
@@ -81,7 +82,7 @@ export function NominatePage() {
   async function submit(e: FormEvent) {
     e.preventDefault(); setBusy(true); setError(null); setSaved(null);
     const fd = new FormData();
-    fd.append('name', name); fd.append('bio', bio); fd.append('region_id', region);
+    fd.append('name', name); fd.append('bio', bio); fd.append('pledge', pledge); fd.append('region_id', region);
     if (file) fd.append('photo', file);
     if (removePhoto) fd.append('removePhoto', 'true');
     try {
@@ -165,6 +166,12 @@ export function NominatePage() {
               <option value="" disabled>Choose your region…</option>
               {info.regions.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
             </select>
+          </div>
+          <div className="field-block">
+            <label htmlFor="nom-pledge">Pledge</label>
+            <p id="nom-pledge-help" className="field-helper">One line voters see on the ballot, e.g. 'A stronger voice for every region'</p>
+            <input id="nom-pledge" value={pledge} onChange={(e) => setPledge(e.target.value)} maxLength={160} aria-describedby="nom-pledge-help nom-pledge-count" />
+            <p id="nom-pledge-count" className="field-helper char-count" aria-live="polite">{pledge.length}/160 characters</p>
           </div>
           <div className="field-block">
             <label htmlFor="nom-bio">Short bio</label>

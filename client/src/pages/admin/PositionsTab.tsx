@@ -70,6 +70,7 @@ function PositionDialog({ c, existing, live, onDone, onCancel }: { c: CampaignDe
 function CandidateForm({ c, position, existing, onDone, onCancel }: { c: CampaignDetail; position: Position; existing?: Nomination; onDone: () => void; onCancel: () => void }) {
   const [name, setName] = useState(existing?.name ?? '');
   const [bio, setBio] = useState(existing?.bio ?? '');
+  const [pledge, setPledge] = useState(existing?.pledge ?? '');
   const [region, setRegion] = useState(existing?.region_id ?? '');
   const [file, setFile] = useState<File | null>(null);
   const [removePhoto, setRemovePhoto] = useState(false);
@@ -92,7 +93,7 @@ function CandidateForm({ c, position, existing, onDone, onCancel }: { c: Campaig
   async function submit(e: FormEvent) {
     e.preventDefault(); setBusy(true); setError(null);
     const fd = new FormData();
-    fd.append('name', name); fd.append('bio', bio);
+    fd.append('name', name); fd.append('bio', bio); fd.append('pledge', pledge);
     if (existing) fd.append('region_id', region); else { fd.append('position_id', position.id); if (region) fd.append('region_id', region); }
     if (file) fd.append('photo', file);
     if (existing && removePhoto) fd.append('removePhoto', 'true');
@@ -112,6 +113,7 @@ function CandidateForm({ c, position, existing, onDone, onCancel }: { c: Campaig
       </div>
       <label>Name<input value={name} onChange={(e) => setName(e.target.value)} required maxLength={120} /></label>
       <label>Region<select value={region} onChange={(e) => setRegion(e.target.value)}><option value="">No region</option>{(c.regions ?? []).map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}</select></label>
+      <label>Pledge <span className="field-helper">One line voters see on the ballot, e.g. 'A stronger voice for every region'. {pledge.length}/160</span><input value={pledge} onChange={(e) => setPledge(e.target.value)} maxLength={160} /></label>
       <label>Short bio <span className="field-helper">{bio.length}/500 characters</span><textarea rows={3} value={bio} onChange={(e) => setBio(e.target.value)} maxLength={500} /></label>
       <ErrorBox message={error} />
       <div className="form-actions">
@@ -409,7 +411,7 @@ export function SettingsTab({ c, reload }: { c: CampaignDetail; reload: () => Pr
       <section className="form-section">
         <SectionTitle icon="chart">Results</SectionTitle>
         <label className="check"><input type="checkbox" checked={!!c.results_group_by_region} disabled={busy} onChange={(e) => void setGroup(e.target.checked)} /> Show results grouped by region</label>
-        <p className="field-helper">Applies to the results page, published results and the CSV, Excel and PDF exports. You can change it at any time.</p>
+        <p className="field-helper">Applies to the results page, published results and the CSV, Excel and PDF exports, and groups the ballot by region with a region filter (a position with more than 8 candidates always gets them). You can change it at any time.</p>
       </section>
       <ErrorBox message={error} />
       <RegionsEditor c={c} reload={reload} />

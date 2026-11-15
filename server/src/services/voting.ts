@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { DEADLOCK, getPool, SERIALIZATION_FAILURE, UNIQUE_VIOLATION, withTx } from '../db.js';
 import { HttpError, notFound } from '../errors.js';
 import { isVotingWindowOpen, shouldAutoClose } from '../domain/status.js';
@@ -10,6 +11,21 @@ import { BallotRejected, validateBallot } from '../domain/rules.js';
 export const testHooks: { afterCampaignRead?: () => Promise<void> } = {};
 
 export const notMemberMessage = 'This vote is for Umoja members only';
+
+/** Unambiguous characters only: no 0/O, 1/I/L. 31 symbols, 8 of them: about 8.5 x 10^11 codes. */
+export const RECEIPT_ALPHABET = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
+/**
+ * A receipt code such as UV-7K3M-Q9TD, from crypto randomness ONLY: nothing about the vote (candidate, position, time, voter) goes in,
+ * so it can never be traced back to a choice. It is stored on the receipt row (which has no candidate) and never logged or audited.
+ */
+export function newReceiptCode(): string {
+  const out: string[] = [];
+  while (out.length < 8) {
+    const b = crypto.randomBytes(16);
+    for (const x of b) { if (x < 248 && out.length < 8) out.push(RECEIPT_ALPHABET[x % 31]); }   // 248 = 8 x 31: no modulo bias
+  }
+  return `UV-${out.slice(0, 4).join('')}-${out.slice(4).join('')}`;
+}
 
 type Outcome = { kind: 'recorded' } | { kind: 'closed' } | { kind: 'close_due' } | { kind: 'not_open' } | { kind: 'not_eligible' } | { kind: 'not_member' };
 
@@ -24,12 +40,14 @@ type Outcome = { kind: 'recorded' } | { kind: 'closed' } | { kind: 'close_due' }
  * the candidate id. After the commit all tally rows are re-stamped (services/tallies.ts) so their hidden xmin does not
  * match the voter's receipt.
  */
-export async function castVote(voterOid: string, voterEmail: string, shareToken: string, candidateId: string, positionId?: string): Promise<void> {
+export async function castVote(voterOid: string, voterEmail: string, shareToken: string, candidateId: string, positionId?: string): Promise<{ receiptCode: string }> {
   let outcome: Outcome | undefined;
+  let receiptCode = '';
   let campaignId: string | undefined;
   let votedPosition: string | undefined;
 
   for (let attempt = 1; attempt <= 3; attempt++) {
+    receiptCode = newReceiptCode();   // a fresh code per attempt
     try {
       outcome = await withTx(async (c) => {
         // FOR SHARE: voters don't block each other, but a concurrent close or reset (FOR UPDATE) waits for in-flight votes to
@@ -74,7 +92,8 @@ export async function castVote(voterOid: string, voterEmail: string, shareToken:
 
         // The primary key (account) and the unique (campaign, position, member) constraint are the authority for "one vote per position": a
         // duplicate surfaces as 23505, whether it is the same account twice or a second account of the same member.
-        await c.query('INSERT INTO vote_receipts (campaign_id, position_id, voter_oid, member_key) VALUES ($1, $2, $3, $4)', [camp.id, cand.position_id, voterOid, memberKey]);
+        // The receipt code goes on the receipt row only. NEVER log it (this function logs nothing about a vote).
+        await c.query('INSERT INTO vote_receipts (campaign_id, position_id, voter_oid, member_key, receipt_code) VALUES ($1, $2, $3, $4, $5)', [camp.id, cand.position_id, voterOid, memberKey, receiptCode]);
 
         // Election rules (domain/rules.ts). A withdrawn candidate cannot be chosen: the campaign row is held FOR SHARE and a withdrawal takes
         // it FOR UPDATE, so this check cannot race with one. Throwing rolls the receipt back.
@@ -94,6 +113,8 @@ export async function castVote(voterOid: string, voterEmail: string, shareToken:
       break;
     } catch (e) {
       const code = (e as { code?: string }).code;
+      // A clash on the random receipt code (about 1 in 10^11 per vote): try again with a new code. Any other duplicate is a second vote.
+      if (code === UNIQUE_VIOLATION && (e as { constraint?: string }).constraint === 'vote_receipts_receipt_code_key' && attempt < 3) continue;
       if (code === UNIQUE_VIOLATION) throw new HttpError(409, 'You have already voted', 'already_voted');
       if (code === SERIALIZATION_FAILURE || code === DEADLOCK) {
         if (attempt < 3) { await new Promise((r) => setTimeout(r, 10 * attempt + Math.random() * 20)); continue; }
@@ -113,7 +134,7 @@ export async function castVote(voterOid: string, voterEmail: string, shareToken:
     throw new HttpError(409, 'Voting has closed', 'closed');
   }
   switch (outcome?.kind) {
-    case 'recorded': await restampAfterVote(campaignId!); return;
+    case 'recorded': await restampAfterVote(campaignId!); return { receiptCode };
     case 'closed': throw new HttpError(409, 'Voting has closed', 'closed');
     case 'not_open': throw new HttpError(409, 'Voting is not open yet', 'not_open');
     case 'not_member': throw new HttpError(403, notMemberMessage, 'not_member');

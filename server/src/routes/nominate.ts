@@ -54,7 +54,7 @@ async function mayNominate(c: CampaignRow, u: AuthUser): Promise<{ ok: boolean; 
 }
 
 const profileOut = (k: Record<string, unknown> | undefined) => (k ? {
-  id: k.id, name: k.name, bio: k.bio, regionId: k.region_id, status: k.status, reviewReason: k.status === 'rejected' ? k.review_reason : null,
+  id: k.id, name: k.name, bio: k.bio, pledge: k.pledge ?? null, regionId: k.region_id, status: k.status, reviewReason: k.status === 'rejected' ? k.review_reason : null,
   photoUrl: k.photo_path ? `/api/photos/${k.id}` : null, submittedAt: k.submitted_at,
 } : null);
 
@@ -74,7 +74,7 @@ export function nominateRouter(): Router {
     if (!may.ok) throw new HttpError(403, 'You are not eligible to nominate yourself in this campaign', 'not_eligible');
     const state = nominationState(c, p, c.db_now);
     const mine = (await getPool().query(
-      `SELECT id, name, bio, region_id, status, review_reason, photo_path, submitted_at FROM candidates WHERE position_id = $1 AND submitted_by_oid = $2`, [p.id, u.oid])).rows[0];
+      `SELECT id, name, bio, pledge, region_id, status, review_reason, photo_path, submitted_at FROM candidates WHERE position_id = $1 AND submitted_by_oid = $2`, [p.id, u.oid])).rows[0];
     const regions = (await getPool().query('SELECT id, name FROM regions WHERE campaign_id = $1 ORDER BY sort_order, name', [c.id])).rows;
     res.set('Cache-Control', 'no-store').json({
       campaign: { title: c.title }, position: { id: p.id, title: p.title, description: p.description },
@@ -89,7 +89,7 @@ export function nominateRouter(): Router {
   r.put('/:shareToken', writeLimiter, upload.single('photo'), async (req, res) => {
     const ctx = await load(req);
     const u = currentUser(req);
-    const b = profileBody.parse({ name: req.body?.name, ...(req.body?.bio !== undefined ? { bio: req.body.bio } : {}), region_id: req.body?.region_id });
+    const b = profileBody.parse({ name: req.body?.name, ...(req.body?.bio !== undefined ? { bio: req.body.bio } : {}), ...(req.body?.pledge !== undefined ? { pledge: req.body.pledge } : {}), region_id: req.body?.region_id });
     const removePhoto = z.enum(['true', 'false']).optional().parse(req.body?.removePhoto) === 'true';
     const may = await mayNominate(ctx.campaign, u);
     if (!may.ok) throw new HttpError(403, may.notMember ? 'Nominations for this vote are for Umoja members only' : 'You are not eligible to nominate yourself in this campaign', may.notMember ? 'not_member' : 'not_eligible');
@@ -108,21 +108,21 @@ export function nominateRouter(): Router {
         if (mine) {
           const setPhoto = newPhoto !== null || removePhoto;
           await tx.query(
-            `UPDATE candidates SET name = $2, bio = $3, region_id = $4, photo_path = CASE WHEN $5::boolean THEN $6 ELSE photo_path END,
+            `UPDATE candidates SET name = $2, bio = $3, pledge = $7, region_id = $4, photo_path = CASE WHEN $5::boolean THEN $6 ELSE photo_path END,
                     status = 'submitted', submitted_at = now(), review_reason = NULL, reviewed_by = NULL, reviewed_at = NULL
-              WHERE id = $1`, [mine.id, b.name, b.bio || null, b.region_id, setPhoto, newPhoto]);
+              WHERE id = $1`, [mine.id, b.name, b.bio || null, b.region_id, setPhoto, newPhoto, b.pledge || null]);
           await audit(tx, u.oid, 'nomination.submit', ctx.campaign.id, { candidate_id: mine.id, position_id: pos.id, resubmitted: true });
           return { oldPhoto: setPhoto ? (mine.photo_path as string | null) : null, id: mine.id as string, resubmitted: true };
         }
         const ins = (await tx.query(
-          `INSERT INTO candidates (campaign_id, position_id, region_id, name, bio, photo_path, status, submitted_by_oid, submitted_at, sort_order)
-           VALUES ($1,$2,$3,$4,$5,$6,'submitted',$7,now(),(SELECT COALESCE(max(sort_order), 0) + 1 FROM candidates WHERE position_id = $2 AND NOT is_abstain)) RETURNING id`,
-          [ctx.campaign.id, pos.id, b.region_id, b.name, b.bio || null, newPhoto, u.oid])).rows[0];
+          `INSERT INTO candidates (campaign_id, position_id, region_id, name, bio, pledge, photo_path, status, submitted_by_oid, submitted_at, sort_order)
+           VALUES ($1,$2,$3,$4,$5,$8,$6,'submitted',$7,now(),(SELECT COALESCE(max(sort_order), 0) + 1 FROM candidates WHERE position_id = $2 AND NOT is_abstain)) RETURNING id`,
+          [ctx.campaign.id, pos.id, b.region_id, b.name, b.bio || null, newPhoto, u.oid, b.pledge || null])).rows[0];
         await audit(tx, u.oid, 'nomination.submit', ctx.campaign.id, { candidate_id: ins.id, position_id: pos.id, resubmitted: false });
         return { oldPhoto: null, id: ins.id as string, resubmitted: false };
       });
       await deletePhoto(oldPhoto);
-      const row = (await getPool().query('SELECT id, name, bio, region_id, status, review_reason, photo_path, submitted_at FROM candidates WHERE id = $1', [id])).rows[0];
+      const row = (await getPool().query('SELECT id, name, bio, pledge, region_id, status, review_reason, photo_path, submitted_at FROM candidates WHERE id = $1', [id])).rows[0];
       res.status(resubmitted ? 200 : 201).json({ profile: profileOut(row) });
     } catch (e) { await deletePhoto(newPhoto); throw e; }
   });

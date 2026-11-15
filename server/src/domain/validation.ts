@@ -36,6 +36,8 @@ export const createCampaignBody = z.object({
   nominate_eligibility: z.enum(['all', 'umoja']).nullable().optional(),
   /** Show the results grouped by region. */
   results_group_by_region: z.boolean().optional(),
+  /** Display only: the receipt says "Results will be shared on <date>". Publishing stays manual. */
+  results_release_at: isoDate.optional(),
 }).strict().refine(windowOk, windowMsg)
   .refine((v) => v.eligibility !== 'list' || (v.emails?.length ?? 0) > 0, { message: 'Add at least one email address for a listed vote', path: ['emails'] })
   .refine((v) => v.eligibility === 'list' || v.emails === undefined, { message: 'emails only applies to a listed vote', path: ['emails'] })
@@ -52,11 +54,14 @@ export const patchCampaignBody = z.object({
   nominations_close_at: isoDate.optional(),
   nominate_eligibility: z.enum(['all', 'umoja']).nullable().optional(),
   results_group_by_region: z.boolean().optional(),
+  results_release_at: isoDate.optional(),
 }).strict().refine(windowOk, windowMsg);
 
 export const candidateBody = z.object({
   name: line(120),
   bio: lines(500).optional(),
+  /** One line voters see on the ballot card (the bio is the full statement). */
+  pledge: lines(160).optional(),
   /** Which position the candidate stands for. Optional only while the campaign has a single position. */
   position_id: uuid.optional(),
   region_id: uuid.optional(),
@@ -82,7 +87,7 @@ export const reorderBody = z.object({ ids: z.array(uuid).min(1).max(200) }).stri
 export const regionBody = z.object({ name: line(80) }).strict();
 export const rejectBody = z.object({ reason: z.string().transform(cleanMultiline).pipe(z.string().trim().min(5, 'Give a reason of at least 5 characters').max(1000)) }).strict();
 /** A candidate's own profile (the nomination form). The photo travels as a multipart file. */
-export const profileBody = z.object({ name: line(120), bio: lines(500).optional(), region_id: uuid }).strict();
+export const profileBody = z.object({ name: line(120), bio: lines(500).optional(), pledge: lines(160).optional(), region_id: uuid }).strict();
 export const positionParams = z.object({ id: uuid, pid: uuid });
 export const regionParams = z.object({ id: uuid, rid: uuid });
 /** Schedule (or clear) the automatic publication of a closed result. */
@@ -94,6 +99,7 @@ export const withdrawBody = z.object({ reason: z.string().transform(cleanMultili
 export const candidatePatchBody = z.object({
   name: line(120).optional(),
   bio: lines(500).optional(),
+  pledge: lines(160).optional(),
   removePhoto: z.enum(['true', 'false']).optional(),
   region_id: uuid.nullable().optional(),
 }).strict();
