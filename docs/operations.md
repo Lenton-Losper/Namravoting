@@ -77,6 +77,60 @@ Repository secrets (Settings -> Secrets and variables -> Actions -> New reposito
 The workflow never prints a secret. It takes the app role's password from `DEMO_DATABASE_URL` for the migration runner
 (only used on a brand-new database), so there is no separate secret for it.
 
+## Temporary demo mode while the Entra secret is expired (switched on 15 Nov 2026)
+
+**Why:** the Entra client secret expired (`AADSTS7000222`) over a weekend, so nobody could sign in with Microsoft. The live site was
+switched to `AUTH_MODE=demo` behind Cloudflare Access until a new secret can be made. Part B and the positions work were **not**
+deployed: the live code is still the pre-Part-B code (database at migration 012).
+
+**What is live right now**
+
+| What | Value |
+|---|---|
+| Code | branch `demo-fallback` (`82c0918`): the previous live commit `fdf5c98` plus one change. In demo mode an email that already has an account keeps that account id, so Lenton keeps his Microsoft account `87a4af90…`, his campaigns and his admin view. The branch is never merged. |
+| Worker | `AUTH_MODE=demo`; secrets `CF_ACCESS_AUD` (the new Access app) and `DEMO_USERS`. `ENTRA_CLIENT_SECRET` and the other Entra vars are still on the Worker; they are ignored in demo mode. |
+| Access app | "NamRA Voting demo (temporary: Entra secret expired)", id `809832ef-39c7-436a-b1f3-57bef669fd94`, on `namra-voting-demo.llosperofficial.workers.dev`. Allows emails ending `@namra.org.na` plus `llosperofficial@gmail.com`, one-time PIN only, 24 h session. Team domain `yellow-flower-4592.cloudflareaccess.com`. |
+| People | `DEMO_USERS`: `lenton.losper@namra.org.na` and `llosperofficial@gmail.com` are admins and active members, with the test codes `TST0026` and `TST0027` (separate codes, so they are two voters). Anyone else Access lets in is plain staff with no employee code. |
+| Rollback point | Neon branch `pre-deploy-2026-11-15T00-11-33-demofb-82c0918` (`br-raspy-dawn-ba4iwcpi`), taken just before the switch. |
+
+The Deploy run's smoke test reports a failure in demo mode. That is expected: it wants `200` from `/api/csrf`, and Access answers `302`
+to anyone who is not signed in.
+
+### Switching back to Microsoft sign-in (entra), step by step
+
+Do this outside a vote: Access is removed in step 4 and the app restarts in step 5, so sign-in is interrupted for a few minutes.
+
+1. **Make a new client secret.** Entra admin centre -> App registrations -> NamRA Voting (client id `281ab38e-9ff5-4f17-88ea-18bdc3e65457`)
+   -> Certificates & secrets -> New client secret. Copy the **Value** (not the Secret ID) at once, and note the expiry date.
+2. **Check it before using it.** In `.env`, set `ENTRA_CLIENT_SECRET=<value>`, then run:
+   ```
+   node --input-type=module -e "process.loadEnvFile('.env'); const m = await import('./scripts/monitor-lib.mjs'); console.log(await m.checkEntraToken({ tenantId: 'fe7b029e-7e19-4525-bdf4-57462a59d299', clientId: '281ab38e-9ff5-4f17-88ea-18bdc3e65457', clientSecret: process.env.ENTRA_CLIENT_SECRET }))"
+   ```
+   It must report ok (no `AADSTS` code). If it shows `AADSTS7000215`, the Secret ID was copied instead of the Value.
+3. **Store it where the deploy reads it.** Run `gh secret set ENTRA_CLIENT_SECRET` and paste the value. Set the repository variable
+   `ENTRA_SECRET_EXPIRES_AT` (YYYY-MM-DD) for the Monitor workflow.
+4. **Remove the temporary Access app.** Zero Trust -> Access -> Applications -> "NamRA Voting demo (temporary: Entra secret expired)"
+   -> Delete. (Or: `node scripts/cf-api.mjs DELETE /accounts/{acct}/access/apps/809832ef-39c7-436a-b1f3-57bef669fd94`.) The site is not
+   open while this step and step 5 run: in demo mode the app refuses every request that has no Access token.
+5. **Redeploy the live code in entra mode.** Take a snapshot first with `node scripts/neon-snapshot.mjs --label entra-back`. Then go to
+   Actions -> **Deploy (manual)** -> Run workflow, choose the branch **`hotfix-hide-verify`** (the previous live commit `fdf5c98`, entra
+   mode, pre-Part-B), and type `DEPLOY`. It sets `ENTRA_CLIENT_SECRET` from the GitHub secret, sets `AUTH_MODE=entra`, and runs no new
+   migrations ("migrations up to date"). Its smoke test must now pass (`GET /api/csrf` -> 200), because Access is gone.
+   *Do not* use this run to ship Part B. That is the separate release from `main`, with its own pre-deploy snapshot (see below).
+6. **Tidy the Worker.** These secrets are unused in entra mode; remove them so they cannot ride along later. From `worker/`, run
+   `npx wrangler secret delete DEMO_USERS` and `npx wrangler secret delete CF_ACCESS_AUD`. Each one creates a new Worker version, which
+   is fine.
+7. **Check it.** Open the site: it must go straight to Microsoft sign-in, not the Access email-code page. Sign in as
+   lenton.losper@namra.org.na. You are the same account (`87a4af90…`) with your campaigns. Microsoft sign-in rewrites your name and
+   employee code from the token, so the temporary `TST0026` disappears by itself. The account `llosperofficial@gmail.com` that demo
+   mode created stays in the database, unused; it can do nothing without a sign-in.
+8. **Clean up the git side.** Delete the `demo-fallback` branch (`git push origin --delete demo-fallback`, and
+   `git worktree remove ../UmonjaVoting-demo` where it was checked out). Also delete the Neon branch
+   `pre-deploy-...-demofb-82c0918` once the switch-back has been verified.
+
+If anything goes wrong in steps 4 to 7, run the Deploy workflow on `demo-fallback` again with `DEPLOY` and recreate the Access app as in
+the table above. Put the new app's `aud` into the `CF_ACCESS_AUD` GitHub secret first.
+
 ## Rolling back a deploy (pre-deploy snapshot)
 
 Every deploy first creates a Neon branch of the live database **as of that moment**, named `pre-deploy-<UTC time>-<commit>`. It is a
