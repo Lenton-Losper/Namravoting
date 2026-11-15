@@ -19,7 +19,7 @@ export function parseJsonc(text) {
 }
 
 const BASE_SECRETS = ['DATABASE_URL', 'SESSION_SECRET', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'R2_ENDPOINT'];
-const MODE_SECRETS = { entra: ['ENTRA_CLIENT_SECRET'], demo: ['CF_ACCESS_AUD', 'DEMO_USERS'], 'email-demo': ['ADMIN_DEMO_PASSWORD', 'DEMO_USERS'] };
+const MODE_SECRETS = { entra: ['ENTRA_CLIENT_SECRET'], demo: ['CF_ACCESS_AUD', 'DEMO_USERS'], 'email-demo': ['DEMO_USERS'] };
 const OPTIONAL_SECRETS = ['SESSION_SECRET_PREVIOUS', 'CSRF_SECRET'];
 
 /**

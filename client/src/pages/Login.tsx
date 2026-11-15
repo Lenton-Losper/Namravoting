@@ -82,8 +82,7 @@ function AccessSignIn() {
 }
 
 /**
- * DEMO ONLY (AUTH_MODE=email-demo): one email field and a Sign in button. No code is sent. Admin accounts are asked for the demo admin
- * password as well (the server says so; the list of admin addresses is never sent to the browser).
+ * DEMO ONLY (AUTH_MODE=email-demo): one email field and a Sign in button, for everyone (admins included). No code, no password.
  */
 function EmailSignIn() {
   const { user, isAdmin, refresh } = useAuth();
@@ -92,8 +91,6 @@ function EmailSignIn() {
   const safeNext = validateNext(params.get('next'));
   const expired = params.get('expired') === '1';
   const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [needPassword, setNeedPassword] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => { if (user) nav(safeNext ?? (isAdmin ? '/admin' : '/votes'), { replace: true }); }, [user, isAdmin, safeNext, nav]);
@@ -101,14 +98,12 @@ function EmailSignIn() {
   async function submit(e: FormEvent) {
     e.preventDefault(); setBusy(true); setError(null);
     try {
-      const r = await api<{ user: User }>('POST', '/api/email-login', needPassword ? { email, password } : { email });
+      const r = await api<{ user: User }>('POST', '/api/email-login', { email });
       resetCsrf();                                  // the CSRF token is bound to the session: fetch a new one
       await refresh();
       nav(safeNext ?? (r.user.roles.includes('CampaignAdmin') ? '/admin' : '/votes'), { replace: true });
     } catch (err) {
-      const code = (err as { code?: string }).code;
-      if (code === 'password_required') { setNeedPassword(true); setError(null); }
-      else setError((err as Error).message);
+      setError((err as Error).message);
     } finally { setBusy(false); }
   }
 
@@ -120,16 +115,11 @@ function EmailSignIn() {
         <h1>Sign in</h1>
         {expired && <p className="note" role="status">Your session ended. Please sign in again.</p>}
         <label>Email address
-          <input type="email" value={email} onChange={(e) => { setEmail(e.target.value); setNeedPassword(false); setPassword(''); }}
+          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)}
             autoComplete="email" inputMode="email" required maxLength={254} placeholder="name@namra.org.na" />
         </label>
-        {needPassword && (
-          <label>Demo admin password
-            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" required autoFocus maxLength={200} />
-          </label>
-        )}
         <ErrorBox message={error} />
-        <button className="btn btn-primary" disabled={busy || !email.trim() || (needPassword && !password)}>{busy ? 'Signing in…' : 'Sign in'}</button>
+        <button className="btn btn-primary" disabled={busy || !email.trim()}>{busy ? 'Signing in…' : 'Sign in'}</button>
         <p className="muted small demo-note">Demo sign-in: no code is sent. Use your @namra.org.na email address.</p>
       </form>
     </main>

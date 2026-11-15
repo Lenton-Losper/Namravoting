@@ -1,4 +1,3 @@
-import crypto from 'node:crypto';
 import type { Express, Request } from 'express';
 import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import { z } from 'zod';
@@ -16,8 +15,9 @@ import { ADMIN_ROLE } from './types.js';
  * proves nothing about who is at the keyboard: anyone who knows a NamRA address can sign in as it. That is why:
  *   - it refuses to start in production unless DEMO=true (config.ts), and the login page says "Demo sign-in";
  *   - only addresses ending @namra.org.na, plus the ones listed in DEMO_USERS, are accepted;
- *   - admin accounts (DEMO_USERS entries with the CampaignAdmin role) also need ADMIN_DEMO_PASSWORD;
- *   - sign-ins are rate limited per client address, and every sign-in (and every failed admin password) is in the audit log.
+ *   - there is NO password, not even for the admin accounts (DEMO_USERS entries with CampaignAdmin): anyone who types an admin's
+ *     address is that admin. Acceptable for a demo with test data only;
+ *   - sign-ins are rate limited per client address, and every sign-in is in the audit log with its email.
  * Sessions are the ordinary server-side sessions (auth/sessions.ts). An address that already has an account keeps that account id
  * (so an Entra account keeps its campaigns); a new address gets the same deterministic v5 id as AUTH_MODE=demo.
  */
@@ -25,7 +25,6 @@ export const EMAIL_DEMO_DOMAIN = 'namra.org.na';
 
 const body = z.object({
   email: z.string().max(254),
-  password: z.string().max(200).optional(),
 }).strict();
 
 const normal = (e: string) => e.trim().toLowerCase();
@@ -34,13 +33,6 @@ const looksLikeEmail = (e: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
 /** Whether an address may sign in at all: any @namra.org.na address, or one listed in DEMO_USERS. */
 export function emailAllowed(email: string, config: Pick<Config, 'demoUsers'>): boolean {
   return email.endsWith(`@${EMAIL_DEMO_DOMAIN}`) || Object.prototype.hasOwnProperty.call(config.demoUsers, email);
-}
-
-/** Constant-time comparison of two strings (their SHA-256 digests, so the lengths do not leak). */
-function samePassword(given: string, expected: string): boolean {
-  const a = crypto.createHash('sha256').update(given, 'utf8').digest();
-  const b = crypto.createHash('sha256').update(expected, 'utf8').digest();
-  return crypto.timingSafeEqual(a, b);
 }
 
 export function mount(app: Express, config: Config): void {
@@ -58,13 +50,6 @@ export function mount(app: Express, config: Config): void {
 
     const profile = demoUserFor(email, config.demoUsers);
     const admin = profile.roles.includes(ADMIN_ROLE);
-    if (admin) {
-      if (!b.password) throw new HttpError(400, 'This account also needs the demo admin password', 'password_required');
-      if (!samePassword(b.password, config.adminDemoPassword ?? '')) {
-        await audit(getPool(), null, 'auth.signin_failed', null, { email, mode: 'email-demo', reason: 'bad_password' });
-        throw new HttpError(403, 'That password is not right', 'bad_password');
-      }
-    }
 
     // An existing account with this address keeps its id; otherwise the deterministic v5 id. The users row is created or refreshed.
     const existing = (await getPool().query('SELECT entra_oid FROM users WHERE lower(email) = $1 ORDER BY created_at LIMIT 1', [email])).rows[0];

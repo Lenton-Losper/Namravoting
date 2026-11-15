@@ -100,10 +100,9 @@ describe('SEC-23: the deploy script only asks for, and sends, what the active mo
     expect(w.vars.DEMO).toBe('true');                                          // email-demo refuses to start in production without it
     expect(w.vars.NODE_ENV).toBe('production');
     expect(w.observability.logs.invocation_logs).toBe(false);                  // SEC-19: no per-request URL logs
-    expect(planDeploy({ ...env, ADMIN_DEMO_PASSWORD: 'p'.repeat(16) }, w.vars).problems).toEqual([]);
-    expect(planDeploy(env, w.vars).problems).toContain('ADMIN_DEMO_PASSWORD is missing from .env');
-    const sent = planDeploy({ ...env, ADMIN_DEMO_PASSWORD: 'p'.repeat(16) }, w.vars).names;
-    expect(sent).toContain('ADMIN_DEMO_PASSWORD'); expect(sent).toContain('DEMO_USERS');
+    expect(planDeploy(env, w.vars).problems).toEqual([]);                      // email-demo needs no password secret
+    const sent = planDeploy({ ...env, ADMIN_DEMO_PASSWORD: 'left-over' }, w.vars).names;
+    expect(sent).not.toContain('ADMIN_DEMO_PASSWORD'); expect(sent).toContain('DEMO_USERS');
     expect(sent).not.toContain('ENTRA_CLIENT_SECRET'); expect(sent).not.toContain('CF_ACCESS_AUD');
   });
   it('parseJsonc handles comments, strings that contain slashes, and trailing commas', () => {

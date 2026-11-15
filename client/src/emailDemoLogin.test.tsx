@@ -1,4 +1,4 @@
-// AUTH_MODE=email-demo (DEMO ONLY): one email field and a Sign in button; admins are asked for the demo admin password.
+// AUTH_MODE=email-demo (DEMO ONLY): one email field and a Sign in button, for everyone; admins too, with no password.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -12,7 +12,7 @@ const STAFF = { oid: 's1', email: 'sam@namra.org.na', displayName: 'Sam', roles:
 
 let signedIn: object | null;
 let posts: unknown[];
-let answer: (body: { email: string; password?: string }) => { status: number; body: unknown };
+let answer: (body: { email: string }) => { status: number; body: unknown };
 beforeEach(() => {
   signedIn = null; posts = []; resetCsrf(); resetSessionExpiredGuard();
   answer = (b) => ({ status: 200, body: { user: b.email.includes('lenton') ? ADMIN : STAFF } });
@@ -54,21 +54,14 @@ describe('email-demo sign-in page', () => {
     expect(posts).toEqual([{ email: 'Sam@NamRA.org.na' }]);                    // the server trims and lower-cases
   });
 
-  it('an admin is asked for the demo admin password, then goes to /admin', async () => {
-    answer = (b) => (b.password === undefined ? { status: 400, body: { error: 'This account also needs the demo admin password', code: 'password_required' } }
-      : b.password === 'right-password' ? { status: 200, body: { user: ADMIN } } : { status: 403, body: { error: 'That password is not right', code: 'bad_password' } });
+  it('an admin signs in the same way, with just the email (no password field ever appears), and goes to /admin', async () => {
     const user = userEvent.setup();
     page();
     await user.type(await screen.findByLabelText('Email address'), 'lenton.losper@namra.org.na');
     await user.click(screen.getByRole('button', { name: 'Sign in' }));
-    const pw = await screen.findByLabelText('Demo admin password');
-    await user.type(pw, 'nope');
-    await user.click(screen.getByRole('button', { name: 'Sign in' }));
-    expect(await screen.findByText('That password is not right')).toBeTruthy();
-    await user.clear(pw); await user.type(pw, 'right-password');
-    await user.click(screen.getByRole('button', { name: 'Sign in' }));
     await waitFor(() => expect(screen.getByTestId('where').textContent).toBe('/admin'));
-    expect(posts).toEqual([{ email: 'lenton.losper@namra.org.na' }, { email: 'lenton.losper@namra.org.na', password: 'nope' }, { email: 'lenton.losper@namra.org.na', password: 'right-password' }]);
+    expect(posts).toEqual([{ email: 'lenton.losper@namra.org.na' }]);
+    expect(document.querySelector('input[type="password"]')).toBeNull();
   });
 
   it('shows the server\'s refusal for an address outside @namra.org.na', async () => {
