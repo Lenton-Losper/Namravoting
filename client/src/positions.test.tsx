@@ -196,7 +196,7 @@ describe('the nomination page', () => {
     const user = userEvent.setup();
     nominate();
     expect(await screen.findByRole('heading', { name: 'Stand for Press Secretary' })).toBeTruthy();
-    const name = screen.getByLabelText(/Display name/) as HTMLInputElement;
+    const name = screen.getByLabelText(/^Name/) as HTMLInputElement;
     expect(name.value).toBe('Sam Staff');
     const submit = screen.getByRole('button', { name: 'Submit my profile' }) as HTMLButtonElement;
     expect(submit.disabled).toBe(true);                                                               // no region yet
@@ -228,13 +228,13 @@ describe('the nomination page', () => {
     table[`GET /api/nominate/${NTOKEN}`] = nominateInfo({ canEdit: false, profile: { id: 'k1', name: 'Sam Staff', bio: 'Hi', regionId: 'r1', status: 'approved', reviewReason: null, photoUrl: null } });
     nominate();
     expect(await screen.findByText('Approved: you are on the ballot')).toBeTruthy();
-    expect(screen.queryByLabelText(/Display name/)).toBeNull();
+    expect(screen.queryByLabelText(/^Name/)).toBeNull();
     cleanup();
     table[`GET /api/nominate/${NTOKEN}`] = nominateInfo({ canEdit: false, state: 'ended' });
     nominate();
     expect(await screen.findByRole('heading', { name: 'Nominations are closed' })).toBeTruthy();
     expect(screen.getByText('Nominations closed when voting started.')).toBeTruthy();
-    expect(screen.queryByLabelText(/Display name/)).toBeNull();
+    expect(screen.queryByLabelText(/^Name/)).toBeNull();
   });
 
   it('withdraws after a confirmation', async () => {
@@ -317,9 +317,10 @@ describe('the admin\'s position blocks', () => {
     await user.click(within(dlg).getByRole('button', { name: 'Add position' }));
     await waitFor(() => expect(calls.find((c) => c.method === 'POST' && c.url === `/api/campaigns/${ID}/positions`)?.body).toMatchObject({ title: 'Treasurer', seats: 1, min_candidates: null, max_candidates: null }));
 
-    await user.click(screen.getByRole('button', { name: 'Move Press Secretary down' }));
+    const pressCard = within(screen.getByRole('list', { name: 'Positions' })).getByRole('article', { name: 'Press Secretary' });
+    await user.click(within(pressCard).getByRole('button', { name: 'Move down' }));
     await waitFor(() => expect(calls.find((c) => c.url.endsWith('/positions/reorder'))?.body).toEqual({ ids: [PID[1], PID[0]] }));
-    expect((screen.getByRole('button', { name: 'Move Press Secretary up' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((within(pressCard).getByRole('button', { name: 'Move up' }) as HTMLButtonElement).disabled).toBe(true);
 
     await user.click(screen.getByRole('button', { name: 'Edit Finance Officer' }));
     const edit = await screen.findByRole('dialog');

@@ -5,7 +5,7 @@ import type { Config } from '../config.js';
 import { getPool, UNIQUE_VIOLATION } from '../db.js';
 import { normalizeEmployeeCode } from '../domain/employeeCode.js';
 import { cookieOptions, readCookie } from './cookies.js';
-import { safeNext } from './safeNext.js';
+import { landingFor, safeNext } from './safeNext.js';
 import { signingKey, verifyKeys } from './keys.js';
 import { createSession, endSession, rolesFor, sessionUser } from './sessions.js';
 import { sign, verify } from './signing.js';
@@ -63,7 +63,7 @@ export function mountEntra(app: Express, config: Config, opts: EntraOptions = {}
     const resume = req.query.resume === '1';
     // Already signed in (valid session): there is nothing to sign in to. Go straight to the target, no second Microsoft round trip.
     const current = sessionUser(req);
-    if (current) { res.set('Cache-Control', 'no-store'); return res.redirect(next ?? (current.roles.includes(ADMIN_ROLE) ? '/admin' : '/votes')); }
+    if (current) { res.set('Cache-Control', 'no-store'); return res.redirect(landingFor(next, current.roles.includes(ADMIN_ROLE))); }
     pruneFlows(req, res);
     const payload: AuthState = { s: state, n: nonce, v: verifier, next, exp: Date.now() + AUTH_TTL_MS };
     res.cookie(AUTH_COOKIE_PREFIX + state, sign(signingKey(config, 'authflow'), payload), authCookie({ maxAge: AUTH_TTL_MS }));
@@ -115,7 +115,7 @@ export function mountEntra(app: Express, config: Config, opts: EntraOptions = {}
       await upsertUser(user);
       await createSession(req, res, config, { oid: user.oid, email, claimAdmin });
       const admin = rolesFor(config, { claimAdmin, oid: user.oid, email }).length > 0;
-      res.redirect(st.next ?? (admin ? '/admin' : '/votes'));
+      res.redirect(landingFor(st.next, admin));
     } catch (err) {
       // Log the reason (never tokens or secrets); the browser only learns that sign-in failed.
       logRejected(err);

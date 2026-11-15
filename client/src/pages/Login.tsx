@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api, navigation, resetCsrf, SESSION_EXPIRED_MESSAGE, type User } from '../api';
 import { useAuth } from '../auth';
-import { safeNext as validateNext } from '../safeNext';
+import { landingFor, safeNext as validateNext } from '../safeNext';
 import { Wordmark } from '../icons';
 import { ErrorBox, Spinner, initials } from '../ui';
 
@@ -38,7 +38,7 @@ function MicrosoftSignIn() {
     try { sessionStorage.setItem('namra:reauth', String(Date.now())); } catch { /* storage unavailable */ }
     setAuto(true); navigation.replace(resumeHref);
   }, [expired, user, failed, resumeHref]);
-  useEffect(() => { if (user) nav(safeNext ?? (isAdmin ? '/admin' : '/votes'), { replace: true }); }, [user, isAdmin, safeNext, nav]);
+  useEffect(() => { if (user) nav(landingFor(safeNext, isAdmin), { replace: true }); }, [user, isAdmin, safeNext, nav]);
   if (user) return <Spinner label="Signing you in…" />;
   if (auto) return <main className="login-page"><div className="card card-accent login-card"><div className="login-brand"><Wordmark dark /></div><p className="note" role="status">{SESSION_EXPIRED_MESSAGE}</p><Spinner /></div></main>;
   const href = `/auth/login${safeNext ? `?next=${encodeURIComponent(safeNext)}` : ''}`;
@@ -69,7 +69,7 @@ function AccessSignIn() {
   const safeNext = validateNext(params.get('next'));
   const [checked, setChecked] = useState(false);
   useEffect(() => { let alive = true; void refresh().finally(() => { if (alive) setChecked(true); }); return () => { alive = false; }; }, [refresh]);
-  useEffect(() => { if (user) nav(safeNext ?? (isAdmin ? '/admin' : '/votes'), { replace: true }); }, [user, isAdmin, safeNext, nav]);
+  useEffect(() => { if (user) nav(landingFor(safeNext, isAdmin), { replace: true }); }, [user, isAdmin, safeNext, nav]);
   if (user || !checked) return <Spinner label="Signing you in…" />;
   return (
     <main className="login-page"><div className="card card-accent login-card">
@@ -93,7 +93,7 @@ function EmailSignIn() {
   const [email, setEmail] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  useEffect(() => { if (user) nav(safeNext ?? (isAdmin ? '/admin' : '/votes'), { replace: true }); }, [user, isAdmin, safeNext, nav]);
+  useEffect(() => { if (user) nav(landingFor(safeNext, isAdmin), { replace: true }); }, [user, isAdmin, safeNext, nav]);
 
   async function submit(e: FormEvent) {
     e.preventDefault(); setBusy(true); setError(null);
@@ -101,7 +101,7 @@ function EmailSignIn() {
       const r = await api<{ user: User }>('POST', '/api/email-login', { email });
       resetCsrf();                                  // the CSRF token is bound to the session: fetch a new one
       await refresh();
-      nav(safeNext ?? (r.user.roles.includes('CampaignAdmin') ? '/admin' : '/votes'), { replace: true });
+      nav(landingFor(safeNext, r.user.roles.includes('CampaignAdmin')), { replace: true });
     } catch (err) {
       setError((err as Error).message);
     } finally { setBusy(false); }
@@ -133,7 +133,7 @@ function DevPicker() {
   const { refresh } = useAuth();
   const nav = useNavigate();
   const [params] = useSearchParams();
-  const safeNext = validateNext(params.get('next'));   // only relative /v/, /votes, /admin paths
+  const safeNext = validateNext(params.get('next'));   // only relative /v/, /n/, /votes, /observe, /admin paths
 
   useEffect(() => {
     api<{ users: User[] }>('GET', '/api/dev/users').then((r) => setUsers(r.users)).catch(() => setError('Dev login is not available on this server.'));
@@ -145,7 +145,7 @@ function DevPicker() {
       await api('POST', '/api/dev/login', u);
       resetCsrf();                                  // the CSRF token is bound to the session: fetch a new one
       await refresh();
-      nav(safeNext ?? (u.roles.includes('CampaignAdmin') ? '/admin' : '/votes'), { replace: true });
+      nav(landingFor(safeNext, u.roles.includes('CampaignAdmin')), { replace: true });
     } catch (e) { setError((e as Error).message); }
   }
 

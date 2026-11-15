@@ -275,6 +275,20 @@ describe('the ballot link survives the whole sign-in (QR -> ballot)', () => {
     expect((await s.get('/auth/login').expect(302)).headers.location).toBe('/votes');
   });
 
+  it.each([['an admin', ADMIN], ['a non-admin', STAFF]])('a nomination link (/n/<token>) survives the Microsoft sign-in and is where %s lands, never /admin or /votes', async (_who, claims) => {
+    const path = '/n/' + 'N'.repeat(32);
+    const { callback, agent } = await signIn({ claims, graph: { employeeId: 'NAM0445' }, next: path });
+    expect(callback.headers.location).toBe(path);
+    expect((await agent.get('/auth/login?next=' + encodeURIComponent(path)).expect(302)).headers.location).toBe(path);   // already signed in
+  });
+
+  it('an /admin page is never where a non-admin lands (they go to /votes); an admin does land on it', async () => {
+    const { callback: s } = await signIn({ claims: STAFF, next: '/admin/c/abc?tab=results' });
+    expect(s.headers.location).toBe('/votes');
+    const { callback: a } = await signIn({ claims: ADMIN, next: '/admin/c/abc?tab=results' });
+    expect(a.headers.location).toBe('/admin/c/abc?tab=results');
+  });
+
   it('REGRESSION: a second /auth/login (a second tap, another tab, the plain /login page) cannot overwrite the ballot target of the first', async () => {
     const path = await ballot();
     const agent = request.agent(app);

@@ -141,22 +141,38 @@ export function NominatePage() {
       {info.state === 'open' && info.canEdit && (
         <form className="card card-pad stack nominate-form" onSubmit={(e) => void submit(e)}>
           <h2>{p ? 'Your profile' : 'Create your profile'}</h2>
-          <p className="field-helper">This is what voters will see on the ballot once the administrator approves it.</p>
+          <p className="field-helper">This is what voters will see on the ballot once the administrator approves it. Fields marked * are required.</p>
+          {/* Each field: a short label, then its help text, linked with aria-describedby (the help is not part of the label's name). */}
           <div className="row-top">
             <Thumb url={shown} name={name || '?'} size="lg" />
-            <div className="stack grow">
-              <label>Photo<span className="field-helper">JPEG or PNG, max 2 MB.</span><input ref={fileInput} type="file" accept="image/jpeg,image/png" onChange={(e) => pick(e.target.files?.[0] ?? null)} /></label>
+            <div className="field-block grow">
+              <label htmlFor="nom-photo">Photo</label>
+              <p id="nom-photo-help" className="field-helper">A clear, recent head-and-shoulders photo. JPG or PNG, max 2 MB.</p>
+              <input id="nom-photo" ref={fileInput} type="file" accept="image/jpeg,image/png" aria-describedby="nom-photo-help" onChange={(e) => pick(e.target.files?.[0] ?? null)} />
               {p?.photoUrl && !file && <label className="check"><input type="checkbox" checked={removePhoto} onChange={(e) => setRemovePhoto(e.target.checked)} /> Remove current photo</label>}
             </div>
           </div>
-          <label>Display name<span className="field-helper">Filled in from your Microsoft account. Change it if voters know you by another name.</span>
-            <input value={name} onChange={(e) => setName(e.target.value)} required maxLength={120} autoComplete="name" /></label>
-          <label>Region<span className="field-helper">Where you work.</span>
-            <select value={region} onChange={(e) => setRegion(e.target.value)} required>
+          <div className="field-block">
+            <label htmlFor="nom-name">Name *</label>
+            <p id="nom-name-help" className="field-helper">Your full name as colleagues know you, e.g. Maria Shikongo</p>
+            <input id="nom-name" value={name} onChange={(e) => setName(e.target.value)} required maxLength={120} autoComplete="name"
+              placeholder="First name and surname" aria-describedby="nom-name-help" />
+          </div>
+          <div className="field-block">
+            <label htmlFor="nom-region">Region *</label>
+            <p id="nom-region-help" className="field-helper">The region where you're based.</p>
+            <select id="nom-region" value={region} onChange={(e) => setRegion(e.target.value)} required aria-describedby="nom-region-help">
               <option value="" disabled>Choose your region…</option>
               {info.regions.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-            </select></label>
-          <label>Short bio <span className="field-helper">{bio.length}/500 characters</span><textarea rows={4} value={bio} onChange={(e) => setBio(e.target.value)} maxLength={500} /></label>
+            </select>
+          </div>
+          <div className="field-block">
+            <label htmlFor="nom-bio">Short bio</label>
+            <p id="nom-bio-help" className="field-helper">2–4 sentences: your role, your experience, and what you'll do if elected. Max 500 characters.</p>
+            <textarea id="nom-bio" rows={5} value={bio} onChange={(e) => setBio(e.target.value)} maxLength={500} aria-describedby="nom-bio-help nom-bio-count"
+              placeholder="e.g. Taxation Officer in Domestic Taxes, 6 years at NamRA. I want to improve communication between regions and make sure every member's voice is heard at committee meetings." />
+            <p id="nom-bio-count" className="field-helper char-count" aria-live="polite">{bio.length}/500 characters</p>
+          </div>
           <div className="form-actions">
             {p && p.status !== 'withdrawn' && <button type="button" className="btn btn-secondary" onClick={() => setConfirmWithdraw(true)} disabled={busy}>Withdraw</button>}
             <button className="btn btn-primary" disabled={busy || !name.trim() || !region}>{p ? (p.status === 'rejected' ? 'Submit again' : p.status === 'withdrawn' ? 'Submit my profile' : 'Save changes') : 'Submit my profile'}</button>

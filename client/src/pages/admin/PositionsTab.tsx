@@ -285,7 +285,7 @@ export function PositionsTab({ c, reload }: { c: CampaignDetail; reload: () => P
         {positions.map((p, i) => (
           <li key={p.id}>
             <article className={`position-card${selected === p.id ? ' position-selected' : ''}${draft && needsMore(p) ? ' position-short' : ''}`} aria-label={p.title}>
-              <h3 className="position-title">{p.title}</h3>
+              <h3 className="position-title" id={`pos-h-${p.id}`}>{p.title}</h3>
               <div className="position-chips">
                 <span className={`chip ${needsMore(p) && draft ? 'chip-draft' : 'chip-open'}`}>{p.counts.approved} approved</span>
                 {p.counts.submitted > 0 && <span className="chip chip-outline">{p.counts.submitted} to review</span>}
@@ -296,10 +296,12 @@ export function PositionsTab({ c, reload }: { c: CampaignDetail; reload: () => P
                 <p className="small position-outcome">{p.result.turnout} voted · {p.result.tie ? <>Tie: {p.result.tie.join(' and ')}</> : p.result.winners.length ? <>Winner: <strong>{p.result.winners.join(', ')}</strong></> : 'No winner'}</p>
               )}
               <div className="position-actions">
-                <button className="btn btn-secondary btn-sm" aria-pressed={selected === p.id} onClick={() => setSelected(selected === p.id ? null : p.id)}>{selected === p.id ? 'Hide' : draft ? 'Manage' : 'View'}</button>
+                <button className="btn btn-secondary btn-sm" aria-pressed={selected === p.id} aria-describedby={`pos-h-${p.id}`} onClick={() => setSelected(selected === p.id ? null : p.id)}>{selected === p.id ? 'Hide' : draft ? 'Manage' : 'View'}</button>
                 {(draft || live) && <button className="btn-text" onClick={() => setDialog(p)} aria-label={`Edit ${p.title}`}>Edit</button>}
-                {draft && <button className="btn-text" disabled={busy || i === 0} onClick={() => void move(p, -1)} aria-label={`Move ${p.title} up`}>↑</button>}
-                {draft && <button className="btn-text" disabled={busy || i === positions.length - 1} onClick={() => void move(p, 1)} aria-label={`Move ${p.title} down`}>↓</button>}
+                {/* "Move up" / "Move down" as the tooltip and the accessible name; the card's heading is the description, so a screen reader
+                    hears "Move up, Press Secretary". */}
+                {draft && <button className="btn-text" disabled={busy || i === 0} onClick={() => void move(p, -1)} title="Move up" aria-label="Move up" aria-describedby={`pos-h-${p.id}`}>↑</button>}
+                {draft && <button className="btn-text" disabled={busy || i === positions.length - 1} onClick={() => void move(p, 1)} title="Move down" aria-label="Move down" aria-describedby={`pos-h-${p.id}`}>↓</button>}
                 {draft && <button className="btn-text btn-text-danger" onClick={() => setRemoving(p)} aria-label={`Remove ${p.title}`}>Remove</button>}
               </div>
             </article>

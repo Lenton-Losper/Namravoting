@@ -408,3 +408,7 @@ progress::-moz-progress-bar { background: var(--navy); border-radius: 3px; }
 @media (min-width: 640px) { .nomination-row .cand-actions { flex: 0 1 auto; } }
 .abstain-group { margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--border); }
 .ballot-campaign { margin: 0 0 2px; }
+.field-block { display: flex; flex-direction: column; gap: 4px; }
+.field-block > label { font-weight: 600; }
+.field-block > .field-helper { margin: 0; }
+.char-count { text-align: right; }
