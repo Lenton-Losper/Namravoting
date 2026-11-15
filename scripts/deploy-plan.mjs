@@ -19,7 +19,7 @@ export function parseJsonc(text) {
 }
 
 const BASE_SECRETS = ['DATABASE_URL', 'SESSION_SECRET', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'R2_ENDPOINT'];
-const MODE_SECRETS = { entra: ['ENTRA_CLIENT_SECRET'], demo: ['CF_ACCESS_AUD', 'DEMO_USERS'] };
+const MODE_SECRETS = { entra: ['ENTRA_CLIENT_SECRET'], demo: ['CF_ACCESS_AUD', 'DEMO_USERS'], 'email-demo': ['ADMIN_DEMO_PASSWORD', 'DEMO_USERS'] };
 const OPTIONAL_SECRETS = ['SESSION_SECRET_PREVIOUS', 'CSRF_SECRET'];
 
 /**
@@ -31,7 +31,7 @@ export function planDeploy(env, vars) {
   const problems = [];
   const mode = vars?.AUTH_MODE;
   if (vars?.NODE_ENV !== 'production') problems.push(`wrangler.jsonc must set NODE_ENV to "production" (it says ${JSON.stringify(vars?.NODE_ENV ?? null)})`);
-  if (mode === 'dev' || !(mode in MODE_SECRETS)) problems.push(`wrangler.jsonc AUTH_MODE is ${JSON.stringify(mode ?? null)}: only "entra" or "demo" may be deployed, never the dev identity picker`);
+  if (mode === 'dev' || !(mode in MODE_SECRETS)) problems.push(`wrangler.jsonc AUTH_MODE is ${JSON.stringify(mode ?? null)}: only "entra", "demo" or "email-demo" may be deployed, never the dev identity picker`);
   if (vars?.ALLOW_DEV_AUTH === 'true') problems.push('wrangler.jsonc must not set ALLOW_DEV_AUTH');
 
   const need = ['CLOUDFLARE_ACCOUNT_ID', ...(env.WRANGLER_OAUTH === '1' ? [] : ['CLOUDFLARE_API_TOKEN']), 'DEMO_DATABASE_URL', 'DEMO_SESSION_SECRET',
