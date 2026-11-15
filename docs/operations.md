@@ -85,26 +85,29 @@ pre-Part-B code (database at migration 012).
 
 1. **15 Nov, 00:12 UTC:** `AUTH_MODE=demo`. Cloudflare Access sent an email code, and the app trusted the Access identity.
 2. **15 Nov, 08:10 UTC:** `AUTH_MODE=email-demo`. The site has its own sign-in page. The Access app was removed (its settings are below,
-   to restore it).
+   to restore it). The two admin accounts also needed a demo admin password.
+3. **15 Nov, 08:31 UTC:** the admin password was removed on request. Every allowed address, the admins included, signs in with just the
+   email.
 
 > **What email-demo does and does not prove.** The person types an email address and is signed in as that address. **No code is sent,
 > so nothing checks that the address is theirs.** Anyone who knows a NamRA address can sign in as that person, and vote as them in a
-> vote open to all staff. (A vote for Umoja members also needs a member code, and only the two demo admins have one.) Only the
-> two admin accounts are protected, by `ADMIN_DEMO_PASSWORD`. This is acceptable for a demo with test data. It is **not** acceptable for
-> a real election: switch back to Microsoft sign-in before one.
+> vote open to all staff. (A vote for Umoja members also needs a member code, and only the two demo admins have one.) **There is no
+> password for the admins either: anyone who types `lenton.losper@namra.org.na` or `llosperofficial@gmail.com` is a campaign admin.**
+> They can see results once a vote closes, close, reset or publish votes, and change drafts. This is acceptable only for a demo with test
+> data. It is **not** acceptable for a real election: switch back to Microsoft sign-in before one.
 
 **What is live right now**
 
 | What | Value |
 |---|---|
 | Code | Branch `demo-fallback`: the previous live commit `fdf5c98` plus the demo changes. Those changes are: an existing account keeps its id; the sign-in page forwards automatically; the container restarts when its settings change; and `AUTH_MODE=email-demo`. The branch is never merged. |
-| Sign-in | `/login`: one email field and a Sign in button, with a "Demo sign-in" note. Only addresses ending `@namra.org.na`, plus the addresses in `DEMO_USERS`, are accepted, trimmed and lower-cased. Admin accounts are asked for the demo admin password as well. There are 10 attempts a minute per client address. Every sign-in is in the audit log with its email (`auth.signin`), and so is every wrong admin password (`auth.signin_failed`). Sessions are the ordinary database sessions: staff 8 h idle, admins 4 h idle, 12 h at most. |
-| Safety rails | The app refuses to start in email-demo when `NODE_ENV=production` unless `DEMO=true`, or without an `ADMIN_DEMO_PASSWORD` of at least 12 characters. |
-| Worker | `AUTH_MODE=email-demo`, `DEMO=true`; secrets `ADMIN_DEMO_PASSWORD` and `DEMO_USERS`. `ENTRA_CLIENT_SECRET`, the other Entra vars and the old `CF_ACCESS_AUD` are still on the Worker, ignored. |
-| People | `DEMO_USERS`: `lenton.losper@namra.org.na` and `llosperofficial@gmail.com` are admins (password required) and active members, with the test codes `TST0026` and `TST0027` (separate codes, so they are two voters). Every other `@namra.org.na` address is plain staff with no employee code. An address that already has an account keeps it, so Lenton keeps his Microsoft account `87a4af90…` and its campaigns. |
-| Deployed | Deploy run `43693153455` from `demo-fallback` `3568c2c`, Worker version `e352b315…`. The Access app was deleted right after (`/api/csrf` answers 200 since). Live checks passed: a non-NamRA address is refused, staff sign in, an admin needs the password, Lenton keeps `87a4af90…` and his 4 campaigns, sign-out revokes the session, and the audit entries are written. |
-| Rollback point | Neon branch `pre-deploy-2026-11-15T08-09-06-demofb-3568c2c` (`br-still-sea-bail4p1k`), taken just before this deploy. |
-| GitHub secrets | `ADMIN_DEMO_PASSWORD`, `DEMO_USERS` (and the older `CF_ACCESS_AUD`), read by the Deploy workflow on `demo-fallback`. |
+| Sign-in | `/login`: one email field and a Sign in button, with a "Demo sign-in" note. Only addresses ending `@namra.org.na`, plus the addresses in `DEMO_USERS`, are accepted, trimmed and lower-cased. There is no password for anyone, the admins included; a request that sends one is refused. There are 10 attempts a minute per client address. Every sign-in is in the audit log with its email (`auth.signin`). Sessions are the ordinary database sessions: staff 8 h idle, admins 4 h idle, 12 h at most. |
+| Safety rails | The app refuses to start in email-demo when `NODE_ENV=production` unless `DEMO=true`. |
+| Worker | `AUTH_MODE=email-demo`, `DEMO=true`; secret `DEMO_USERS`. `ADMIN_DEMO_PASSWORD` was deleted from the Worker, GitHub and `.env` on 15 Nov. `ENTRA_CLIENT_SECRET`, the other Entra vars and the old `CF_ACCESS_AUD` are still on the Worker, ignored. |
+| People | `DEMO_USERS`: `lenton.losper@namra.org.na` and `llosperofficial@gmail.com` are admins (no password) and active members, with the test codes `TST0026` and `TST0027` (separate codes, so they are two voters). Every other `@namra.org.na` address is plain staff with no employee code. An address that already has an account keeps it, so Lenton keeps his Microsoft account `87a4af90…` and its campaigns. |
+| Deployed | Deploy run `43694868659` from `demo-fallback` `1b994a6`, Worker version `cdc4860c…`; its smoke test passes (`/api/csrf` -> 200). Live checks passed: a non-NamRA address is refused; staff sign in; both admin addresses sign in with just the email as admins; a password in the request is refused; Lenton keeps `87a4af90…` and his 4 campaigns; sign-out revokes the session. Earlier: run `43693153455` (`3568c2c`, with the admin password), after which the Access app was deleted. |
+| Rollback points | Neon branches `pre-deploy-2026-11-15T08-30-57-demofb-1b994a6` (`br-falling-smoke-baa4rv3z`, before the password was removed) and `pre-deploy-2026-11-15T08-09-06-demofb-3568c2c` (`br-still-sea-bail4p1k`, before email-demo). The snapshot script keeps the 3 newest. |
+| GitHub secrets | `DEMO_USERS` (and the older `CF_ACCESS_AUD`), read by the Deploy workflow on `demo-fallback`. |
 
 The Deploy run's smoke test passes again in email-demo (`/api/csrf` answers 200). It reported a failure only while Access was in front.
 
@@ -160,8 +163,8 @@ Do this outside a vote: the app restarts in step 4, so sign-in is interrupted fo
    at once, run Deploy on `hotfix-hide-verify` a second time.
    *Do not* use this run to ship Part B. That is the separate release from `main`, with its own pre-deploy snapshot (see below).
 5. **Tidy the Worker.** These secrets are unused in entra mode; remove them so they cannot ride along later. From `worker/`, run
-   `npx wrangler secret delete ADMIN_DEMO_PASSWORD`, `npx wrangler secret delete DEMO_USERS` and `npx wrangler secret delete CF_ACCESS_AUD`.
-   Delete the GitHub secrets `ADMIN_DEMO_PASSWORD` and `CF_ACCESS_AUD` as well (`gh secret delete <name>`).
+   `npx wrangler secret delete DEMO_USERS` and `npx wrangler secret delete CF_ACCESS_AUD`.
+   Delete the GitHub secret `CF_ACCESS_AUD` as well (`gh secret delete CF_ACCESS_AUD`). (`ADMIN_DEMO_PASSWORD` is already gone.)
 6. **Check it.** Open the site: it must go straight to Microsoft sign-in, not the email sign-in page. Sign in as
    lenton.losper@namra.org.na. You are the same account (`87a4af90…`) with your campaigns. Microsoft sign-in rewrites your name and
    employee code from the token, so the temporary `TST0026` disappears by itself. Accounts that email-demo created for other addresses
