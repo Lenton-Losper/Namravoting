@@ -1,15 +1,15 @@
 import os from 'node:os';
 import path from 'node:path';
 import { defineConfig } from 'vitest/config';
-import { TEST_APP_URL } from './tests/testDb.js';
+import { TEST_APP_URL, TEST_DB_IS_REMOTE } from './tests/testDb.js';
 
 export default defineConfig({
   test: {
     include: ['tests/**/*.test.ts'],
     globalSetup: ['tests/globalSetup.ts'],
     fileParallelism: false,       // all files share one test database
-    testTimeout: 30000,
-    hookTimeout: 60000,
+    testTimeout: TEST_DB_IS_REMOTE ? 300000 : 30000,   // a remote database is ~200ms per query away
+    hookTimeout: TEST_DB_IS_REMOTE ? 600000 : 60000,
     env: {
       NODE_ENV: 'test',
       AUTH_MODE: 'dev',
