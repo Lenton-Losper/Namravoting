@@ -16,7 +16,6 @@ export function parseConfig(env: NodeJS.ProcessEnv) {
     CF_ACCESS_TEAM_DOMAIN: z.string().optional(),
     CF_ACCESS_AUD: z.string().optional(),
     DEMO_USERS: z.string().optional(),
-    ADMIN_DEMO_PASSWORD: z.string().optional(),
     ENTRA_TENANT_ID: z.string().optional(),
     ENTRA_CLIENT_ID: z.string().optional(),
     ENTRA_CLIENT_SECRET: z.string().optional(),
@@ -60,13 +59,10 @@ export function parseConfig(env: NodeJS.ProcessEnv) {
   if (e.AUTH_MODE === 'demo' && (!e.CF_ACCESS_TEAM_DOMAIN || !e.CF_ACCESS_AUD)) {
     throw new Error('Refusing to start: AUTH_MODE=demo requires CF_ACCESS_TEAM_DOMAIN and CF_ACCESS_AUD (Cloudflare Access)');
   }
-  // AUTH_MODE=email-demo signs people in by the address they TYPE (no code is sent). Demo only: in production it needs DEMO=true,
-  // and the admin accounts need ADMIN_DEMO_PASSWORD (auth/emailDemoAuth.ts).
+  // AUTH_MODE=email-demo signs people in by the address they TYPE (no code, no password, admins included). Demo only: in production it
+  // needs DEMO=true (auth/emailDemoAuth.ts).
   if (e.AUTH_MODE === 'email-demo' && e.NODE_ENV === 'production' && e.DEMO !== 'true') {
     throw new Error('Refusing to start: AUTH_MODE=email-demo (sign-in by typed email, no verification) is a demo mode. In production it needs DEMO=true');
-  }
-  if (e.AUTH_MODE === 'email-demo' && (!e.ADMIN_DEMO_PASSWORD || e.ADMIN_DEMO_PASSWORD.length < 12)) {
-    throw new Error('Refusing to start: AUTH_MODE=email-demo needs ADMIN_DEMO_PASSWORD (at least 12 characters) for the admin accounts');
   }
   if (e.STORAGE === 'r2' && (!e.R2_ENDPOINT || !e.R2_ACCESS_KEY_ID || !e.R2_SECRET_ACCESS_KEY)) {
     throw new Error('Refusing to start: STORAGE=r2 requires R2_ENDPOINT, R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY');
@@ -83,7 +79,6 @@ export function parseConfig(env: NodeJS.ProcessEnv) {
   const demoUsers = parseDemoUsers(e.DEMO_USERS);
   return {
     demoUsers,
-    adminDemoPassword: e.AUTH_MODE === 'email-demo' ? e.ADMIN_DEMO_PASSWORD! : null,
     entra,
     demo: e.DEMO === 'true',
     nodeEnv: e.NODE_ENV,

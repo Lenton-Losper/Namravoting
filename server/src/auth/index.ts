@@ -30,7 +30,7 @@ export function mountAuth(app: Express, config: Config, entraOptions: EntraOptio
     // Identity picker + POST /api/dev/login. Refused in production by the config guard.
     devAuth.mount(app, config);
   } else if (config.authMode === 'email-demo') {
-    // DEMO ONLY: sign-in by typed email (+ ADMIN_DEMO_PASSWORD for admins), ordinary server-side sessions.
+    // DEMO ONLY: sign-in by typed email (no code, no password, admins included), ordinary server-side sessions.
     emailDemoAuth.mount(app, config);
   } else if (config.authMode === 'demo') {
     // Identity comes from the verified Cloudflare Access JWT. No picker, no /api/dev/* routes.

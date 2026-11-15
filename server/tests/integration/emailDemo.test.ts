@@ -1,4 +1,4 @@
-// AUTH_MODE=email-demo (DEMO ONLY): sign in by typing an email address; admins also need ADMIN_DEMO_PASSWORD.
+// AUTH_MODE=email-demo (DEMO ONLY): sign in by typing an email address. No code and no password, for admins too.
 import request from 'supertest';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { closeOwner, ownerDb, resetDb } from '../helpers.js';
@@ -7,9 +7,8 @@ import { parseConfig } from '../../src/config.js';
 // Config is read once per module graph: switch this file to email-demo BEFORE importing the app.
 const ADMIN = 'lenton.losper@namra.org.na';
 const GMAIL = 'llosperofficial@gmail.com';
-const PASSWORD = 'correct-horse-battery-staple';
 process.env.AUTH_MODE = 'email-demo';
-process.env.ADMIN_DEMO_PASSWORD = PASSWORD;
+delete process.env.ADMIN_DEMO_PASSWORD;   // it no longer exists: email-demo must start without it
 process.env.DEMO_USERS = JSON.stringify({
   [ADMIN]: { displayName: 'Lenton Losper', roles: ['CampaignAdmin'], employeeCode: 'TST0026' },
   [GMAIL]: { displayName: 'Lenton Losper (Gmail)', roles: ['CampaignAdmin'], employeeCode: 'TST0027' },
@@ -25,9 +24,9 @@ async function browser(addr = `203.0.113.${++ip}`) {
   let csrf = (await h(agent.get('/api/csrf'))).body.token as string;
   return {
     /** Signs in and checks the status: `await b.signIn(email).expect(200)`. */
-    signIn: (email: string, password?: string) => ({
+    signIn: (email: string) => ({
       expect: async (status: number) => {
-        const r = await h(agent.post('/api/email-login').set('x-csrf-token', csrf)).send(password === undefined ? { email } : { email, password });
+        const r = await h(agent.post('/api/email-login').set('x-csrf-token', csrf)).send({ email });
         expect(r.status, JSON.stringify(r.body)).toBe(status);
         if (r.status === 200) csrf = (await h(agent.get('/api/csrf'))).body.token as string;   // the token is bound to the new session
         return r;
@@ -67,23 +66,26 @@ describe('email-demo sign-in', () => {
     expect((await b.signIn('x@namra.org.na.evil.com').expect(403)).body.code).toBe('email_not_allowed');
     expect((await b.signIn('not an email').expect(400)).body.code).toBe('bad_email');
     await b.post('/api/email-login').send({ email: 'a@namra.org.na', role: 'CampaignAdmin' }).expect(400);   // nothing else is accepted
-    expect((await b.signIn(GMAIL).expect(400)).body.code).toBe('password_required');            // the operator address is allowed, as an admin
     await b.get('/api/session').expect(200).then((x) => expect(x.body.user).toBeNull());
   });
 
-  it('admin addresses need the demo admin password: none -> asked for it, wrong -> refused and audited, right -> admin', async () => {
+  it('admin addresses sign in with just the email too (no password), as admins and members, and it is audited', async () => {
     const b = await browser();
-    expect((await b.signIn(ADMIN).expect(400)).body.code).toBe('password_required');
-    expect((await b.signIn(ADMIN, 'wrong-password').expect(403)).body.code).toBe('bad_password');
-    expect(await audits('auth.signin_failed')).toEqual([{ actor_oid: null, details: { email: ADMIN, mode: 'email-demo', reason: 'bad_password' } }]);
-    expect((await b.get('/api/session')).body.user).toBeNull();
-    const ok = await b.signIn(` ${ADMIN.toUpperCase()} `, PASSWORD).expect(200);
+    const ok = await b.signIn(` ${ADMIN.toUpperCase()} `).expect(200);
     expect(ok.body.user).toMatchObject({ email: ADMIN, roles: ['CampaignAdmin'], employeeCode: 'TST0026' });
     await b.get('/api/campaigns/mine').expect(200);
-    expect((await audits('auth.signin')).map((a) => a.details)).toEqual([{ email: ADMIN, mode: 'email-demo', admin: true }]);
-    // a staff address cannot become an admin by sending a password
-    const s = await browser();
-    expect((await s.signIn('sam@namra.org.na', PASSWORD).expect(200)).body.user.roles).toEqual([]);
+    const g = await browser();
+    expect((await g.signIn(GMAIL).expect(200)).body.user).toMatchObject({ email: GMAIL, roles: ['CampaignAdmin'], employeeCode: 'TST0027' });
+    await g.get('/api/campaigns/mine').expect(200);
+    expect((await audits('auth.signin')).map((a) => a.details)).toEqual([{ email: ADMIN, mode: 'email-demo', admin: true }, { email: GMAIL, mode: 'email-demo', admin: true }]);
+    expect(await audits('auth.signin_failed')).toEqual([]);
+  });
+
+  it('a password is not part of the sign-in any more: sending one is refused as an unknown field, and gives nobody admin rights', async () => {
+    const b = await browser();
+    await b.post('/api/email-login').send({ email: 'sam@namra.org.na', password: 'anything' }).expect(400);
+    expect((await b.get('/api/session')).body.user).toBeNull();
+    expect((await b.signIn('sam@namra.org.na').expect(200)).body.user.roles).toEqual([]);   // staff stay staff
   });
 
   it('an address that already has an account (e.g. from Microsoft sign-in) keeps that account id and its campaigns', async () => {
@@ -91,7 +93,7 @@ describe('email-demo sign-in', () => {
     await ownerDb().query('INSERT INTO users (entra_oid, email, display_name) VALUES ($1, $2, $3)', [entraOid, ADMIN, 'Lenton (Microsoft)']);
     await ownerDb().query("INSERT INTO campaigns (share_token, created_by, title) VALUES ($1, $2, 'Made with Microsoft sign-in')", ['y'.repeat(32), entraOid]);
     const b = await browser();
-    expect((await b.signIn(ADMIN, PASSWORD).expect(200)).body.user.oid).toBe(entraOid);
+    expect((await b.signIn(ADMIN).expect(200)).body.user.oid).toBe(entraOid);
     expect((await b.get('/api/campaigns/mine').expect(200)).body.campaigns.map((c: { title: string }) => c.title)).toEqual(['Made with Microsoft sign-in']);
     expect((await ownerDb().query('SELECT count(*)::int n FROM users WHERE email = $1', [ADMIN])).rows[0].n).toBe(1);
   });
@@ -125,13 +127,13 @@ describe('email-demo sign-in', () => {
 });
 
 describe('email-demo is refused where it does not belong', () => {
-  const base = { SESSION_SECRET: 'x'.repeat(40), DATABASE_URL: 'postgres://x@localhost/x', AUTH_MODE: 'email-demo', ADMIN_DEMO_PASSWORD: 'p'.repeat(16) };
+  const base = { SESSION_SECRET: 'x'.repeat(40), DATABASE_URL: 'postgres://x@localhost/x', AUTH_MODE: 'email-demo' };
   it('in production without DEMO=true', () => {
     expect(() => parseConfig({ ...base, NODE_ENV: 'production' })).toThrow(/email-demo.*DEMO=true/);
     expect(parseConfig({ ...base, NODE_ENV: 'production', DEMO: 'true' }).authMode).toBe('email-demo');
   });
-  it('without an admin password of at least 12 characters', () => {
-    expect(() => parseConfig({ ...base, ADMIN_DEMO_PASSWORD: undefined })).toThrow(/ADMIN_DEMO_PASSWORD/);
-    expect(() => parseConfig({ ...base, ADMIN_DEMO_PASSWORD: 'short' })).toThrow(/ADMIN_DEMO_PASSWORD/);
+  it('starts without any admin password (there is none any more)', () => {
+    expect(parseConfig({ ...base }).authMode).toBe('email-demo');
+    expect(parseConfig({ ...base, NODE_ENV: 'production', DEMO: 'true' })).not.toHaveProperty('adminDemoPassword');
   });
 });

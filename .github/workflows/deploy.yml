@@ -64,7 +64,6 @@ jobs:
       ENTRA_CLIENT_SECRET: ${{ secrets.ENTRA_CLIENT_SECRET }}
       CF_ACCESS_AUD: ${{ secrets.CF_ACCESS_AUD }}
       DEMO_USERS: ${{ secrets.DEMO_USERS }}
-      ADMIN_DEMO_PASSWORD: ${{ secrets.ADMIN_DEMO_PASSWORD }}
       SESSION_SECRET_PREVIOUS: ${{ secrets.SESSION_SECRET_PREVIOUS }}
       CSRF_SECRET: ${{ secrets.CSRF_SECRET }}
     steps:
