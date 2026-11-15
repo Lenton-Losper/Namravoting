@@ -12,18 +12,16 @@ export const testHooks: { afterCampaignRead?: () => Promise<void> } = {};
 
 export const notMemberMessage = 'This vote is for Umoja members only';
 
-/** Unambiguous characters only: no 0/O, 1/I/L. 31 symbols, 8 of them: about 8.5 x 10^11 codes. */
+/** 32 symbols: the digits 2-9 and the letters A-Z without I and O (no 0/O or 1/I mix-ups). 32 is a power of two, so a random byte maps onto it without bias. */
 export const RECEIPT_ALPHABET = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
 /**
  * A receipt code such as UV-7K3M-Q9TD, from crypto randomness ONLY: nothing about the vote (candidate, position, time, voter) goes in,
  * so it can never be traced back to a choice. It is stored on the receipt row (which has no candidate) and never logged or audited.
+ * 8 symbols from 32: about 1.1 x 10^12 codes. Matches the CHECK on vote_receipts.receipt_code (migration 020).
  */
 export function newReceiptCode(): string {
-  const out: string[] = [];
-  while (out.length < 8) {
-    const b = crypto.randomBytes(16);
-    for (const x of b) { if (x < 248 && out.length < 8) out.push(RECEIPT_ALPHABET[x % 31]); }   // 248 = 8 x 31: no modulo bias
-  }
+  const b = crypto.randomBytes(8);
+  const out = Array.from(b, (x) => RECEIPT_ALPHABET[x & 31]);   // 256 / 32 = 8 whole turns: every symbol is equally likely
   return `UV-${out.slice(0, 4).join('')}-${out.slice(4).join('')}`;
 }
 
@@ -113,7 +111,7 @@ export async function castVote(voterOid: string, voterEmail: string, shareToken:
       break;
     } catch (e) {
       const code = (e as { code?: string }).code;
-      // A clash on the random receipt code (about 1 in 10^11 per vote): try again with a new code. Any other duplicate is a second vote.
+      // A clash on the random receipt code (about 1 in 10^12 per vote): try again with a new code. Any other duplicate is a second vote.
       if (code === UNIQUE_VIOLATION && (e as { constraint?: string }).constraint === 'vote_receipts_receipt_code_key' && attempt < 3) continue;
       if (code === UNIQUE_VIOLATION) throw new HttpError(409, 'You have already voted', 'already_voted');
       if (code === SERIALIZATION_FAILURE || code === DEADLOCK) {

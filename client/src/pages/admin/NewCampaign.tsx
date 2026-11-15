@@ -11,6 +11,7 @@ export function NewCampaign() {
   const [description, setDescription] = useState('');
   const [opens, setOpens] = useState('');
   const [closes, setCloses] = useState('');
+  const [release, setRelease] = useState('');
   const [eligibility, setEligibility] = useState<EligMode>('umoja');
   const [emailText, setEmailText] = useState('');
   const [allowEdits, setAllowEdits] = useState(false);
@@ -26,7 +27,7 @@ export function NewCampaign() {
     try {
       // The mode chosen here is saved WITH the campaign (it used to be chosen only on the next screen and had to be saved separately).
       const c = await api<Campaign>('POST', '/api/campaigns', {
-        title, description: description || null, opens_at: fromLocalInput(opens), closes_at: fromLocalInput(closes),
+        title, description: description || null, opens_at: fromLocalInput(opens), closes_at: fromLocalInput(closes), results_release_at: fromLocalInput(release),
         eligibility, ...(eligibility === 'list' ? { emails } : {}), allow_edits_after_start: allowEdits, allow_abstain: allowAbstain, require_approval: needApproval, ...(eligibility !== 'all' && quorum ? { quorum_percent: Number(quorum) } : {}),
       });
       nav(`/admin/c/${c.id}/edit`);
@@ -54,6 +55,8 @@ export function NewCampaign() {
               <input type="datetime-local" value={opens} onChange={(e) => setOpens(e.target.value)} /></label>
             <label>Closes at <span className="field-helper">Optional. Windhoek time (CAT). Closes automatically at this time.</span>
               <input type="datetime-local" value={closes} onChange={(e) => setCloses(e.target.value)} /></label>
+            <label>Results will be shared on <span className="field-helper">Optional. Windhoek time (CAT). Display only: voters see it on their receipt. Publishing results stays manual.</span>
+              <input type="datetime-local" value={release} onChange={(e) => setRelease(e.target.value)} /></label>
           </div>
         </section>
         <section className="form-section">

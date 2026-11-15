@@ -79,10 +79,10 @@ function ReceiptCode({ code }: { code: string | null | undefined }) {
   );
 }
 
-/** A round photo, or initials when there is none. */
+/** A round photo, or initials when there is none. Decorative (alt=""): the candidate's name is always written next to it, so a screen reader would read it twice. */
 function Avatar({ url, name, size }: { url: string | null; name: string; size: 'sm' | 'md' | 'lg' | 'xl' }) {
   return url
-    ? <img className={`avatar avatar-${size}`} src={url} alt={`Photo of ${name}`} />
+    ? <img className={`avatar avatar-${size}`} src={url} alt="" />
     : <span className={`avatar avatar-${size} avatar-empty`} aria-hidden="true">{initials(name)}</span>;
 }
 

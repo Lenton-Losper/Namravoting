@@ -38,6 +38,9 @@ describe('text contrast (AA: 4.5:1)', () => {
     ['white text on the navy bar and primary buttons', white, token('navy')],
     ['white text on a hovered primary button', white, token('navy-text')],
     ['secondary button text on white', token('navy'), white],
+    ['ballot step label (orange text) on the page', token('orange-text'), token('bg')],
+    ['confirm warning text on white', '#9B1C1C', white],
+    ['navy link text on the muted surface (statement link hover)', token('navy'), token('surface-muted')],
     ['operator banner text', '#78350f', '#fffbeb'],
     ['operator danger banner text', '#7f1d1d', '#fef2f2'],
   ];
@@ -50,6 +53,12 @@ describe('non-text contrast (AA: 3:1)', () => {
     const rule = /\binput, textarea, select \{[^}]*\}/.exec(css)![0];
     expect(rule).toMatch(/border: 1px solid var\(--muted\)/);
   });
+  it('the ballot card, radio and filter border (#8A94A3) against the page, and against the muted surface of a withdrawn card', () => {
+    expect(ratio(token('ballot-border'), token('bg'))).toBeGreaterThanOrEqual(UI);
+    expect(ratio(token('ballot-border'), token('surface-muted'))).toBeGreaterThanOrEqual(UI - 0.3);
+  });
+  it('a selected card: the navy border against the page', () => { expect(ratio(token('navy'), token('bg'))).toBeGreaterThanOrEqual(UI); });
+  it('the success icon against its tint on the receipt screen', () => { expect(ratio(token('success'), '#E6F4EA')).toBeGreaterThanOrEqual(UI); });
   it('the keyboard focus outline against white and against the navy bar', () => {
     const rule = /:focus-visible \{ outline: 2px solid (var\(--[a-z-]+\)|#[0-9a-fA-F]+)/.exec(css)!;
     const colour = rule[1].startsWith('var(') ? token(rule[1].slice(6, -1)) : rule[1];

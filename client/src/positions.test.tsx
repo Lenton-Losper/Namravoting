@@ -44,88 +44,99 @@ const app = (path: string) => render(<MemoryRouter initialEntries={[path]}><Auth
 // ---- voter ------------------------------------------------------------------------------------------------------------------------
 
 const REGIONS = [{ id: 'r1', name: 'Erongo' }, { id: 'r2', name: 'Khomas' }, { id: 'r3', name: 'Zambezi' }];
-const block = (i: number, title: string, voted: boolean, candidateCount = 3) => ({ id: PID[i], title, description: null, seats: 1, voted, candidateCount });
-const campaignInfo = (voted: boolean[]) => ({
-  title: 'Umoja Committee 2026', description: 'Elect your committee', opensAt: null, closesAt: '2030-01-01T10:00:00Z', resultsPublished: false, voterState: voted.every(Boolean) ? 'already_voted' : 'can_vote',
+const block = (i: number, title: string, voted: boolean, candidateCount = 3, receiptCode: string | null = null) => ({ id: PID[i], title, description: null, seats: 1, voted, candidateCount, receiptCode });
+const campaignInfo = (voted: boolean[], over: Record<string, unknown> = {}) => ({
+  title: 'Umoja Committee 2026', description: 'Elect your committee', opensAt: null, closesAt: '2030-01-01T10:00:00Z', resultsReleaseAt: '2030-01-05T08:00:00Z', groupByRegion: false, resultsPublished: false, voterState: voted.every(Boolean) ? 'already_voted' : 'can_vote',
   notices: [], candidates: [], regions: REGIONS, progress: { voted: voted.filter(Boolean).length, total: voted.length },
-  positions: [block(0, 'Press Secretary', voted[0]), block(1, 'Finance Officer', voted[1], 2), block(2, 'Treasurer', voted[2], 2)],
+  positions: [block(0, 'Press Secretary', voted[0], 3, voted[0] ? 'UV-AB23-CD45' : null), block(1, 'Finance Officer', voted[1], 2), block(2, 'Treasurer', voted[2], 2)], ...over,
 });
-const cand = (id: string, name: string, regionId: string | null, region: string | null, extra: Record<string, unknown> = {}) => ({ id, name, bio: `${name} bio`, photoUrl: null, isAbstain: false, withdrawn: false, positionId: PID[0], regionId, region, ...extra });
-const ballot = (extra: Record<string, unknown>[] = []) => ({
-  position: { id: PID[0], title: 'Press Secretary', description: null }, campaign: { title: 'Umoja Committee 2026', closesAt: null }, voterState: 'can_vote', regions: REGIONS, progress: { voted: 0, total: 3 },
-  candidates: [cand('c1', 'Alice', 'r2', 'Khomas'), cand('c2', 'Bob', 'r1', 'Erongo'), cand('c3', 'Chipo', 'r3', 'Zambezi'), cand('c4', 'Dan', 'r2', 'Khomas'), ...extra],
+const cand = (id: string, name: string, regionId: string | null, region: string | null, extra: Record<string, unknown> = {}) => ({ id, name, bio: `${name} bio`, pledge: null, photoUrl: null, isAbstain: false, withdrawn: false, positionId: PID[0], regionId, region, ...extra });
+const ballot = (extra: Record<string, unknown>[] = [], over: Record<string, unknown> = {}) => ({
+  position: { id: PID[0], title: 'Press Secretary', description: null }, campaign: { title: 'Umoja Committee 2026', closesAt: null }, groupByRegion: false, voterState: 'can_vote', regions: REGIONS, progress: { voted: 0, total: 3 },
+  candidates: [cand('c1', 'Alice', 'r2', 'Khomas'), cand('c2', 'Bob', 'r1', 'Erongo'), cand('c3', 'Chipo', 'r3', 'Zambezi'), cand('c4', 'Dan', 'r2', 'Khomas'), ...extra], ...over,
 });
-const names = () => screen.getAllByRole('radio').map((r) => r.querySelector('strong')?.textContent);
+/** The names on the ballot's choices in page order: the candidate cards, then the abstain line. */
+const names = () => [...document.querySelectorAll('.ballot-card-main, .abstain-option')].map((b) => b.querySelector('strong')?.textContent);
 const vote = (path = `/v/${TOKEN}`) => render(<MemoryRouter initialEntries={[path]}><Routes><Route path="/v/:shareToken" element={<VotePage />} /></Routes></MemoryRouter>);
 
-describe('the voter\'s campaign page', () => {
-  it('shows a block per position and the progress, greys out a done block with a "Voted" tick, and never opens it again', async () => {
+describe("the voter's campaign page", () => {
+  it('shows a block per position and the progress, greys out a done block with a "Voted" tick and its receipt, and never opens it again', async () => {
     table[`GET /api/vote/${TOKEN}`] = campaignInfo([true, false, false]);
     const user = userEvent.setup();
     vote();
-    expect(await screen.findByRole('heading', { name: 'Umoja Committee 2026' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: 'Choose a position to vote in' })).toBeTruthy();
+    expect(screen.getByText('Umoja Committee 2026')).toBeTruthy();
     expect(screen.getByText(/1 of 3/).parentElement?.textContent).toBe('1 of 3 positions voted');
     const grid = screen.getByRole('list', { name: 'Positions' });
     const blocks = within(grid).getAllByRole('button');
-    expect(blocks.map((b) => b.getAttribute('aria-label'))).toEqual(['Press Secretary: voted', 'Finance Officer: 2 candidates, not voted yet', 'Treasurer: 2 candidates, not voted yet']);
+    expect(blocks.map((b) => b.getAttribute('aria-label'))).toEqual(['Press Secretary: voted, receipt UV-AB23-CD45', 'Finance Officer: 2 candidates, not voted yet', 'Treasurer: 2 candidates, not voted yet']);
     expect((blocks[0] as HTMLButtonElement).disabled).toBe(true);
     expect(blocks[0].textContent).toContain('Voted');
+    expect(blocks[0].textContent).toContain('Receipt UV-AB23-CD45');
     expect(blocks[0].className).toContain('position-voted');
     expect((blocks[1] as HTMLButtonElement).disabled).toBe(false);
     await user.click(blocks[0]);                                                                       // a greyed-out block does nothing
     expect(calls.some((c) => c.url.includes('/positions/'))).toBe(false);
   });
 
-  it('opens a position, filters by region, groups candidates by region and votes with one choice and a confirmation', async () => {
+  it('opens a position, votes with a choice, a confirmation sheet and a receipt, and comes back to the blocks with the block done', async () => {
     table[`GET /api/vote/${TOKEN}`] = campaignInfo([false, false, false]);
     table[`GET /api/vote/${TOKEN}/positions/p1`] = ballot([cand('ab', 'Abstain (none of the above)', null, null, { isAbstain: true })]);
+    table[`POST /api/vote/${TOKEN}/positions/p1`] = { recorded: true, receiptCode: 'UV-7K3M-Q9TD' };
+    const user = userEvent.setup();
+    vote();
+    await user.click(await screen.findByRole('button', { name: /Press Secretary/ }));
+    // 4 candidates: no region filter and no region headings; the abstain line comes last, apart from the candidates
+    await screen.findByRole('heading', { name: 'Press Secretary' });
+    expect(screen.queryByLabelText('Region')).toBeNull();
+    expect(names()).toEqual(['Alice', 'Bob', 'Chipo', 'Dan', 'Abstain']);
+    expect((screen.getByRole('button', { name: 'Review vote' }) as HTMLButtonElement).disabled).toBe(true);
+    await user.click(screen.getByRole('button', { name: /^Chipo/ }));
+    await user.click(screen.getByRole('button', { name: 'Review vote for Chipo' }));
+    const sheet = await screen.findByRole('dialog', { name: 'Confirm your vote' });
+    expect(within(sheet).getByText('Chipo')).toBeTruthy();
+    expect(within(sheet).getByText(/Once you submit, your vote can't be changed/)).toBeTruthy();
+    expect(calls.some((c) => c.method === 'POST' && c.url.includes('/positions/'))).toBe(false);       // nothing is sent before "Submit my vote"
+    table[`GET /api/vote/${TOKEN}`] = campaignInfo([true, false, false]);
+    await user.click(within(sheet).getByRole('button', { name: 'Submit my vote' }));
+    await waitFor(() => expect(calls.find((c) => c.method === 'POST')).toMatchObject({ url: `/api/vote/${TOKEN}/positions/p1`, body: { candidateId: 'c3' } }));
+    // the receipt: a code and the results date, and never the candidate
+    expect(await screen.findByRole('heading', { name: 'Your vote is in' })).toBeTruthy();
+    expect(screen.getByText('UV-7K3M-Q9TD')).toBeTruthy();
+    expect(screen.getByText(/Results will be shared on/)).toBeTruthy();
+    expect(screen.queryByText(/Chipo/)).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Done' }));
+    // back on the blocks, the block is done and the progress moved on
+    expect(await screen.findByRole('button', { name: 'Press Secretary: voted, receipt UV-AB23-CD45' })).toBeTruthy();
+    expect(screen.getByText(/1 of 3/)).toBeTruthy();
+  });
+
+  it('with many candidates, or when results are grouped by region, there is a region filter that only lists regions with candidates', async () => {
+    table[`GET /api/vote/${TOKEN}`] = campaignInfo([false, false, false]);
+    table[`GET /api/vote/${TOKEN}/positions/p1`] = ballot([cand('ab', 'Abstain (none of the above)', null, null, { isAbstain: true })], { groupByRegion: true });
     const user = userEvent.setup();
     vote();
     await user.click(await screen.findByRole('button', { name: /Press Secretary/ }));
     const select = await screen.findByLabelText('Region');
     expect(within(select).getAllByRole('option').map((o) => o.textContent)).toEqual(['All regions', 'Erongo', 'Khomas', 'Zambezi']);
-
     // grouped by region in the campaign's region order, with the abstain line last and outside any region
     const headings = screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent).filter((t) => /\(\d+\)/.test(t ?? ''));
     expect(headings).toEqual(['Erongo (1)', 'Khomas (2)', 'Zambezi (1)']);
-    expect(names()).toEqual(['Bob', 'Alice', 'Dan', 'Chipo', 'Abstain (none of the above)']);
+    expect(names()).toEqual(['Bob', 'Alice', 'Dan', 'Chipo', 'Abstain']);
     expect(screen.getByText('4 candidates')).toBeTruthy();
 
-    // filter: only Khomas candidates (and the abstain line, which belongs to no region)
+    // filter: only Khomas candidates (the abstain line belongs to no region)
     await user.selectOptions(select, 'r2');
-    expect(names()).toEqual(['Alice', 'Dan', 'Abstain (none of the above)']);
+    expect(names()).toEqual(['Alice', 'Dan', 'Abstain']);
     expect(screen.getByText('Showing 2 of 4 candidates')).toBeTruthy();
 
     // a choice hidden by the filter is dropped, so nobody confirms a candidate they cannot see
-    await user.click(screen.getAllByRole('radio')[0]);
-    expect(screen.getAllByRole('radio')[0].getAttribute('aria-checked')).toBe('true');
+    await user.click(screen.getByRole('button', { name: /^Alice/ }));
+    expect(screen.getByRole('button', { name: /^Alice/ }).getAttribute('aria-pressed')).toBe('true');
     await user.selectOptions(select, 'r3');
-    expect(screen.getAllByRole('radio').every((r) => r.getAttribute('aria-checked') === 'false')).toBe(true);
-    expect((screen.getByRole('button', { name: 'Cast vote' }) as HTMLButtonElement).disabled).toBe(true);
-
+    expect((screen.getByRole('button', { name: 'Review vote' }) as HTMLButtonElement).disabled).toBe(true);
     await user.selectOptions(select, '');
-    await user.click(screen.getByRole('radio', { name: /Chipo/ }));
-    await user.click(screen.getByRole('button', { name: 'Cast vote' }));
-    expect(await screen.findByRole('heading', { name: 'Vote for Chipo as Press Secretary?' })).toBeTruthy();
-    table[`GET /api/vote/${TOKEN}`] = campaignInfo([true, false, false]);
-    await user.click(screen.getByRole('button', { name: 'Confirm vote' }));
-    await waitFor(() => expect(calls.find((c) => c.method === 'POST')).toMatchObject({ url: `/api/vote/${TOKEN}/positions/p1`, body: { candidateId: 'c3' } }));
-    // back on the campaign page, the block is now done and the progress moved on
-    expect(await screen.findByText(/Your vote for Press Secretary was recorded/)).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Press Secretary: voted' })).toBeTruthy();
-    expect(screen.getByText(/1 of 3/)).toBeTruthy();
-  });
-
-  it('a region with no candidates says so, and "All regions" brings everyone back', async () => {
-    table[`GET /api/vote/${TOKEN}`] = campaignInfo([false, false, false]);
-    table[`GET /api/vote/${TOKEN}/positions/p1`] = { ...ballot(), candidates: [cand('c1', 'Alice', 'r2', 'Khomas'), cand('c2', 'Bob', 'r1', 'Erongo')] };
-    const user = userEvent.setup();
-    vote();
-    await user.click(await screen.findByRole('button', { name: /Press Secretary/ }));
-    await user.selectOptions(await screen.findByLabelText('Region'), 'r3');
-    expect(screen.getByText(/No candidates in this region/)).toBeTruthy();
-    await user.selectOptions(screen.getByLabelText('Region'), '');
-    expect(screen.getAllByRole('radio')).toHaveLength(2);
+    expect(names()).toEqual(['Bob', 'Alice', 'Dan', 'Chipo', 'Abstain']);
   });
 
   it('a 409 (already voted here, or closed) sends the voter back to the list instead of showing the ballot', async () => {
@@ -437,9 +448,9 @@ describe('the new screens have no axe violations (WCAG 2.1 A and AA, plus best p
     await screen.findByRole('list', { name: 'Positions' });
     expect(await audit(container)).toEqual([]);
     await user.click(screen.getByRole('button', { name: /Finance Officer/ }));
-    await user.click((await screen.findAllByRole('radio'))[0]);
+    await user.click((await screen.findAllByRole('button', { name: /^Alice/ }))[0]);
     expect(await audit(container)).toEqual([]);
-    await user.click(screen.getByRole('button', { name: 'Cast vote' }));
+    await user.click(screen.getByRole('button', { name: /^Review vote for/ }));
     await screen.findByRole('dialog');
     expect(await audit(container)).toEqual([]);
   });

@@ -381,7 +381,7 @@ describe('ballot secrecy (schema)', () => {
     const cols = await ownerDb().query("SELECT column_name FROM information_schema.columns WHERE table_name = 'tallies' ORDER BY column_name");
     expect(cols.rows.map((r) => r.column_name)).toEqual(['campaign_id', 'candidate_id', 'position_id', 'votes']);
     const receipts = await ownerDb().query("SELECT column_name FROM information_schema.columns WHERE table_name = 'vote_receipts' ORDER BY column_name");
-    expect(receipts.rows.map((r) => r.column_name)).toEqual(['campaign_id', 'member_key', 'position_id', 'voter_oid']);   // no candidate, no timestamp
+    expect(receipts.rows.map((r) => r.column_name)).toEqual(['campaign_id', 'member_key', 'position_id', 'receipt_code', 'voter_oid']);   // no candidate, no timestamp; the code is random (receiptCode.test.ts)
   });
 
   it('SEC-02 regression: no tally row shares its hidden xmin with any receipt (the old ballots/receipts join is dead)', async () => {

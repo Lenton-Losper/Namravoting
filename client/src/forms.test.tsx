@@ -190,7 +190,7 @@ describe('editing after start', () => {
     expect(await screen.findByText('campaign page')).toBeTruthy();
   });
 
-  it('saving details on a live campaign sends only title, description and closing time', async () => {
+  it('saving details on a live campaign sends only title, description, closing time and results date', async () => {
     routes[`GET /api/campaigns/${ID}`] = live();
     const user = userEvent.setup();
     render(<MemoryRouter initialEntries={[`/admin/c/${ID}/edit`]}><Routes><Route path="/admin/c/:id/edit" element={<EditCampaign />} /></Routes></MemoryRouter>);
@@ -200,7 +200,7 @@ describe('editing after start', () => {
     await user.click(screen.getByRole('button', { name: 'Save details' }));
     await waitFor(() => expect(calls.some((c) => c.method === 'PATCH')).toBe(true));
     const body = calls.find((c) => c.method === 'PATCH')!.body as Record<string, unknown>;
-    expect(Object.keys(body).sort()).toEqual(['closes_at', 'description', 'title']);
+    expect(Object.keys(body).sort()).toEqual(['closes_at', 'description', 'results_release_at', 'title']);
     expect(body.title).toBe('Renamed vote');
   });
 

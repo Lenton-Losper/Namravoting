@@ -237,7 +237,7 @@ describe('one vote per position per member, even in a race', () => {
 describe('secrecy across positions', () => {
   it('no table links a member to a candidate: receipts hold no candidate and no time, counters hold no member', async () => {
     const cols = async (t: string) => (await ownerDb().query("SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = $1 ORDER BY column_name", [t])).rows.map((r) => r.column_name as string);
-    expect(await cols('vote_receipts')).toEqual(['campaign_id', 'member_key', 'position_id', 'voter_oid']);
+    expect(await cols('vote_receipts')).toEqual(['campaign_id', 'member_key', 'position_id', 'receipt_code', 'voter_oid']);   // receipt_code: random, names no candidate (receiptCode.test.ts)
     expect(await cols('tallies')).toEqual(['campaign_id', 'candidate_id', 'position_id', 'votes']);
     // every table that has a candidate column must have no column that names a member or account
     const withCandidate = (await ownerDb().query("SELECT DISTINCT table_name FROM information_schema.columns WHERE table_schema = 'public' AND column_name = 'candidate_id'")).rows.map((r) => r.table_name as string);
