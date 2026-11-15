@@ -1,5 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
-import { toContainerRequest } from './forward';
+import { envFingerprint, toContainerRequest } from './forward';
 
 /**
  * Routes every request to ONE container instance running the Express app (max_instances: 1, because the app's
@@ -39,6 +39,8 @@ export class NamraContainer extends DurableObject<Env> {
   private lastTouch = 0;
 
   private starting: Promise<void> | null = null;
+  /** The settings fingerprint this Durable Object has confirmed the running container was started with (see envFingerprint). */
+  private confirmedFingerprint: string | null = null;
 
   /**
    * Starts the container if needed and waits until the app answers (any HTTP status counts as "up").
@@ -57,14 +59,26 @@ export class NamraContainer extends DurableObject<Env> {
     const env: Record<string, string> = { PORT: String(PORT) };
     for (const k of CONTAINER_ENV_KEYS) { const v = (this.env as unknown as Record<string, string | undefined>)[k]; if (v) env[k] = v; }
     const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    const fingerprint = await envFingerprint(env);
+    if (this.confirmedFingerprint !== fingerprint) {
+      // A container that is running with OTHER settings (a rollout kept the old ones, or the settings changed since it started) is
+      // stopped first, so it starts again with the Worker's current vars and secrets.
+      const startedWith = await this.ctx.storage.get<string>('containerEnvFingerprint');
+      if (c.running && startedWith !== fingerprint) {
+        console.log('container settings changed since it started: restarting it');
+        try { await c.destroy(); } catch (e) { logError('container destroy() for a settings change failed', e); }
+        for (let i = 0; i < 20 && c.running; i++) await sleep(500);
+      }
+    }
     const t0 = Date.now();
     let recycled = false;
     let last: unknown;
     while (Date.now() - t0 < START_BUDGET_MS) {
       if (!c.running) {
         try { c.start({ env, enableInternet: true }); } catch (e) { last = e; logError('container start() failed, retrying', e); await sleep(2000); continue; }
+        await this.ctx.storage.put('containerEnvFingerprint', fingerprint);
       }
-      try { await c.getTcpPort(PORT).fetch('http://container/__ready'); return; } catch (e) { last = e; }
+      try { await c.getTcpPort(PORT).fetch('http://container/__ready'); this.confirmedFingerprint = fingerprint; return; } catch (e) { last = e; }
       if (!recycled && Date.now() - t0 > RECYCLE_AFTER_MS && c.running) {
         recycled = true;
         logError('container running but not answering; recycling', last);

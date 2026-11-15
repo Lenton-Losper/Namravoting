@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { toContainerRequest } from '../../../worker/src/forward.js';
+import { envFingerprint, toContainerRequest } from '../../../worker/src/forward.js';
 import { describeConfigError, parseConfig } from '../../src/config.js';
 
 describe('toContainerRequest', () => {
@@ -41,5 +41,19 @@ describe('describeConfigError', () => {
     expect(msg).toMatch(/SESSION_SECRET/);
     expect(msg).toMatch(/DATABASE_URL/);
     expect(msg).not.toMatch(/short-secret-value/);
+  });
+});
+
+describe('envFingerprint (the Worker restarts the container when its settings changed)', () => {
+  it('is stable for the same settings in any order, and changes when any value changes, including AUTH_MODE or a secret', async () => {
+    const a = await envFingerprint({ AUTH_MODE: 'entra', CF_ACCESS_AUD: 'old', PORT: '8080' });
+    expect(a).toMatch(/^[0-9a-f]{64}$/);
+    expect(await envFingerprint({ PORT: '8080', CF_ACCESS_AUD: 'old', AUTH_MODE: 'entra' })).toBe(a);
+    expect(await envFingerprint({ AUTH_MODE: 'demo', CF_ACCESS_AUD: 'old', PORT: '8080' })).not.toBe(a);
+    expect(await envFingerprint({ AUTH_MODE: 'entra', CF_ACCESS_AUD: 'new', PORT: '8080' })).not.toBe(a);
+    expect(await envFingerprint({ AUTH_MODE: 'entra', CF_ACCESS_AUD: 'old', PORT: '8080', DEMO_USERS: '{}' })).not.toBe(a);
+  });
+  it('never contains the values themselves', async () => {
+    expect(await envFingerprint({ SESSION_SECRET: 'super-secret-value' })).not.toContain('super-secret');
   });
 });
