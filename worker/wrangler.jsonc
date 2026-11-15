@@ -25,7 +25,7 @@
   // Non-secret configuration.
   "vars": {
     "NODE_ENV": "production",
-    "AUTH_MODE": "entra",
+    "AUTH_MODE": "demo",          // TEMPORARY (demo-fallback): the Entra client secret expired; switch back per docs/operations.md
     "STORAGE": "r2",
     "R2_BUCKET": "namra-voting-photos",
     "PUBLIC_BASE_URL": "https://namra-voting-demo.llosperofficial.workers.dev",

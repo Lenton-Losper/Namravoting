@@ -46,6 +46,16 @@ async function syncUser(u: AuthUser): Promise<void> {
     [u.oid, u.email, u.displayName, u.employeeCode]);
 }
 
+/**
+ * TEMPORARY FALLBACK (demo-fallback branch): someone who already has an account under this email (for example a Microsoft account from
+ * AUTH_MODE=entra) keeps THAT account id. Without this the new v5 id would collide with the existing row's unique email, and the person
+ * would lose sight of the campaigns they created. A brand-new email still gets its deterministic v5 id.
+ */
+async function resolveUser(u: AuthUser): Promise<AuthUser> {
+  const row = (await getPool().query('SELECT entra_oid FROM users WHERE lower(email) = $1 ORDER BY created_at LIMIT 1', [u.email])).rows[0];
+  return row ? { ...u, oid: row.entra_oid as string } : u;
+}
+
 type WithDemoUser = Request & { demoUser?: AuthUser };
 
 export function getCurrentUser(req: Request): AuthUser | null {
@@ -57,8 +67,8 @@ export function mount(app: Express, config: Config): void {
   app.use('/api', (req: Request, res: Response, next: NextFunction) => {
     const email = res.locals.accessEmail as string | null | undefined;
     if (!email) { next(); return; }   // identity-less token (e.g. a service token): signed out, protected routes answer 401
-    const user = demoUserFor(email, config.demoUsers);
-    syncUser(user).then(() => ensureDemoSession(req, config, user)).then(() => { (req as WithDemoUser).demoUser = user; next(); }, next);
+    resolveUser(demoUserFor(email, config.demoUsers))
+      .then(async (user) => { await syncUser(user); await ensureDemoSession(req, config, user); (req as WithDemoUser).demoUser = user; next(); }, next);
   });
   // Access owns sign-out (/cdn-cgi/access/logout); the app has no session to clear.
   app.post('/api/logout', (_req, res) => { res.status(204).end(); });

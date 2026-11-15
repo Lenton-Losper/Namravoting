@@ -30,8 +30,8 @@ jobs:
         env:
           CONFIRM: ${{ inputs.confirm }}
         run: |
-          # ONE-OFF: this branch exists only to deploy the pre-Part-B hotfix (5440201 + hide Verify panel). Never merged.
-          if [ "$GITHUB_REF" != "refs/heads/hotfix-hide-verify" ]; then echo "::error::This one-off workflow runs from hotfix-hide-verify only."; exit 1; fi
+          # ONE-OFF: this branch exists only to run the live (pre-Part-B) code in AUTH_MODE=demo while the Entra secret is expired. Never merged.
+          if [ "$GITHUB_REF" != "refs/heads/demo-fallback" ]; then echo "::error::This one-off workflow runs from demo-fallback only."; exit 1; fi
           if [ "$CONFIRM" != "DEPLOY" ]; then echo "::error::Type DEPLOY in the confirm box to run this."; exit 1; fi
       - name: CI must have passed on this exact commit
         env:
@@ -39,9 +39,6 @@ jobs:
           REPO: ${{ github.repository }}
           SHA: ${{ github.sha }}
         run: |
-          # ONE-OFF: the code is exactly the commit before this one (the hotfix commit, CI green); only this workflow file differs.
-          SHA=$(gh api "repos/$REPO/commits/$SHA" --jq ".parents[0].sha")
-          echo "Checking CI on the parent commit $SHA"
           ok=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$SHA&per_page=50" \
             --jq '[.workflow_runs[] | select(.conclusion == "success")] | length')
           echo "Successful CI runs for $SHA: $ok"
@@ -66,6 +63,8 @@ jobs:
       R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
       R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
       ENTRA_CLIENT_SECRET: ${{ secrets.ENTRA_CLIENT_SECRET }}
+      CF_ACCESS_AUD: ${{ secrets.CF_ACCESS_AUD }}
+      DEMO_USERS: ${{ secrets.DEMO_USERS }}
       SESSION_SECRET_PREVIOUS: ${{ secrets.SESSION_SECRET_PREVIOUS }}
       CSRF_SECRET: ${{ secrets.CSRF_SECRET }}
     steps:
