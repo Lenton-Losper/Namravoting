@@ -89,7 +89,7 @@ deployed: the live code is still the pre-Part-B code (database at migration 012)
 |---|---|
 | Code | branch `demo-fallback` (`82c0918`): the previous live commit `fdf5c98` plus one change. In demo mode an email that already has an account keeps that account id, so Lenton keeps his Microsoft account `87a4af90…`, his campaigns and his admin view. The branch is never merged. |
 | Worker | `AUTH_MODE=demo`; secrets `CF_ACCESS_AUD` (the new Access app) and `DEMO_USERS`. `ENTRA_CLIENT_SECRET` and the other Entra vars are still on the Worker; they are ignored in demo mode. |
-| Access app | "NamRA Voting demo (temporary: Entra secret expired)", id `809832ef-39c7-436a-b1f3-57bef669fd94`, on `namra-voting-demo.llosperofficial.workers.dev`. Allows emails ending `@namra.org.na` plus `llosperofficial@gmail.com`, one-time PIN only, 24 h session. Team domain `yellow-flower-4592.cloudflareaccess.com`. |
+| Access app | "NamRA Voting demo (temporary: Entra secret expired)", id `809832ef-39c7-436a-b1f3-57bef669fd94`, on `namra-voting-demo.llosperofficial.workers.dev`. Allows emails ending `@namra.org.na` plus `llosperofficial@gmail.com`, one-time PIN only, 1-month (730 h) session, so the email code is needed once per device per month. Team domain `yellow-flower-4592.cloudflareaccess.com`. |
 | People | `DEMO_USERS`: `lenton.losper@namra.org.na` and `llosperofficial@gmail.com` are admins and active members, with the test codes `TST0026` and `TST0027` (separate codes, so they are two voters). Anyone else Access lets in is plain staff with no employee code. |
 | Rollback point | Neon branch `pre-deploy-2026-11-15T00-11-33-demofb-82c0918` (`br-raspy-dawn-ba4iwcpi`), taken just before the switch. |
 
