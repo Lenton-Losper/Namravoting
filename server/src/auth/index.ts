@@ -8,6 +8,7 @@ import type { Express, Request, RequestHandler } from 'express';
 import { getConfig, type Config } from '../config.js';
 import * as devAuth from './devAuth.js';
 import * as demoAuth from './demoAuth.js';
+import * as emailDemoAuth from './emailDemoAuth.js';
 import { mountEntra, type EntraOptions } from './entra.js';
 import { endSession, sessionUser } from './sessions.js';
 import { adminNotices } from './notices.js';
@@ -27,6 +28,9 @@ export function mountAuth(app: Express, config: Config, entraOptions: EntraOptio
   if (config.authMode === 'dev') {
     // Identity picker + POST /api/dev/login. Refused in production by the config guard.
     devAuth.mount(app, config);
+  } else if (config.authMode === 'email-demo') {
+    // DEMO ONLY: sign-in by typed email (+ ADMIN_DEMO_PASSWORD for admins), ordinary server-side sessions.
+    emailDemoAuth.mount(app, config);
   } else if (config.authMode === 'demo') {
     // Identity comes from the verified Cloudflare Access JWT. No picker, no /api/dev/* routes.
     demoAuth.mount(app, config);

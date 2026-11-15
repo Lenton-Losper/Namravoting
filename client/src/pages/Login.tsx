@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api, navigation, resetCsrf, SESSION_EXPIRED_MESSAGE, type User } from '../api';
 import { useAuth } from '../auth';
@@ -14,6 +14,7 @@ export function LoginPage() {
   const { authMode, loading } = useAuth();
   if (loading) return <Spinner />;
   if (authMode === 'entra') return <MicrosoftSignIn />;
+  if (authMode === 'email-demo') return <EmailSignIn />;
   return authMode === 'demo' ? <AccessSignIn /> : <DevPicker />;
 }
 
@@ -77,6 +78,61 @@ function AccessSignIn() {
       <p className="note" role="status">Your Cloudflare Access sign-in was not found or has ended.</p>
       <a className="btn btn-primary" href={ACCESS_LOGIN}>Sign in with your email code</a>
     </div></main>
+  );
+}
+
+/**
+ * DEMO ONLY (AUTH_MODE=email-demo): one email field and a Sign in button. No code is sent. Admin accounts are asked for the demo admin
+ * password as well (the server says so; the list of admin addresses is never sent to the browser).
+ */
+function EmailSignIn() {
+  const { user, isAdmin, refresh } = useAuth();
+  const nav = useNavigate();
+  const [params] = useSearchParams();
+  const safeNext = validateNext(params.get('next'));
+  const expired = params.get('expired') === '1';
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [needPassword, setNeedPassword] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => { if (user) nav(safeNext ?? (isAdmin ? '/admin' : '/votes'), { replace: true }); }, [user, isAdmin, safeNext, nav]);
+
+  async function submit(e: FormEvent) {
+    e.preventDefault(); setBusy(true); setError(null);
+    try {
+      const r = await api<{ user: User }>('POST', '/api/email-login', needPassword ? { email, password } : { email });
+      resetCsrf();                                  // the CSRF token is bound to the session: fetch a new one
+      await refresh();
+      nav(safeNext ?? (r.user.roles.includes('CampaignAdmin') ? '/admin' : '/votes'), { replace: true });
+    } catch (err) {
+      const code = (err as { code?: string }).code;
+      if (code === 'password_required') { setNeedPassword(true); setError(null); }
+      else setError((err as Error).message);
+    } finally { setBusy(false); }
+  }
+
+  if (user) return <Spinner label="Signing you in…" />;
+  return (
+    <main className="login-page">
+      <form className="card card-accent login-card stack" onSubmit={(e) => void submit(e)}>
+        <div className="login-brand"><Wordmark dark /></div>
+        <h1>Sign in</h1>
+        {expired && <p className="note" role="status">Your session ended. Please sign in again.</p>}
+        <label>Email address
+          <input type="email" value={email} onChange={(e) => { setEmail(e.target.value); setNeedPassword(false); setPassword(''); }}
+            autoComplete="email" inputMode="email" required maxLength={254} placeholder="name@namra.org.na" />
+        </label>
+        {needPassword && (
+          <label>Demo admin password
+            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" required autoFocus maxLength={200} />
+          </label>
+        )}
+        <ErrorBox message={error} />
+        <button className="btn btn-primary" disabled={busy || !email.trim() || (needPassword && !password)}>{busy ? 'Signing in…' : 'Sign in'}</button>
+        <p className="muted small demo-note">Demo sign-in: no code is sent. Use your @namra.org.na email address.</p>
+      </form>
+    </main>
   );
 }
 
