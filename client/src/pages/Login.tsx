@@ -54,16 +54,28 @@ function MicrosoftSignIn() {
   );
 }
 
+/**
+ * Demo (Cloudflare Access): never a button. Cloudflare Access has already checked the email code before this page could load, so the
+ * identity is read again from the server (after a 401 the signed-in user was cleared) and the browser goes straight on to the safe
+ * `next` path, or /admin for admins and /votes for everyone else. Only if Access really sent no identity is there a link: to the
+ * Access sign-in, never to Microsoft.
+ */
+export const ACCESS_LOGIN = '/cdn-cgi/access/login';
 function AccessSignIn() {
   const { user, isAdmin, refresh } = useAuth();
   const nav = useNavigate();
   const [params] = useSearchParams();
   const safeNext = validateNext(params.get('next'));
+  const [checked, setChecked] = useState(false);
+  useEffect(() => { let alive = true; void refresh().finally(() => { if (alive) setChecked(true); }); return () => { alive = false; }; }, [refresh]);
   useEffect(() => { if (user) nav(safeNext ?? (isAdmin ? '/admin' : '/votes'), { replace: true }); }, [user, isAdmin, safeNext, nav]);
-  if (user) return <Spinner label="Signing you in…" />;
+  if (user || !checked) return <Spinner label="Signing you in…" />;
   return (
     <main className="login-page"><div className="card card-accent login-card">
-      <ErrorBox message="We couldn't read your sign-in from Cloudflare Access." onRetry={() => void refresh()} />
+      <div className="login-brand"><Wordmark dark /></div>
+      <h1>Sign in</h1>
+      <p className="note" role="status">Your Cloudflare Access sign-in was not found or has ended.</p>
+      <a className="btn btn-primary" href={ACCESS_LOGIN}>Sign in with your email code</a>
     </div></main>
   );
 }

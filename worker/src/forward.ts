@@ -23,3 +23,15 @@ export function toContainerRequest(request: Request): Request {
   if (client) headers.set('x-forwarded-for', client);
   return new Request(url.toString(), new Request(request, { headers, redirect: 'manual' }));
 }
+
+/**
+ * A fingerprint of the settings a container is started with (SHA-256 over the sorted KEY=value pairs; the values never leave this
+ * function). The Worker stores it when it starts the container and compares it on the next request: when Cloudflare rolls a new image
+ * onto a RUNNING container it keeps the old start settings, so a change of AUTH_MODE or a secret would otherwise not take effect until
+ * the container happened to stop.
+ */
+export async function envFingerprint(env: Record<string, string>): Promise<string> {
+  const text = Object.keys(env).sort().map((k) => `${k}=${env[k]}`).join('\n');
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
