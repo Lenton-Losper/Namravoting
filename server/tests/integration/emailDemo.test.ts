@@ -24,11 +24,15 @@ async function browser(addr = `203.0.113.${++ip}`) {
   const h = (r: request.Test) => r.set('cf-connecting-ip', addr);
   let csrf = (await h(agent.get('/api/csrf'))).body.token as string;
   return {
-    signIn: async (email: string, password?: string) => {
-      const r = await h(agent.post('/api/email-login').set('x-csrf-token', csrf)).send(password === undefined ? { email } : { email, password });
-      if (r.status === 200) csrf = (await h(agent.get('/api/csrf'))).body.token as string;   // the token is bound to the new session
-      return r;
-    },
+    /** Signs in and checks the status: `await b.signIn(email).expect(200)`. */
+    signIn: (email: string, password?: string) => ({
+      expect: async (status: number) => {
+        const r = await h(agent.post('/api/email-login').set('x-csrf-token', csrf)).send(password === undefined ? { email } : { email, password });
+        expect(r.status, JSON.stringify(r.body)).toBe(status);
+        if (r.status === 200) csrf = (await h(agent.get('/api/csrf'))).body.token as string;   // the token is bound to the new session
+        return r;
+      },
+    }),
     get: (u: string) => h(agent.get(u)),
     post: (u: string) => h(agent.post(u).set('x-csrf-token', csrf)),
   };
