@@ -96,10 +96,11 @@ describe('SEC-23: the deploy script only asks for, and sends, what the active mo
   });
   it('the real worker/wrangler.jsonc parses (comments and all) and is deployable in its mode', () => {
     const w = parseJsonc(fs.readFileSync(path.resolve(import.meta.dirname, '../../../worker/wrangler.jsonc'), 'utf8'));
-    expect(w.vars.AUTH_MODE).toBe('entra');
+    expect(w.vars.AUTH_MODE).toBe('demo');                                     // demo-fallback branch: Access + DEMO_USERS while the Entra secret is expired
     expect(w.vars.NODE_ENV).toBe('production');
     expect(w.observability.logs.invocation_logs).toBe(false);                  // SEC-19: no per-request URL logs
-    expect(planDeploy(env, w.vars).problems).toEqual([]);
+    expect(planDeploy({ ...env, CF_ACCESS_AUD: 'aud', DEMO_USERS: '{}' }, w.vars).problems).toEqual([]);
+    expect(planDeploy(env, w.vars).problems).toEqual(expect.arrayContaining(['CF_ACCESS_AUD is missing from .env', 'DEMO_USERS is missing from .env']));
   });
   it('parseJsonc handles comments, strings that contain slashes, and trailing commas', () => {
     expect(parseJsonc('{ // c\n "a": "http://x//y", /* b */ "b": [1,2,], }')).toEqual({ a: 'http://x//y', b: [1, 2] });

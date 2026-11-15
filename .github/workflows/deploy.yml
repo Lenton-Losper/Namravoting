@@ -62,6 +62,8 @@ jobs:
       R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
       R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
       ENTRA_CLIENT_SECRET: ${{ secrets.ENTRA_CLIENT_SECRET }}
+      CF_ACCESS_AUD: ${{ secrets.CF_ACCESS_AUD }}
+      DEMO_USERS: ${{ secrets.DEMO_USERS }}
       SESSION_SECRET_PREVIOUS: ${{ secrets.SESSION_SECRET_PREVIOUS }}
       CSRF_SECRET: ${{ secrets.CSRF_SECRET }}
     steps:

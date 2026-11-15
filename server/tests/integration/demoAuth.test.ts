@@ -118,6 +118,19 @@ describe('demo identity comes from the verified Access JWT', () => {
     expect(rows).toEqual([{ entra_oid: a, display_name: 'Lenton Losper', employee_code: 'TST0001' }]);
   });
 
+  it('an email that already has an account (e.g. a Microsoft account from entra mode) keeps that account, its campaigns and its admin view', async () => {
+    const entraOid = '87a4af90-dd00-48c6-9601-17e56248c9e1';
+    await ownerDb().query('INSERT INTO users (entra_oid, email, display_name) VALUES ($1, $2, $3)', [entraOid, ADMIN, 'Lenton (Microsoft)']);
+    await ownerDb().query("INSERT INTO campaigns (share_token, created_by, title) VALUES ($1, $2, 'Made in entra mode')", ['x'.repeat(32), entraOid]);
+    const s = await as(ADMIN);
+    const u = (await s.get('/api/session').expect(200)).body.user;
+    expect(u.oid).toBe(entraOid);                                                            // the existing id, not a new v5 id
+    expect(u.roles).toEqual(['CampaignAdmin']);
+    expect((await s.get('/api/campaigns/mine').expect(200)).body.campaigns.map((c: { title: string }) => c.title)).toEqual(['Made in entra mode']);
+    const rows = (await ownerDb().query('SELECT entra_oid FROM users WHERE email = $1', [ADMIN])).rows;
+    expect(rows).toEqual([{ entra_oid: entraOid }]);                                          // still one row: no duplicate, no unique-email error
+  });
+
   it('there is no identity picker in demo mode: /api/dev/* does not exist', async () => {
     const s = await as(ADMIN);
     await s.get('/api/dev/users').expect(404);
