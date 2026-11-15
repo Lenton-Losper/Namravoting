@@ -3,6 +3,7 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../../src/app.js';
 import { closePool } from '../../src/db.js';
 import { ADMIN_A, ADMIN_B, S1, S2, TEST_APP_URL, closeOwner, login, makeCampaign, ownerDb, resetDb, sessionFor } from '../helpers.js';
+import { pgc } from '../testDb.js';
 
 const app = createApp();
 beforeEach(resetDb);
@@ -100,7 +101,7 @@ describe('SEC-16: receipts != tallies blocks close and publish until an admin in
 });
 
 describe('SEC-17: clean-up functions take the actor from a live session, and the database enforces the state machine', () => {
-  async function app_(): Promise<pg.Client> { const db = new pg.Client({ connectionString: TEST_APP_URL }); await db.connect(); return db; }
+  async function app_(): Promise<pg.Client> { const db = new pg.Client({ ...pgc(TEST_APP_URL) }); await db.connect(); return db; }
   async function archivedCampaign() {
     const admin = await login(app, ADMIN_A);
     const c = await makeCampaign(admin, 2, 'Trusted actor');

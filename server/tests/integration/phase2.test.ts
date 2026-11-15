@@ -5,6 +5,7 @@ import { createApp } from '../../src/app.js';
 import { closePool } from '../../src/db.js';
 import { revokeAllSessions } from '../../src/auth/sessions.js';
 import { ADMIN_A, S1, TEST_OWNER_URL, closeOwner, login, makeCampaign, ownerDb, resetDb, sessionFor } from '../helpers.js';
+import { pgc, TEST_APP_URL } from '../testDb.js';
 
 const app = createApp();
 beforeEach(resetDb);
@@ -141,7 +142,7 @@ describe('SEC-04: a permanent delete needs a copy of the result first', () => {
 
   it('the database function itself still deletes only archived campaigns of the actor (the API check is not the only guard)', async () => {
     const c = await archived();
-    const db = new pg.Client({ connectionString: 'postgres://namra_app:namra_app_dev@localhost:5433/namra_test' });
+    const db = new pg.Client({ ...pgc(TEST_APP_URL) });
     await db.connect();
     try {
       await expect(db.query('SELECT delete_archived_campaign($1, $2)', [c.id, await sessionFor(S1)])).rejects.toThrow(/campaign not found/);

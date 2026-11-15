@@ -2,6 +2,7 @@ import pg from 'pg';
 import request from 'supertest';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { ADMIN_A, ADMIN_B, S1, S2, TEST_OWNER_URL, closeOwner, login, makeCampaign, ownerDb, resetDb } from '../helpers.js';
+import { pgc } from '../testDb.js';
 
 // Small limits for this file only; config is read lazily, so set them BEFORE the app is imported.
 process.env.AUTH_RATE_LIMIT_PER_MIN = '3';
@@ -76,7 +77,7 @@ describe('SEC-08: reading a ballot page does not take a write lock', () => {
     const c = await makeCampaign(admin, 2);
     await admin.post(`/api/campaigns/${c.id}/start`).expect(200);
     const voter = await login(app, S1);
-    const holder = new pg.Client({ connectionString: TEST_OWNER_URL });
+    const holder = new pg.Client({ ...pgc(TEST_OWNER_URL) });
     await holder.connect();
     try {
       await holder.query('BEGIN');

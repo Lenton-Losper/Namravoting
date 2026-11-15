@@ -4,13 +4,13 @@ import sharp from 'sharp';
 import type { Express } from 'express';
 import { DEV_USERS } from '../src/auth/devUsers.js';
 import type { AuthUser } from '../src/auth/types.js';
+import { TEST_OWNER_URL, pgc } from './testDb.js';
 
-export const TEST_OWNER_URL = 'postgres://namra_owner:namra_owner_dev@localhost:5433/namra_test';
-export const TEST_APP_URL = 'postgres://namra_app:namra_app_dev@localhost:5433/namra_test';
+export { TEST_OWNER_URL, TEST_APP_URL } from './testDb.js';
 export const [ADMIN_A, ADMIN_B, S1, S2, S3, S4, S5] = DEV_USERS;
 
 let owner: pg.Pool | undefined;
-export const ownerDb = () => (owner ??= new pg.Pool({ connectionString: TEST_OWNER_URL, max: 3 }));
+export const ownerDb = () => (owner ??= new pg.Pool({ ...pgc(TEST_OWNER_URL), max: 3 }));
 export async function closeOwner() { await owner?.end(); owner = undefined; }
 
 /**

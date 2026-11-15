@@ -6,11 +6,12 @@ import { createApp } from '../../src/app.js';
 import { closePool } from '../../src/db.js';
 import { quorumOf } from '../../src/services/campaigns.js';
 import { ADMIN_A, ADMIN_B, S1, S2, S3, S4, TEST_APP_URL, closeOwner, login, ownerDb, resetDb } from '../helpers.js';
+import { pgc } from '../testDb.js';
 
 const app = createApp();
 beforeEach(resetDb);
 afterAll(async () => { await closePool(); await closeOwner(); await appRole.end(); });
-const appRole = new pg.Pool({ connectionString: TEST_APP_URL, max: 1 });
+const appRole = new pg.Pool({ ...pgc(TEST_APP_URL), max: 1 });
 
 type Admin = Awaited<ReturnType<typeof login>>;
 const VOTERS = [S1, S2, S3, S4];

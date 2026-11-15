@@ -4,6 +4,7 @@ import { createApp } from '../../src/app.js';
 import { closePool } from '../../src/db.js';
 import { standing } from '../../src/domain/results.js';
 import { ADMIN_A, ADMIN_B, S1, S2, S3, closeOwner, login, ownerDb, resetDb } from '../helpers.js';
+import { pgc, TEST_APP_URL } from '../testDb.js';
 
 const app = createApp();
 beforeEach(resetDb);
@@ -115,7 +116,7 @@ describe('POST /api/campaigns/:id/runoff', () => {
     await admin.post(`/api/campaigns/${open.id}/runoff`).expect(409);
     const run = (await admin.post(`/api/campaigns/${c.id}/runoff`).expect(201)).body;
     const pg = (await import('pg')).default;
-    const app_ = new pg.Pool({ connectionString: 'postgres://namra_app:namra_app_dev@localhost:5433/namra_test', max: 1 });
+    const app_ = new pg.Pool({ ...pgc(TEST_APP_URL), max: 1 });
     await expect(app_.query('UPDATE campaigns SET runoff_round = 0 WHERE id = $1', [run.id])).rejects.toThrow(/run-off link/);
     await app_.end();
   });

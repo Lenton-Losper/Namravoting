@@ -4,11 +4,12 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../../src/app.js';
 import { closePool } from '../../src/db.js';
 import { ADMIN_A, ADMIN_B, S1, S2, S3, TEST_APP_URL, closeOwner, login, ownerDb, resetDb } from '../helpers.js';
+import { pgc } from '../testDb.js';
 
 const app = createApp();
 beforeEach(resetDb);
 afterAll(async () => { await closePool(); await closeOwner(); await appRole.end(); });
-const appRole = new pg.Pool({ connectionString: TEST_APP_URL, max: 2 });
+const appRole = new pg.Pool({ ...pgc(TEST_APP_URL), max: 2 });
 
 type S = Awaited<ReturnType<typeof login>>;
 

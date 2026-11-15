@@ -5,13 +5,14 @@ import { closePool } from '../../src/db.js';
 import { readPhoto } from '../../src/services/images.js';
 import { testHooks } from '../../src/services/voting.js';
 import { ADMIN_A, ADMIN_B, S1, S2, TEST_APP_URL, closeOwner, login, ownerDb, png, resetDb, sessionFor, type Session } from '../helpers.js';
+import { pgc } from '../testDb.js';
 
 const app = createApp();
 const TITLE = 'Cleanup Vote 2026';
 const REASON = 'Ballot box stuffed during a demo';
 let appRole: pg.Pool;
 
-beforeEach(async () => { await resetDb(); appRole ??= new pg.Pool({ connectionString: TEST_APP_URL, max: 2 }); });
+beforeEach(async () => { await resetDb(); appRole ??= new pg.Pool({ ...pgc(TEST_APP_URL), max: 2 }); });
 afterEach(() => { testHooks.afterCampaignRead = undefined; });
 afterAll(async () => { await appRole?.end(); await closePool(); await closeOwner(); });
 

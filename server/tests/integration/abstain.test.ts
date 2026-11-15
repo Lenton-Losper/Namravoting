@@ -5,6 +5,7 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../../src/app.js';
 import { closePool } from '../../src/db.js';
 import { ADMIN_A, S1, S2, S3, TEST_APP_URL, closeOwner, login, ownerDb, resetDb } from '../helpers.js';
+import { pgc } from '../testDb.js';
 
 const app = createApp();
 beforeEach(resetDb);
@@ -56,7 +57,7 @@ describe('the setting', () => {
     const r = await admin.patch(`/api/campaigns/${c.id}`).send({ allow_abstain: false }).expect(409);
     expect(r.body.code).toBe('locked');
     // and the database says no even if the application were wrong
-    const app_ = new pg.Pool({ connectionString: TEST_APP_URL, max: 1 });
+    const app_ = new pg.Pool({ ...pgc(TEST_APP_URL), max: 1 });
     await expect(app_.query('UPDATE campaigns SET allow_abstain = false WHERE id = $1', [c.id])).rejects.toThrow(/locked/);
     await app_.end();
   });

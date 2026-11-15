@@ -7,6 +7,7 @@ import { closePool } from '../../src/db.js';
 import {
   ADMIN_A, ADMIN_B, S1, S2, S3, S4, TEST_APP_URL, closeOwner, count, login, makeCampaign, ownerDb, png, resetDb,
 } from '../helpers.js';
+import { pgc } from '../testDb.js';
 
 const app = createApp();
 
@@ -205,7 +206,7 @@ describe('vote rules', () => {
     const admin = await login(app, ADMIN_A);
     const c1 = await makeCampaign(admin, 2, 'One');
     const c2 = await makeCampaign(admin, 2, 'Two');
-    const db = new pg.Client({ connectionString: TEST_APP_URL });
+    const db = new pg.Client({ ...pgc(TEST_APP_URL) });
     await db.connect();
     try {
       const pos = (await ownerDb().query('SELECT id FROM positions WHERE campaign_id = $1', [c1.id])).rows[0].id;
@@ -367,7 +368,7 @@ describe('locking after start', () => {
     const a = await login(app, ADMIN_A);
     const c = await makeCampaign(a, 2);
     await a.post(`/api/campaigns/${c.id}/start`).expect(200);
-    const db = new pg.Client({ connectionString: TEST_APP_URL });
+    const db = new pg.Client({ ...pgc(TEST_APP_URL) });
     await db.connect();
     try {
       await expect(db.query("UPDATE candidates SET name = 'x' WHERE campaign_id = $1", [c.id])).rejects.toThrow(/locked/);
@@ -415,7 +416,7 @@ describe('ballot secrecy (schema)', () => {
     await a.post(`/api/campaigns/${c.id}/start`).expect(200);
     const s = await login(app, S1);
     await s.post(`/api/vote/${c.token}`).send({ candidateId: c.candidates[0] }).expect(201);
-    const db = new pg.Client({ connectionString: TEST_APP_URL });
+    const db = new pg.Client({ ...pgc(TEST_APP_URL) });
     await db.connect();
     try {
       for (const sql of [

@@ -4,13 +4,14 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../../src/app.js';
 import { closePool } from '../../src/db.js';
 import { ADMIN_A, S1, S2, TEST_APP_URL, closeOwner, count, login, ownerDb, png, resetDb } from '../helpers.js';
+import { pgc } from '../testDb.js';
 
 const app = createApp();
 beforeEach(resetDb);
 afterAll(async () => { await closePool(); await closeOwner(); await appRole.end(); });
 
 /** A connection as the restricted runtime role: used to prove the DATABASE refuses, whatever the application does. */
-const appRole = new pg.Pool({ connectionString: TEST_APP_URL, max: 2 });
+const appRole = new pg.Pool({ ...pgc(TEST_APP_URL), max: 2 });
 
 type Admin = Awaited<ReturnType<typeof login>>;
 

@@ -9,6 +9,7 @@ import { closePool } from '../../src/db.js';
 import { importUmoja } from '../../src/umoja/import.js';
 import { parseUmojaExport } from '../../src/umoja/parse.js';
 import { ADMIN_A, S1, S2, S3, S4, S5, TEST_APP_URL, TEST_OWNER_URL, closeOwner, count, login, makeCampaign, ownerDb, resetDb, setMembers } from '../helpers.js';
+import { pgc } from '../testDb.js';
 
 const app = createApp();
 beforeEach(resetDb);
@@ -200,7 +201,7 @@ describe('Umoja import', () => {
 
   it('the app DB role can SELECT but not INSERT, UPDATE or DELETE umoja_members', async () => {
     await setMembers(MEMBERS);
-    const app = new pg.Client({ connectionString: TEST_APP_URL });
+    const app = new pg.Client({ ...pgc(TEST_APP_URL) });
     await app.connect();
     try {
       expect((await app.query('SELECT count(*)::int AS n FROM umoja_members')).rows[0].n).toBe(3);       // positive control

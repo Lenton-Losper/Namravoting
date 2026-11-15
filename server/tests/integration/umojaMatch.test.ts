@@ -6,6 +6,7 @@ import { applyConfirmedReport, applyMatches, type MatchResult } from '../../src/
 import { importUmoja } from '../../src/umoja/import.js';
 import { parseUmojaExport } from '../../src/umoja/parse.js';
 import { ADMIN_A, S1, S2, S3, S4, TEST_APP_URL, TEST_OWNER_URL, closeOwner, login, makeCampaign, ownerDb, resetDb, setMembers } from '../helpers.js';
+import { pgc } from '../testDb.js';
 
 const app = createApp();
 beforeEach(resetDb);
@@ -13,7 +14,7 @@ afterAll(async () => { await closePool(); await closeOwner(); });
 
 const result = (code: string, status: MatchResult['status'], oid: string | null, email: string | null, name = 'Zorblax Quentin'): MatchResult =>
   ({ code, name, active: true, status, oid, email, candidates: status === 'matched' ? 1 : 0 });
-const withClient = async <T>(url: string, fn: (c: pg.Client) => Promise<T>): Promise<T> => { const c = new pg.Client({ connectionString: url }); await c.connect(); try { return await fn(c); } finally { await c.end(); } };
+const withClient = async <T>(url: string, fn: (c: pg.Client) => Promise<T>): Promise<T> => { const c = new pg.Client({ ...pgc(url) }); await c.connect(); try { return await fn(c); } finally { await c.end(); } };
 const row = async (code: string) => (await ownerDb().query('SELECT entra_oid, email, active FROM umoja_members WHERE employee_code = $1', [code])).rows[0];
 
 describe('writing matches (owner role, one transaction)', () => {

@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../../src/app.js';
 import { closePool } from '../../src/db.js';
 import { ADMIN_A, S1, S2, S3, closeOwner, count, login, makeCampaign, ownerDb, resetDb, setMembers } from '../helpers.js';
+import { pgc, TEST_APP_URL } from '../testDb.js';
 
 const app = createApp();
 beforeEach(resetDb);
@@ -217,7 +218,7 @@ describe('SEC-05 + SEC-04: frozen voter list and a sealed, hash-chained result',
   it('the app role cannot touch the chain columns or the audit log, and cannot forge an entry that skips the chain', async () => {
     const c = await closedCampaign();
     const pg = (await import('pg')).default;
-    const db = new pg.Client({ connectionString: 'postgres://namra_app:namra_app_dev@localhost:5433/namra_test' });
+    const db = new pg.Client({ ...pgc(TEST_APP_URL) });
     await db.connect();
     try {
       await expect(db.query("UPDATE audit_log SET hash = 'x'")).rejects.toThrow(/permission denied/);

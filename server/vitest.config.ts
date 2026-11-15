@@ -1,6 +1,7 @@
 import os from 'node:os';
 import path from 'node:path';
 import { defineConfig } from 'vitest/config';
+import { TEST_APP_URL } from './tests/testDb.js';
 
 export default defineConfig({
   test: {
@@ -14,7 +15,7 @@ export default defineConfig({
       AUTH_MODE: 'dev',
       ALLOW_DEV_AUTH: 'true',
       SESSION_SECRET: 'test-secret-test-secret-test-secret-test-secret',
-      DATABASE_URL: 'postgres://namra_app:namra_app_dev@localhost:5433/namra_test',
+      DATABASE_URL: TEST_APP_URL,
       UPLOAD_DIR: path.join(os.tmpdir(), 'namra-voting-test-uploads'),
       VOTE_RATE_LIMIT_PER_MIN: '10000',
       ADMIN_RATE_LIMIT_PER_MIN: '10000',

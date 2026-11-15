@@ -4,10 +4,13 @@ import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { migrate } from '../../src/migrate.js';
 import { TEST_OWNER_URL } from '../helpers.js';
+import { TEST_APP_PASSWORD } from '../testDb.js';
+import { pgc } from '../testDb.js';
 
+const withDb = (url: string, db: string) => { const u = new URL(url); u.pathname = '/' + db; return u.toString(); };
 const OLD_DB = 'namra_migration_019';
-const adminUrl = TEST_OWNER_URL.replace(/\/namra_test$/, '/postgres');
-const oldUrl = TEST_OWNER_URL.replace(/\/namra_test$/, `/${OLD_DB}`);
+const adminUrl = withDb(TEST_OWNER_URL, 'postgres');
+const oldUrl = withDb(TEST_OWNER_URL, OLD_DB);
 const BEFORE = '018_quorum_and_publication.sql';
 
 let db: pg.Client;
@@ -16,14 +19,14 @@ const ids = { open: crypto.randomUUID(), closed: crypto.randomUUID(), draft: cry
 const cand: Record<string, string[]> = { open: [], closed: [], draft: [] };
 
 beforeAll(async () => {
-  const a = new pg.Client({ connectionString: adminUrl });
+  const a = new pg.Client({ ...pgc(adminUrl) });
   await a.connect();
   await a.query(`DROP DATABASE IF EXISTS ${OLD_DB}`);
   await a.query(`CREATE DATABASE ${OLD_DB}`);
   await a.end();
 
-  await migrate(oldUrl, 'namra_app_dev', () => undefined, BEFORE);   // the database as it was before positions existed
-  db = new pg.Client({ connectionString: oldUrl });
+  await migrate(oldUrl, TEST_APP_PASSWORD, () => undefined, BEFORE);   // the database as it was before positions existed
+  db = new pg.Client({ ...pgc(oldUrl) });
   await db.connect();
 
   for (const [i, u] of [U.admin, U.v1, U.v2].entries()) await db.query('INSERT INTO users (entra_oid, email, display_name) VALUES ($1, $2, $3)', [u, `old${i}@x.test`, `Old ${i}`]);
@@ -46,12 +49,12 @@ beforeAll(async () => {
   await db.query("UPDATE campaigns SET status = 'closed' WHERE id = $1", [ids.closed]);
   await db.query("INSERT INTO audit_log (actor_oid, action, campaign_id, details) VALUES ($1, 'campaign.close', $2, '{\"old\":true}')", [U.admin, ids.closed]);
 
-  await migrate(oldUrl, 'namra_app_dev', () => undefined);          // the new migration, on top of real data
+  await migrate(oldUrl, TEST_APP_PASSWORD, () => undefined);          // the new migration, on top of real data
 });
 
 afterAll(async () => {
   await db?.end();
-  const a = new pg.Client({ connectionString: adminUrl });
+  const a = new pg.Client({ ...pgc(adminUrl) });
   await a.connect();
   await a.query(`DROP DATABASE IF EXISTS ${OLD_DB}`);
   await a.end();
