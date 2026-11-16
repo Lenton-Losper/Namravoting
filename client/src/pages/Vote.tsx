@@ -3,12 +3,13 @@ import { Link, useParams } from 'react-router-dom';
 import { api, ApiError, fmtDate, type Notice, type Results } from '../api';
 import { Icon } from '../icons';
 import { closesIn, useNow } from '../time';
-import { BallotState, CampaignBlocks, type BlockPosition } from './VoteBlocks';
-import { BackLink, Dialog, ErrorBox, NoticeBanner, NoticeList, ResultsChart, Spinner, Thumb, initials } from '../ui';
+import { AnnouncementCard, BallotState, CampaignBlocks, winnersLine, type AnnouncementInfo, type BlockPosition } from './VoteBlocks';
+import { BackLink, Dialog, ErrorBox, NoticeBanner, NoticeList, Spinner, Thumb, initials } from '../ui';
 
 type VoterState = 'can_vote' | 'already_voted' | 'not_eligible' | 'not_member' | 'not_open' | 'closed';
 interface Info {
-  title: string; description: string | null; opensAt: string | null; closesAt: string | null; resultsPublished: boolean;
+  title: string; description: string | null; opensAt: string | null; closesAt: string | null;
+  announcement?: AnnouncementInfo | null; resultsReleaseAt?: string | null;
   voterState: VoterState; notices?: Notice[];
   /** Present when the server knows about positions: the campaign page is then a grid of position blocks (VoteBlocks.tsx). */
   positions?: BlockPosition[];
@@ -25,12 +26,6 @@ function StateCard({ icon, title, children }: { icon: string; title: string; chi
   );
 }
 
-function PublishedResults({ token }: { token: string }) {
-  const [r, setR] = useState<(Results & { title: string }) | null>(null);
-  useEffect(() => { api<Results & { title: string }>('GET', `/api/vote/${token}/results`).then(setR).catch(() => undefined); }, [token]);
-  if (!r) return null;
-  return <section className="card card-pad"><h2>Results</h2>{r.candidates && <ResultsChart candidates={r.candidates} turnout={r.turnout} tie={r.tie} quorum={r.quorum} />}{r.publication && <p className="muted small">Published by {r.publication.by ?? 'the campaign administrators'} on {fmtDate(r.publication.at)}{r.publication.scheduled ? ' (scheduled in advance; approved by the person who scheduled it)' : ''}.</p>}<NoticeList notices={r.notices} /></section>;
-}
 
 const pendingKey = (token: string) => `namra:pending-vote:${token}`;
 const clearPending = (token: string) => { try { sessionStorage.removeItem(pendingKey(token)); } catch { /* storage unavailable */ } };
@@ -182,9 +177,9 @@ export function VotePage() {
       {!online && <p className="offline-note" role="status">You appear to be offline. Your vote can only be sent when you are connected again.</p>}
       {!done && info.voterState === 'already_voted' && <StateCard icon="check" title="You have already voted"><p className="muted">Your vote was recorded. Each person can vote once.</p></StateCard>}
       {!done && info.voterState === 'not_open' && <StateCard icon="clock" title="Voting has not opened yet"><p className="muted">{info.opensAt ? `Voting opens ${fmtDate(info.opensAt)}.` : 'Please check back soon.'}</p></StateCard>}
-      {!done && info.voterState === 'closed' && <StateCard icon="lock" title="Voting has closed"><p className="muted">{info.resultsPublished ? 'The results are below.' : 'The results have not been published yet.'}</p></StateCard>}
+      {!done && info.voterState === 'closed' && <StateCard icon="lock" title="Voting has closed"><p className="muted">{info.announcement ? 'The winners are announced below.' : winnersLine(info.resultsReleaseAt)}</p></StateCard>}
 
-      {info.resultsPublished && <PublishedResults token={shareToken} />}
+      {info.announcement && <AnnouncementCard a={info.announcement} />}
 
       {!done && info.voterState === 'can_vote' && !uncertain && (
         <>

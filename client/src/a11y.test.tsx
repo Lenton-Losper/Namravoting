@@ -71,13 +71,12 @@ describe('pages have no axe violations (WCAG 2.1 A and AA, plus best practice)',
     expect(await audit(container)).toEqual([]);
   });
 
-  it('the published results with a tie and a quorum warning', async () => {
+  it('the closed campaign with the announced winners (names only)', async () => {
     session(STAFF);
-    table[`GET /api/vote/${TOKEN}`] = { title: 'T', description: null, opensAt: null, closesAt: null, resultsPublished: true, voterState: 'closed', notices: [], candidates: [] };
-    table[`GET /api/vote/${TOKEN}/results`] = { title: 'T', candidates: [{ id: 'a', name: 'Ann', votes: 2 }, { id: 'b', name: 'Ben', votes: 2 }, { id: 'x', name: 'Abstain', votes: 1, is_abstain: true }], turnout: { votes: 5, eligible: 10 },
-      tie: { names: ['Ann', 'Ben'], votes: 2 }, quorum: { percent: 75, eligible: 10, needed: 8, votes: 5, met: false }, publication: { by: 'Olivia', at: '2030-01-01T10:00:00Z', scheduled: false }, notices: [] };
+    table[`GET /api/vote/${TOKEN}`] = { title: 'T', description: null, opensAt: null, closesAt: null, voterState: 'closed', notices: [], candidates: [], positions: [],
+      announcement: { at: '2030-01-01T10:00:00Z', text: 'x', positions: [{ title: 'Chair', winners: ['Ann'] }, { title: 'Members', winners: ['Ben', 'Cy'] }] } };
     const { container } = page(`/v/${TOKEN}`);
-    await screen.findByText(/Tie for first place/);
+    await screen.findByRole('region', { name: 'Winners' });
     expect(await audit(container)).toEqual([]);
   });
 

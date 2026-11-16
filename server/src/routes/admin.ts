@@ -321,7 +321,7 @@ export function adminRouter(): Router {
     const c = camp(res);
     const b = patchCampaignBody.parse(req.body);
     const actor = currentUser(req).oid;
-    // The results-release date is DISPLAY ONLY (the receipt says when results will be shared; publishing stays manual), so it may be
+    // The results-release date is DISPLAY ONLY (the receipt says when the winners will be announced), so it may be
     // set in any state, even when the rest of the campaign is locked. It is recorded, and taken out of the normal edit below.
     if (b.results_release_at !== undefined) {
       await withTx(async (tx) => {

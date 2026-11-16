@@ -62,7 +62,7 @@ Receipt
 
 * White page. Centred stack, gap 16px, padding 32px 28px.
 * Check icon in a 72px circle, bg #E6F2EB, icon #1E6B43.
-* "Your vote is in" 24px/700; "Thank you for voting. Results will be shared on {date}." 15px #4A5565.
+* "Your vote is in" 24px/700; "Thank you for voting. Winners will be announced on {date}." (or "...after voting closes." with no date). Voters never see results, counts or turnout: after the close the creator announces the winners by name, and only people who voted see that announcement. 15px #4A5565.
 * Receipt box: bg #F5F7FA, 1px #E3E7ED, radius 12px, padding 14px 16px, left-aligned: label 13px grey, code 17px/600 letter-spacing .04em, note "Proves you voted. It doesn't show who you voted for." 13px grey.
 * "Done" 52px primary in a bottom bar.
 
@@ -76,7 +76,7 @@ Tokens
 
 Backend
 
-* Campaign: question/title, close datetime, results-release date.
+* Campaign: question/title, close datetime, announcement date (display only: "Winners will be announced on ...").
 * Candidate: name, region (nullable), pledge (≤160), full statement, photo URL (nullable).
 * One vote per voter + position, enforced by unique constraint in a transaction.
 * Receipt code stored apart from the choice; no timestamp, serial or ordering that links it to a vote.

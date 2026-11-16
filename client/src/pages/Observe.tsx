@@ -4,10 +4,10 @@ import { api, fmtDate, type Notice, type SealCheck, type Tie } from '../api';
 import { BackLink, ErrorBox, NoticeList, ResultsChart, SectionTitle, Spinner, StatusBadge, TurnoutBar } from '../ui';
 
 /** Observers: a read-only view. Turnout, the sealed result once closed, the integrity check, the team, approvals and the audit trail. */
-interface ObsItem { id: string; title: string; status: 'draft' | 'open' | 'closed'; owner: string; turnout: number; closes_at: string | null; results_published: boolean; archived_at: string | null }
+interface ObsItem { id: string; title: string; status: 'draft' | 'open' | 'closed'; owner: string; turnout: number; closes_at: string | null; winners_announced_at?: string | null; archived_at: string | null }
 interface ObsView {
   id: string; title: string; description: string | null; status: 'draft' | 'open' | 'closed'; eligibility: string; owner: string; opens_at: string | null; closes_at: string | null;
-  results_published: boolean; archived: boolean; require_approval: boolean; turnout: { votes: number; eligible: number | null };
+  winners_announced_at?: string | null; archived: boolean; require_approval: boolean; turnout: { votes: number; eligible: number | null };
   result: { candidates: { id: string; name: string; votes: number; is_abstain?: boolean }[]; turnout: { votes: number; eligible: number | null }; tie: Tie | null } | null;
   seal: SealCheck | null; notices: Notice[]; team: { name: string; role: string }[];
   approvals: { kind: string; status: string; reason: string | null; requested_at: string; requested_by: string; decided_by: string | null; decided_at: string | null; executed_at: string | null }[];

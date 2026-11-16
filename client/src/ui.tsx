@@ -138,7 +138,7 @@ export function NoticeList({ notices, title = 'What happened during this vote' }
       <ul className="list">
         {notices.map((x, i) => (
           <li key={i} className="reset-item">
-            <div><strong>{fmtDate(x.at)}</strong>{x.by ? ` · ${x.by}` : ''} · {x.kind === 'reset' ? `reset: ${x.votes_cleared ?? 0} ${x.votes_cleared === 1 ? 'vote' : 'votes'} cleared` : x.kind === 'edited_after_start' ? 'Edited after start' : x.kind === 'candidate_withdrawn' ? `${x.candidate} withdrew (votes already cast for them are void)` : 'closed early'}</div>
+            <div><strong>{fmtDate(x.at)}</strong>{x.by ? ` · ${x.by}` : ''} · {x.kind === 'reset' ? (x.votes_cleared === undefined ? 'reset: all votes were cleared' : `reset: ${x.votes_cleared} ${x.votes_cleared === 1 ? 'vote' : 'votes'} cleared`) : x.kind === 'edited_after_start' ? 'Edited after start' : x.kind === 'candidate_withdrawn' ? `${x.candidate} withdrew (votes already cast for them are void)` : 'closed early'}</div>
             {x.kind === 'edited_after_start'
               ? <ul className="list small">{(x.changes ?? []).map((ch, j) => <li key={j} className="muted">{describeEdit(ch)}</li>)}</ul>
               : <div className="muted small">Reason: {x.reason}</div>}

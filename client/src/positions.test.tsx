@@ -103,7 +103,7 @@ describe("the voter's campaign page", () => {
     // the receipt: a code and the results date, and never the candidate
     expect(await screen.findByRole('heading', { name: 'Your vote is in' })).toBeTruthy();
     expect(screen.getByText('UV-7K3M-Q9TD')).toBeTruthy();
-    expect(screen.getByText(/Results will be shared on/)).toBeTruthy();
+    expect(screen.getByText(/Winners will be announced on/)).toBeTruthy();
     expect(screen.queryByText(/Chipo/)).toBeNull();
     await user.click(screen.getByRole('button', { name: 'Done' }));
     // back on the blocks, the block is done and the progress moved on
@@ -150,15 +150,14 @@ describe("the voter's campaign page", () => {
     expect(screen.queryByLabelText('Region')).toBeNull();
   });
 
-  it('when every position is voted the page says so; results show per position once published', async () => {
-    table[`GET /api/vote/${TOKEN}`] = { ...campaignInfo([true, true, true]), resultsPublished: true, voterState: 'closed' };
-    table[`GET /api/vote/${TOKEN}/results`] = {
-      title: 'T', turnout: { votes: 5, eligible: 10 }, group_by_region: false, notices: [], publication: null, quorum: null, candidates: [],
-      positions: [{ id: 'p1', title: 'Press Secretary', turnout: { votes: 5 }, tie: null, winners: [{ id: 'c1', name: 'Alice', votes: 3 }], candidates: [{ id: 'c1', name: 'Alice', votes: 3, region: 'Khomas' }, { id: 'c2', name: 'Bob', votes: 2, region: 'Erongo' }] }],
-    };
+  it('when every position is voted the page says so; after the close a voter sees only the announced winners, by name, and never calls the results route', async () => {
+    table[`GET /api/vote/${TOKEN}`] = { ...campaignInfo([true, true, true]), voterState: 'closed', announcement: { at: '2030-01-06T08:00:00Z', text: 'x', positions: [{ title: 'Press Secretary', winners: ['Alice'] }, { title: 'Finance Officer', winners: ['Dana', 'Esau'] }] } };
     vote();
-    expect(await screen.findByRole('region', { name: 'Press Secretary' })).toBeTruthy();
-    expect(screen.getByText(/Winner:/).parentElement?.textContent).toContain('Alice');
+    const card = await screen.findByRole('region', { name: 'Winners' });
+    expect(within(card).getByText(/Press Secretary/).parentElement?.textContent).toContain('Alice');
+    expect(within(card).getByText(/Finance Officer/).parentElement?.textContent).toContain('Dana, Esau');
+    expect(card.textContent).not.toMatch(/\d+ votes?|turnout|%/i);                                    // names only: no counts
+    expect(calls.some((c) => c.url.includes('/results'))).toBe(false);
   });
 });
 

@@ -64,7 +64,7 @@ export async function previewAnnouncement(db: Queryable, c: Pick<CampaignRow, 'i
   const q = results.quorum;
   return {
     available: true, announced, positions,
-    text: announcementText(c.title, positions.map((p) => ({ title: p.title, winners: p.winners }))),
+    text: tied.length ? '' : announcementText(c.title, positions.map((p) => ({ title: p.title, winners: p.winners }))),   // no text while a position is tied
     blocks,
     below_quorum: q && q.met === false ? { votes: q.votes, needed: q.needed, percent: q.percent } : null,
     email,

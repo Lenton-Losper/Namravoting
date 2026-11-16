@@ -49,7 +49,7 @@ export function TeamTab({ c, reload }: { c: CampaignDetail; reload: () => Promis
           </li>
         ))}
       </ul>
-      <p className="field-helper"><strong>Co-admins</strong> can run the campaign (edit, start, close, publish, export) but not reset, delete, archive or change the team. <strong>Observers</strong> can only watch: turnout, the sealed result once closed, and the audit trail, never live counts.</p>
+      <p className="field-helper"><strong>Co-admins</strong> can run the campaign (edit, start, close, announce winners, export) but not reset, delete, archive or change the team. <strong>Observers</strong> can only watch: turnout, the sealed result once closed, and the audit trail, never live counts.</p>
       {owner && (
         <form onSubmit={(e) => void add(e)} className="stack">
           <label>Email<span className="field-helper">They must have signed in to NamRA Voting once. A co-admin must already be a campaign administrator.</span>

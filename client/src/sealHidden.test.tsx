@@ -30,6 +30,6 @@ describe('Verify results integrity (hidden)', () => {
     expect(await screen.findByText('Ann')).toBeTruthy();
     expect(screen.queryByText(/Verify results integrity/)).toBeNull();
     expect(calls.some((c) => c.endsWith('/verify'))).toBe(false);
-    expect(screen.getByRole('button', { name: 'Publish results' })).toBeTruthy();   // publishing is unchanged (the server still blocks it on a mismatch)
+    expect(screen.queryByRole('button', { name: 'Publish results' })).toBeNull();   // publishing is gone: the winners are ANNOUNCED instead (the server blocks that on a mismatch)
   });
 });

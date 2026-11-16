@@ -640,3 +640,19 @@ body:has(.ballot-screen) .hamburger { color: var(--b-navy); border-color: var(--
 }
 .topbar-slot { display: flex; align-items: center; }
 .topbar-slot:empty { display: none; }
+
+/* ---- Results privacy: the announcement, the "Selected" link, My votes receipts, the Announce winners panel ---- */
+.announcement h2 { margin: 0 0 8px; font-size: 20px; }
+.announcement-list { display: flex; flex-direction: column; gap: 6px; margin: 0 0 8px; font-size: 16px; }
+.my-receipts { margin: 6px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 2px; }
+.ballot-selected { margin: 0; font-size: 14px; line-height: 1.4; color: var(--b-secondary); text-align: center; }
+.ballot-selected-link { padding: 0; min-height: 24px; background: none; border: 0; color: var(--b-navy); font: 600 14px var(--font); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.announce-panel { margin-top: 24px; padding: 20px; background: #fff; border: 1px solid var(--b-hair); border-radius: 14px; display: flex; flex-direction: column; gap: 12px; }
+.announce-title { margin: 0; font-size: 18px; font-weight: 700; color: var(--b-text); }
+.announce-winners { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; font-size: 15px; }
+.announce-winners li { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+.announce-block { display: flex; align-items: flex-start; gap: 8px; margin: 0; padding: 10px 12px; background: var(--bad-bg); color: var(--bad-text); border-radius: 10px; font-size: 14px; font-weight: 600; }
+.announce-done { margin: 0; font-size: 14px; color: var(--b-secondary); }
+.announce-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.announce-email { margin: 0; color: var(--b-disabled); }
+.announce-preview { margin: 12px 0 0; padding: 12px; background: var(--b-page); border: 1px solid var(--b-hair); border-radius: 10px; font: 14px/1.5 var(--font); white-space: pre-wrap; }

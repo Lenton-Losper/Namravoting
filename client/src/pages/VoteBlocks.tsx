@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
-import { api, ApiError, fmtDate, type Notice, type Results } from '../api';
+import { api, ApiError, fmtDate, type Notice } from '../api';
 import { Icon } from '../icons';
-import { BackLink, ErrorBox, NoticeBanner, NoticeList, PositionResults, Spinner, initials } from '../ui';
+import { BackLink, ErrorBox, NoticeBanner, Spinner, initials } from '../ui';
 
 /**
  * The voter's side of a campaign with positions (e.g. "Umoja Committee 2026": Press Secretary, Finance Officer ...).
@@ -15,10 +15,28 @@ import { BackLink, ErrorBox, NoticeBanner, NoticeList, PositionResults, Spinner,
  * Each position is its own vote, in any order; a done position is never opened again (the server refuses its ballot: 409).
  */
 
+export interface AnnouncementInfo { at: string; text: string; positions: { title: string; winners: string[] }[] }
+/** The winners, by name, as announced. No votes, no percentages, no turnout. */
+export function AnnouncementCard({ a }: { a: AnnouncementInfo }) {
+  return (
+    <section className="card card-pad announcement" aria-label="Winners">
+      <h2>{a.positions.length === 1 ? 'Winner' : 'Winners'}</h2>
+      <ul className="list announcement-list">
+        {a.positions.map((p, i) => <li key={i}><strong>{p.title}</strong>: {p.winners.length ? p.winners.join(', ') : 'No winner'}</li>)}
+      </ul>
+      <p className="muted small">Announced on {fmtDate(a.at)}.</p>
+    </section>
+  );
+}
+/** What the receipt and the closed screen say about the result: winners are announced, never published as numbers. */
+export const winnersLine = (releaseAt: string | null | undefined) => (releaseAt ? `Winners will be announced on ${fmtDate(releaseAt)}.` : 'Winners will be announced after voting closes.');
+
 export interface BlockPosition { id: string; title: string; description: string | null; seats?: number; ruleText?: string | null; voted: boolean; candidateCount: number; receiptCode?: string | null }
 export interface BlocksInfo {
-  title: string; description: string | null; opensAt: string | null; closesAt: string | null; resultsPublished: boolean;
+  title: string; description: string | null; opensAt: string | null; closesAt: string | null;
   resultsReleaseAt?: string | null; groupByRegion?: boolean;
+  /** The winners the creator announced (names only, no counts): present only for people who voted. The only result a voter ever sees. */
+  announcement?: AnnouncementInfo | null;
   voterState: 'can_vote' | 'already_voted' | 'not_eligible' | 'not_member' | 'not_open' | 'closed';
   notices?: Notice[]; positions: BlockPosition[]; progress?: { voted: number; total: number };
 }
@@ -177,6 +195,8 @@ export function PositionBallot({ token, position, campaign, single, onBack, onDo
   const [statement, setStatement] = useState<BallotCandidate | null>(null);
   const [help, setHelp] = useState(false);
   const submitting = useRef(false);   // synchronous guard: a double tap can never send two requests
+  const restored = useRef(false);     // a pick came back from before a re-sign-in: scroll it into view once the ballot is shown
+  const [dropped, setDropped] = useState<string | null>(null);   // a selected candidate who has since withdrawn, removed from the selection
   const url = `/api/vote/${token}/positions/${position.id}`;
 
   const load = useCallback(async (): Promise<Ballot | 'gone' | null> => {
@@ -192,7 +212,7 @@ export function PositionBallot({ token, position, campaign, single, onBack, onDo
   useEffect(() => {
     let id: string | null = null;
     try { id = sessionStorage.getItem(pendingKey(token, position.id)); sessionStorage.removeItem(pendingKey(token, position.id)); } catch { /* storage unavailable */ }
-    if (id) setPicked(id.split(',').filter(Boolean));
+    if (id) { restored.current = true; setPicked(id.split(',').filter(Boolean)); }
   }, [token, position.id]);
 
   const all = ballot?.candidates ?? [];
@@ -205,15 +225,32 @@ export function PositionBallot({ token, position, campaign, single, onBack, onDo
   const visible = useMemo(() => (showRegions && region ? people.filter((c) => c.regionId === region) : people), [people, region, showRegions]);
   const seats = Math.max(1, ballot?.position.seats ?? 1);
   const multi = seats > 1;
-  // A choice that the filter hides (or that no longer exists) is dropped, so nobody confirms a candidate they cannot see.
+  // A choice that the filter hides, that no longer exists, or that has WITHDRAWN is dropped, so nobody confirms a candidate they cannot see or cannot choose.
   useEffect(() => {
     if (!ballot) return;
-    setPicked((cur) => { const keep = cur.filter((id) => id === abstain?.id || visible.some((c) => c.id === id)); return keep.length === cur.length ? cur : keep; });
+    const gone = picked.map((id) => all.find((c) => c.id === id)).filter((c) => c?.withdrawn);
+    setPicked((cur) => { const keep = cur.filter((id) => id === abstain?.id || (visible.some((c) => c.id === id) && !all.find((c) => c.id === id)?.withdrawn)); return keep.length === cur.length ? cur : keep; });
+    if (gone.length) setDropped(gone.map((c) => c!.name).join(', '));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, ballot, abstain]);
   const chosen = picked.map((id) => all.find((c) => c.id === id)).filter((c): c is BallotCandidate => !!c);   // in the order they were picked
   const abstaining = chosen.length === 1 && chosen[0].isAbstain;
   const pickedPeople = chosen.filter((c) => !c.isAbstain).length;
   const full = multi && pickedPeople >= seats;
+  /** Scroll a chosen card to the middle of the screen and give it focus, so what the footer names can always be found. */
+  const jumpTo = useCallback((id: string) => {
+    const li = document.getElementById(`cand-${id}`) ?? null;
+    if (!li) return;
+    const calm = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    li.scrollIntoView?.({ block: 'center', behavior: calm ? 'auto' : 'smooth' });
+    (li.querySelector('.ballot-card-main') as HTMLElement | null)?.focus({ preventScroll: true });
+  }, []);
+  useEffect(() => {
+    if (!ballot || !restored.current || picked.length === 0) return;
+    restored.current = false;
+    const id = window.setTimeout(() => jumpTo(picked[0]), 0);   // after the cards are in the page
+    return () => window.clearTimeout(id);
+  }, [ballot, picked, jumpTo]);
   const ready = abstaining || (multi ? pickedPeople === seats : chosen.length === 1);
   /** One tap on a card. One seat: it becomes the choice. Several seats: it is added, or taken off again; nothing more once `seats` are picked. */
   function toggle(c: BallotCandidate) {
@@ -268,7 +305,7 @@ export function PositionBallot({ token, position, campaign, single, onBack, onDo
       <div className="ballot-screen ballot-screen-receipt">
         <BallotState tone="success" icon="check" title="Your vote is in"
           actions={<button type="button" className="ballot-btn ballot-btn-primary" onClick={onDone}>Done</button>}>
-          <p className="ballot-state-text">Thank you for voting. {release ? `Results will be shared on ${fmtDate(release)}.` : 'Results will be shared after voting closes.'}</p>
+          <p className="ballot-state-text">Thank you for voting. {winnersLine(release)}</p>
           <ReceiptCode code={receipt} />
         </BallotState>
       </div>
@@ -280,7 +317,7 @@ export function PositionBallot({ token, position, campaign, single, onBack, onDo
     const line = cardLine(c);
     const dimmed = full && !on && !c.withdrawn;   // the limit is reached: the other cards cannot be added until one is taken off
     return (
-      <li key={c.id} className={`ballot-card${on ? ' is-selected' : ''}${compact ? ' is-compact' : ''}${c.withdrawn ? ' is-withdrawn' : ''}${dimmed ? ' is-dimmed' : ''}`}>
+      <li key={c.id} id={`cand-${c.id}`} className={`ballot-card${on ? ' is-selected' : ''}${compact ? ' is-compact' : ''}${c.withdrawn ? ' is-withdrawn' : ''}${dimmed ? ' is-dimmed' : ''}`}>
         <button type="button" className="ballot-card-main" aria-pressed={on} disabled={c.withdrawn || dimmed} onClick={() => toggle(c)}>
           <span className={`ballot-radio${multi ? ' is-check' : ''}`} aria-hidden="true">{on && (multi ? <Icon name="check" size={16} /> : <span className="ballot-radio-dot" />)}</span>
           <Avatar url={c.photoUrl} name={c.name} size={compact ? 'sm' : 'lg'} />
@@ -364,9 +401,17 @@ export function PositionBallot({ token, position, campaign, single, onBack, onDo
             </div>
           )}
           <div className="ballot-footer">
+            {dropped && <p className="ballot-footer-hint" role="status">{dropped} has withdrawn and was removed from your selection.</p>}
+            {chosen.length > 0 && !abstaining && (
+              <p className="ballot-selected">Selected:{' '}
+                {chosen.map((c, i) => (
+                  <span key={c.id}>{i > 0 && ', '}<button type="button" className="ballot-selected-link" onClick={() => jumpTo(c.id)} aria-label={`Selected: ${c.name}. Show this card`}>{c.name}</button></span>
+                ))}
+              </p>
+            )}
             {ready
               ? <button type="button" className="ballot-btn ballot-btn-primary" onClick={() => setStep('confirm')}>
-                  {abstaining ? 'Review: abstain' : multi ? `Review ${seats} votes` : `Review vote for ${firstName(chosen[0].name)}`}
+                  {abstaining ? 'Review: abstain' : multi ? `Review ${seats} votes` : `Review vote for ${chosen[0].name}`}
                 </button>
               : multi
                 ? <button type="button" className="ballot-btn ballot-btn-primary" disabled>{pickedPeople === 0 ? `Select ${seats} candidates` : `${pickedPeople} of ${seats} selected`}</button>
@@ -404,10 +449,6 @@ export function PositionBallot({ token, position, campaign, single, onBack, onDo
 /** The campaign home: a block per position (or, with one position, the ballot itself), and the states around it. */
 export function CampaignBlocks({ token, info, reload }: { token: string; info: BlocksInfo; now?: Date; reload: () => Promise<unknown> }) {
   const [open, setOpen] = useState<{ id: string; title: string } | null>(null);
-  const [results, setResults] = useState<(Results & { title: string }) | null>(null);
-  useEffect(() => {
-    if (info.resultsPublished) void api<Results & { title: string }>('GET', `/api/vote/${token}/results`).then(setResults).catch(() => undefined);
-  }, [info.resultsPublished, token]);
 
   const total = info.positions.length;
   const voted = info.positions.filter((p) => p.voted).length;
@@ -416,14 +457,7 @@ export function CampaignBlocks({ token, info, reload }: { token: string; info: B
   const campaign = { title: info.title, closesAt: info.closesAt, resultsReleaseAt: info.resultsReleaseAt ?? null };
   const goVotes = <Link className="ballot-btn ballot-btn-secondary" to="/votes">Go to My votes</Link>;
 
-  const published = info.resultsPublished && results && (
-    <section className="card card-pad">
-      <h2>Results</h2>
-      {results.positions ? <PositionResults r={results} /> : null}
-      {results.publication && <p className="muted small">Published by {results.publication.by ?? 'the campaign administrators'} on {fmtDate(results.publication.at)}{results.publication.scheduled ? ' (scheduled in advance; approved by the person who scheduled it)' : ''}.</p>}
-      <NoticeList notices={results.notices} />
-    </section>
-  );
+  const announced = info.announcement ? <AnnouncementCard a={info.announcement} /> : null;
 
   if (info.voterState === 'can_vote') {
     // One position: straight to its ballot. Several: the chosen block's ballot.
@@ -446,10 +480,10 @@ export function CampaignBlocks({ token, info, reload }: { token: string; info: B
       <div className="ballot-screen">
         <p className="ballot-eyebrow">{info.title}</p>
         <BallotState icon="lock" title="Voting has closed" actions={goVotes}>
-          <p className="ballot-state-text">{info.resultsPublished ? 'The results are below.' : info.resultsReleaseAt ? `Results will be shared on ${fmtDate(info.resultsReleaseAt)}.` : 'The results have not been published yet.'}</p>
+          <p className="ballot-state-text">{info.announcement ? 'The winners are announced below.' : winnersLine(info.resultsReleaseAt)}</p>
         </BallotState>
         <NoticeBanner notices={info.notices} />
-        {published}
+        {announced}
       </div>
     );
   }
@@ -459,7 +493,7 @@ export function CampaignBlocks({ token, info, reload }: { token: string; info: B
       <div className="ballot-screen">
         <p className="ballot-eyebrow">{info.title}</p>
         <BallotState tone="success" icon="check" title="You've already voted" actions={goVotes}>
-          <p className="ballot-state-text">Your vote for {p.title} is recorded and can't be changed. {info.resultsReleaseAt ? `Results will be shared on ${fmtDate(info.resultsReleaseAt)}.` : 'Results will be shared after voting closes.'}</p>
+          <p className="ballot-state-text">Your vote for {p.title} is recorded and can't be changed. {winnersLine(info.resultsReleaseAt)}</p>
           <ReceiptCode code={p.receiptCode} />
         </BallotState>
       </div>
@@ -496,7 +530,7 @@ export function CampaignBlocks({ token, info, reload }: { token: string; info: B
           </li>
         ))}
       </ul>
-      {published}
+      {announced}
     </div>
   );
 }

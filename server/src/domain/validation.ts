@@ -36,7 +36,7 @@ export const createCampaignBody = z.object({
   nominate_eligibility: z.enum(['all', 'umoja']).nullable().optional(),
   /** Show the results grouped by region. */
   results_group_by_region: z.boolean().optional(),
-  /** Display only: the receipt says "Results will be shared on <date>". Publishing stays manual. */
+  /** Display only: the receipt says "Winners will be announced on <date>". */
   results_release_at: isoDate.optional(),
 }).strict().refine(windowOk, windowMsg)
   .refine((v) => v.eligibility !== 'list' || (v.emails?.length ?? 0) > 0, { message: 'Add at least one email address for a listed vote', path: ['emails'] })

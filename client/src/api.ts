@@ -79,7 +79,7 @@ export interface Position {
 export interface Nomination { id: string; name: string; bio: string | null; pledge?: string | null; photo_url: string | null; status: CandidateStatus; region_id: string | null; region: string | null; submitted_at: string | null; submitted_by: string | null; submitted_by_email: string | null; review_reason: string | null }
 export interface Campaign {
   id: string; title: string; description: string | null; status: 'draft' | 'open' | 'closed';
-  opens_at: string | null; closes_at: string | null; eligibility: 'all' | 'list' | 'umoja'; results_published: boolean;
+  opens_at: string | null; closes_at: string | null; eligibility: 'all' | 'list' | 'umoja'; winners_announced_at?: string | null;
   share_token: string; share_url: string; turnout?: number; eligible_count?: number | null; archived_at?: string | null;
   /** Title, description, closing time (and candidates until the first vote) stay editable after the campaign starts. */
   allow_edits_after_start?: boolean;
@@ -93,9 +93,7 @@ export interface Campaign {
   receipts_purged_at?: string | null;
   /** Minimum turnout (percent of eligible voters); a result below it is flagged. Set while a draft. */
   quorum_percent?: number | null;
-  /** When the closed result is published automatically (set by the creator or a co-admin). */
-  publish_at?: string | null;
-  /** Display only: the voter's receipt says "Results will be shared on <date>". Publishing stays manual. */
+  /** Display only: the voter's receipt says "Winners will be announced on <date>". */
   results_release_at?: string | null;
 }
 export interface IntegrityBlock { ballots: number; receipts: number; at: string }
@@ -113,7 +111,7 @@ export interface Publication { by: string | null; at: string; scheduled: boolean
 export interface ResultCandidate { id: string; name: string; votes: number; is_abstain?: boolean; withdrawn?: boolean; region?: string | null; position_id?: string }
 /** One position's result. While the campaign is open `candidates` is null: only the turnout of the position is shown. */
 export interface PositionResult { id: string; title: string; description?: string | null; candidates: ResultCandidate[] | null; turnout: { votes: number; eligible?: number | null }; winners?: { id: string; name: string; votes: number }[]; tie?: Tie | null }
-export interface Results { status: string; results_published: boolean; archived?: boolean; positions?: PositionResult[]; group_by_region?: boolean; candidates: ResultCandidate[] | null; turnout: { votes: number; eligible: number | null }; resets?: ResetEntry[]; notices?: Notice[]; tie?: Tie | null; runoff?: RunoffInfo; quorum?: Quorum | null; publication?: Publication | null }
+export interface Results { status: string; winners_announced_at?: string | null; archived?: boolean; positions?: PositionResult[]; group_by_region?: boolean; candidates: ResultCandidate[] | null; turnout: { votes: number; eligible: number | null }; resets?: ResetEntry[]; notices?: Notice[]; tie?: Tie | null; runoff?: RunoffInfo; quorum?: Quorum | null; publication?: Publication | null }
 export interface SealCheck {
   chain_ok: boolean; chain_checked: number; sealed: boolean; sealed_at: string | null; seal_hash: string | null; seal_seq: number | null;
   tallies_match: boolean | null; receipts_match: boolean | null; sealed_tallies: { name: string; votes: number }[]; sealed_turnout: number | null;
@@ -122,7 +120,7 @@ export interface SealCheck {
 
 export interface SummaryCampaign {
   id: string; title: string; status: 'draft' | 'open' | 'closed'; created_at: string; opens_at: string | null; closes_at: string | null;
-  started_at: string | null; closed_at: string | null; results_published: boolean; turnout: number; eligible_count: number | null;
+  started_at: string | null; closed_at: string | null; winners_announced_at?: string | null; turnout: number; eligible_count: number | null;
 }
 export interface Winner { id: string; name: string; votes: number; tie: boolean; photo_url: string | null }
 export interface Summary {
@@ -135,3 +133,13 @@ export interface Summary {
 export const fmtDate = (iso: string | null) => formatWindhoek(iso);
 export const toLocalInput = (iso: string | null) => isoToLocalInput(iso);
 export const fromLocalInput = (v: string) => localInputToIso(v);
+
+/** The "Announce winners" preview for the creator (GET /api/campaigns/:id/announcement). Names only: no counts. */
+export interface AnnouncePreview {
+  available: boolean; announced: { at: string; by: string | null } | null;
+  positions: { id: string; title: string; seats: number; winners: string[]; tie: string[] | null }[];
+  text: string;
+  blocks: { code: 'not_closed' | 'tied' | 'integrity_failed' | 'receipts_purged' | 'already_announced'; message: string; positions?: string[] }[];
+  below_quorum: { votes: number; needed: number | null; percent: number } | null;
+  email: { available: false; reason: string };
+}

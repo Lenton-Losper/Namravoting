@@ -119,7 +119,7 @@ describe('choose, confirm, receipt', () => {
     expect(screen.getByText('Select a candidate to continue')).toBeTruthy();
     await user.click(screen.getByRole('button', { name: /^Ben Basson/ }));
     expect(screen.getByRole('button', { name: /^Ben Basson/ }).getAttribute('aria-pressed')).toBe('true');
-    await user.click(screen.getByRole('button', { name: 'Review vote for Ben' }));
+    await user.click(screen.getByRole('button', { name: 'Review vote for Ben Basson' }));
     const sheet = screen.getByRole('dialog', { name: 'Confirm your vote' });
     expect(within(sheet).getByText('Step 2 of 2 · Confirm')).toBeTruthy();
     expect(within(sheet).getByText('Ben Basson')).toBeTruthy();
@@ -128,7 +128,7 @@ describe('choose, confirm, receipt', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(screen.getByRole('button', { name: /^Ben Basson/ }).getAttribute('aria-pressed')).toBe('true');
     expect(calls.some((c) => c.method === 'POST')).toBe(false);
-    await user.click(screen.getByRole('button', { name: 'Review vote for Ben' }));
+    await user.click(screen.getByRole('button', { name: 'Review vote for Ben Basson' }));
     await user.keyboard('{Escape}');                                                           // Escape also goes back, without voting
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(calls.some((c) => c.method === 'POST')).toBe(false);
@@ -139,7 +139,7 @@ describe('choose, confirm, receipt', () => {
     const user = userEvent.setup();
     page();
     await user.click(await screen.findByRole('button', { name: /^Ben Basson/ }));
-    await user.click(screen.getByRole('button', { name: 'Review vote for Ben' }));
+    await user.click(screen.getByRole('button', { name: 'Review vote for Ben Basson' }));
     table[URL_INFO] = info({ voterState: 'already_voted', progress: { voted: 1, total: 1 } }, [{ id: 'p1', title: 'Finance Officer', description: null, seats: 1, voted: true, candidateCount: 2, receiptCode: CODE }]);
     await user.click(screen.getByRole('button', { name: 'Submit my vote' }));
     expect(await screen.findByRole('heading', { name: 'Your vote is in' })).toBeTruthy();
@@ -147,7 +147,7 @@ describe('choose, confirm, receipt', () => {
     expect(calls.find((c) => c.method === 'POST' && c.url === URL_POS)?.body).toEqual({ candidateId: 'c2' });
     expect(screen.getByText(CODE)).toBeTruthy();
     expect(screen.getByText(/It doesn't show who you voted for/)).toBeTruthy();
-    expect(screen.getByText(/Results will be shared on 5 Jan/)).toBeTruthy();
+    expect(screen.getByText(/Winners will be announced on 5 Jan/)).toBeTruthy();
     expect(document.body.textContent).not.toContain('Ben');
     await user.click(screen.getByRole('button', { name: 'Done' }));
     expect(await screen.findByRole('heading', { name: "You've already voted" })).toBeTruthy();      // the true state, from the server
@@ -158,9 +158,9 @@ describe('choose, confirm, receipt', () => {
     const user = userEvent.setup();
     page();
     await user.click(await screen.findByRole('button', { name: /^Ben Basson/ }));
-    await user.click(screen.getByRole('button', { name: 'Review vote for Ben' }));
+    await user.click(screen.getByRole('button', { name: 'Review vote for Ben Basson' }));
     await user.click(screen.getByRole('button', { name: 'Submit my vote' }));
-    expect(await screen.findByText(/Results will be shared after voting closes/)).toBeTruthy();
+    expect(await screen.findByText(/Winners will be announced after voting closes/)).toBeTruthy();
   });
 
   it('abstaining is reviewed and confirmed in its own words, and voted like any candidate', async () => {
@@ -179,7 +179,7 @@ describe('choose, confirm, receipt', () => {
     const user = userEvent.setup();
     page();
     await user.click(await screen.findByRole('button', { name: /^Ben Basson/ }));
-    await user.click(screen.getByRole('button', { name: 'Review vote for Ben' }));
+    await user.click(screen.getByRole('button', { name: 'Review vote for Ben Basson' }));
     statuses[`POST ${URL_POS}`] = 500; statuses[`GET ${URL_POS}`] = 500;   // the server cannot be asked either
     await user.click(screen.getByRole('button', { name: 'Submit my vote' }));
     expect(await screen.findByRole('heading', { name: 'Your vote may not have been recorded' })).toBeTruthy();
@@ -237,7 +237,7 @@ describe('the states around the ballot', () => {
     page();
     expect(await screen.findByRole('heading', { name: "You've already voted" })).toBeTruthy();
     expect(screen.getByText(CODE)).toBeTruthy();
-    expect(screen.getByText(/Results will be shared on 5 Jan/)).toBeTruthy();
+    expect(screen.getByText(/Winners will be announced on 5 Jan/)).toBeTruthy();
   });
   it('already voted from before receipt numbers existed: no code panel, no crash', async () => {
     table[URL_INFO] = info({ voterState: 'already_voted', progress: { voted: 1, total: 1 } }, [{ id: 'p1', title: 'Finance Officer', description: null, seats: 1, voted: true, candidateCount: 2, receiptCode: null }]);
@@ -253,11 +253,11 @@ describe('the states around the ballot', () => {
     table[URL_INFO] = info({ voterState: 'closed' });
     const second = page();
     expect(await screen.findByRole('heading', { name: 'Voting has closed' })).toBeTruthy();
-    expect(screen.getByText(/Results will be shared on 5 Jan/)).toBeTruthy();
+    expect(screen.getByText(/Winners will be announced on 5 Jan/)).toBeTruthy();
     second.unmount();
     table[URL_INFO] = info({ voterState: 'closed', resultsReleaseAt: null });
     page();
-    expect(await screen.findByText('The results have not been published yet.')).toBeTruthy();
+    expect(await screen.findByText('Winners will be announced after voting closes.')).toBeTruthy();
   });
 });
 
@@ -272,7 +272,7 @@ describe('the results date on the campaign forms', () => {
     cleanup(); calls = [];
     render(<MemoryRouter><NewCampaign /></MemoryRouter>);
     await user.type(screen.getByLabelText(/^Title/), 'T2');
-    await user.type(screen.getByLabelText(/^Results will be shared on/), '2030-01-05T08:00');
+    await user.type(screen.getByLabelText(/^Winners will be announced on/), '2030-01-05T08:00');
     await user.click(screen.getByRole('button', { name: 'Create draft' }));
     await waitFor(() => expect(calls.find((c) => c.method === 'POST')?.body).toMatchObject({ results_release_at: expect.stringMatching(/^2030-01-05T06:00:00/) }));   // 08:00 Windhoek (CAT, UTC+2)
   });
@@ -281,7 +281,7 @@ describe('the results date on the campaign forms', () => {
     const user = userEvent.setup();
     table[`GET /api/campaigns/${ID}`] = { id: ID, title: 'T', description: null, status: 'draft', opens_at: null, closes_at: null, results_release_at: '2030-01-05T06:00:00Z', eligibility: 'umoja', allow_abstain: false, allow_edits_after_start: false, quorum_percent: null, candidates: [], eligible_emails: [], turnout: 0, umoja_active_count: 0, my_role: 'owner' };
     render(<MemoryRouter initialEntries={[`/admin/c/${ID}/edit`]}><Routes><Route path="/admin/c/:id/edit" element={<EditCampaign />} /></Routes></MemoryRouter>);
-    const field = (await screen.findByLabelText(/^Results will be shared on/)) as HTMLInputElement;
+    const field = (await screen.findByLabelText(/^Winners will be announced on/)) as HTMLInputElement;
     expect(field.value).toBe('2030-01-05T08:00');
     await user.clear(field);
     await user.click(screen.getByRole('button', { name: 'Save details' }));
@@ -390,7 +390,7 @@ describe('every new ballot screen has no axe violations (WCAG 2.1 A and AA, plus
     const user = userEvent.setup();
     const { container } = page();
     await user.click(await screen.findByRole('button', { name: /^Ben/ }));
-    await user.click(screen.getByRole('button', { name: 'Review vote for Ben' }));
+    await user.click(screen.getByRole('button', { name: 'Review vote for Ben Basson' }));
     await screen.findByRole('dialog');
     expect(await audit(container)).toEqual([]);
   });
@@ -411,7 +411,7 @@ describe('every new ballot screen has no axe violations (WCAG 2.1 A and AA, plus
     const user = userEvent.setup();
     const { container } = page();
     await user.click(await screen.findByRole('button', { name: /^Ben/ }));
-    await user.click(screen.getByRole('button', { name: 'Review vote for Ben' }));
+    await user.click(screen.getByRole('button', { name: 'Review vote for Ben Basson' }));
     await user.click(screen.getByRole('button', { name: 'Submit my vote' }));
     await screen.findByRole('heading', { name: 'Your vote is in' });
     expect(await audit(container)).toEqual([]);
@@ -421,7 +421,7 @@ describe('every new ballot screen has no axe violations (WCAG 2.1 A and AA, plus
     const user = userEvent.setup();
     const { container } = page();
     await user.click(await screen.findByRole('button', { name: /^Ben/ }));
-    await user.click(screen.getByRole('button', { name: 'Review vote for Ben' }));
+    await user.click(screen.getByRole('button', { name: 'Review vote for Ben Basson' }));
     statuses[`POST ${URL_POS}`] = 500; statuses[`GET ${URL_POS}`] = 500;   // the server cannot be asked either
     await user.click(screen.getByRole('button', { name: 'Submit my vote' }));
     await screen.findByRole('heading', { name: 'Your vote may not have been recorded' });
@@ -451,7 +451,7 @@ describe('every new ballot screen has no axe violations (WCAG 2.1 A and AA, plus
     a.unmount();
     table[`GET /api/campaigns/${ID}`] = { id: ID, title: 'T', description: null, status: 'draft', opens_at: null, closes_at: null, results_release_at: null, eligibility: 'umoja', allow_abstain: false, allow_edits_after_start: false, quorum_percent: null, candidates: [], eligible_emails: [], turnout: 0, umoja_active_count: 0, my_role: 'owner' };
     const b = render(<MemoryRouter initialEntries={[`/admin/c/${ID}/edit`]}><Routes><Route path="/admin/c/:id/edit" element={<EditCampaign />} /></Routes></MemoryRouter>);
-    await screen.findByLabelText(/^Results will be shared on/);
+    await screen.findByLabelText(/^Winners will be announced on/);
     expect(await audit(b.container)).toEqual([]);
   });
 });
@@ -529,7 +529,7 @@ describe('a position with several seats', () => {
     table[URL_INFO] = info(); table[`GET ${URL_POS}`] = ballot(); table[`POST ${URL_POS}`] = { recorded: true, receiptCode: CODE };
     const user = userEvent.setup(); page();
     await user.click(await screen.findByRole('button', { name: /^Ben Basson/ }));
-    await user.click(screen.getByRole('button', { name: 'Review vote for Ben' }));
+    await user.click(screen.getByRole('button', { name: 'Review vote for Ben Basson' }));
     await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Submit my vote' }));
     await screen.findByText('Your vote is in');
     expect(calls.find((c) => c.method === 'POST' && c.url === URL_POS)?.body).toEqual({ candidateId: 'c2' });
@@ -567,5 +567,59 @@ describe('a position with several seats', () => {
     expect(await audit(container)).toEqual([]);
     await user.click(screen.getByRole('button', { name: 'Review 2 votes' }));
     expect(await audit(document.body)).toEqual([]);
+  });
+});
+
+// ---- the footer always names who is selected, and the selected card can always be found ------------------------------------------------------------
+describe('the footer and the selected card', () => {
+  const scroll = vi.fn();
+  beforeEach(() => { scroll.mockClear(); (Element.prototype as unknown as { scrollIntoView: unknown }).scrollIntoView = scroll; });
+  afterEach(() => { delete (Element.prototype as unknown as { scrollIntoView?: unknown }).scrollIntoView; });
+  const idsScrolled = () => scroll.mock.contexts.map((c) => (c as HTMLElement).id);
+
+  it('names the candidate in FULL, with a "Selected: Name" link that scrolls to the card and focuses it', async () => {
+    table[URL_INFO] = info(); table[`GET ${URL_POS}`] = ballot();
+    const user = userEvent.setup(); page();
+    await user.click(await screen.findByRole('button', { name: /^Ben Basson/ }));
+    expect(screen.getByRole('button', { name: 'Review vote for Ben Basson' })).toBeTruthy();
+    const link = screen.getByRole('button', { name: 'Selected: Ben Basson. Show this card' });
+    expect(link.closest('.ballot-selected')?.textContent).toBe('Selected: Ben Basson');
+    await user.click(link);
+    expect(idsScrolled()).toEqual(['cand-c2']);
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: /^Ben Basson/ }));
+  });
+
+  it('two candidates with the same first name are told apart in the footer', async () => {
+    table[URL_INFO] = info();
+    table[`GET ${URL_POS}`] = ballot([cand('g1', 'Gwen Amupolo'), cand('g2', 'Gwen Kaura'), ABSTAIN]);
+    const user = userEvent.setup(); page();
+    await user.click(await screen.findByRole('button', { name: /^Gwen Kaura/ }));
+    expect(screen.getByRole('button', { name: 'Review vote for Gwen Kaura' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Review vote for Gwen' })).toBeNull();
+  });
+
+  it('a pick restored after signing in again is scrolled into view', async () => {
+    table[URL_INFO] = info(); table[`GET ${URL_POS}`] = ballot();
+    sessionStorage.setItem(`namra:pending-vote:${TOKEN}:p1`, 'c2');
+    page();
+    expect(await screen.findByRole('button', { name: 'Review vote for Ben Basson' })).toBeTruthy();
+    await waitFor(() => expect(idsScrolled()).toEqual(['cand-c2']));
+  });
+
+  it('a selected candidate who has withdrawn is dropped, and the voter is told', async () => {
+    table[URL_INFO] = info(); table[`GET ${URL_POS}`] = ballot();   // Cy Cloete (c3) is withdrawn
+    sessionStorage.setItem(`namra:pending-vote:${TOKEN}:p1`, 'c3');
+    page();
+    expect(await screen.findByText(/Cy Cloete has withdrawn and was removed from your selection/)).toBeTruthy();
+    expect((screen.getByRole('button', { name: 'Review vote' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByRole('button', { name: /^Selected:/ })).toBeNull();
+    expect(screen.getByRole('button', { name: /^Cy Cloete/ }).getAttribute('aria-pressed')).toBe('false');
+  });
+
+  it('has no axe violations with a selection (the Selected link)', async () => {
+    table[URL_INFO] = info(); table[`GET ${URL_POS}`] = ballot();
+    const user = userEvent.setup(); const { container } = page();
+    await user.click(await screen.findByRole('button', { name: /^Ben Basson/ }));
+    expect(await audit(container)).toEqual([]);
   });
 });

@@ -1,11 +1,10 @@
-// Quorum, scheduled publishing and "published by" in the UI.
+// Quorum in the UI. (Publishing and scheduled publishing are gone: see announce.test.tsx for "Announce winners".)
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { CampaignPage } from './pages/admin/CampaignPage';
 import { NewCampaign } from './pages/admin/NewCampaign';
-import { VotePage } from './pages/Vote';
 import { ResultsChart } from './ui';
 import { resetCsrf } from './api';
 
@@ -49,24 +48,6 @@ describe('quorum', () => {
     expect(screen.getByRole('status').textContent).toContain('Quorum met: 3 of the 3 votes needed');
   });
 
-  it('publishing below the quorum asks first, and sends the acknowledgement', async () => {
-    table[`POST /api/campaigns/${ID}/publish`] = {};
-    const user = await campaign(detail(), results());
-    await user.click(await screen.findByRole('button', { name: 'Publish results' }));
-    const dlg = await screen.findByRole('dialog');
-    expect(within(dlg).getByText(/Quorum NOT met/)).toBeTruthy();
-    expect(calls.some((c) => c.url.endsWith('/publish'))).toBe(false);                    // nothing sent until confirmed
-    await user.click(within(dlg).getByRole('button', { name: 'Publish anyway' }));
-    await waitFor(() => expect(calls.find((c) => c.url.endsWith('/publish'))?.body).toEqual({ acknowledge_below_quorum: true }));
-  });
-
-  it('publishing at quorum needs no extra step', async () => {
-    const user = await campaign(detail(), results({ quorum: { ...notMet, votes: 3, met: true } }));
-    await user.click(await screen.findByRole('button', { name: 'Publish results' }));
-    await waitFor(() => expect(calls.find((c) => c.url.endsWith('/publish'))?.body).toEqual({}));
-    expect(screen.queryByRole('dialog')).toBeNull();
-  });
-
   it('the create form sends a quorum for a listed vote, and disables it for all staff', async () => {
     const user = userEvent.setup();
     table['POST /api/campaigns'] = { id: 'new' };
@@ -81,30 +62,5 @@ describe('quorum', () => {
     render(<MemoryRouter><NewCampaign /></MemoryRouter>);
     await user.click(screen.getByLabelText(/All signed-in NamRA staff/));
     expect((screen.getByLabelText(/^Quorum/) as HTMLInputElement).disabled).toBe(true);
-  });
-});
-
-describe('scheduled publishing and published by', () => {
-  it('schedules the publication (Windhoek time) and can cancel it', async () => {
-    table[`PUT /api/campaigns/${ID}/publish-schedule`] = {};
-    const user = await campaign(detail(), results({ quorum: null }));
-    const input = await screen.findByLabelText(/^Publish automatically at/);
-    await user.type(input, '2030-05-01T10:00');
-    await user.click(screen.getByRole('button', { name: 'Schedule' }));
-    await waitFor(() => expect(calls.find((c) => c.method === 'PUT')?.body).toEqual({ publish_at: '2030-05-01T08:00:00.000Z' }));   // 10:00 CAT = 08:00 UTC
-    cleanup();
-    table[`GET /api/campaigns/${ID}`] = detail({ publish_at: '2030-05-01T08:00:00Z' });
-    await campaign(detail({ publish_at: '2030-05-01T08:00:00Z' }), results({ quorum: null }));
-    expect(await screen.findByText(/published automatically on 1 May 2030, 10:00 CAT/)).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Cancel schedule' })).toBeTruthy();
-  });
-
-  it('voters see who published the results and when', async () => {
-    const TOKEN = 'a'.repeat(32);
-    table[`GET /api/vote/${TOKEN}`] = { title: 'T', description: null, opensAt: null, closesAt: null, resultsPublished: true, voterState: 'closed', notices: [], candidates: [] };
-    table[`GET /api/vote/${TOKEN}/results`] = results({ publication: { by: 'Olivia Owner', at: '2030-05-01T08:00:00Z', scheduled: true } });
-    render(<MemoryRouter initialEntries={[`/v/${TOKEN}`]}><Routes><Route path="/v/:shareToken" element={<VotePage />} /></Routes></MemoryRouter>);
-    expect(await screen.findByText(/Published by Olivia Owner on 1 May 2030, 10:00 CAT \(scheduled in advance; approved by the person who scheduled it\)/)).toBeTruthy();
-    expect(screen.getByText(/Quorum NOT met/)).toBeTruthy();
   });
 });

@@ -55,7 +55,7 @@ export function NewCampaign() {
               <input type="datetime-local" value={opens} onChange={(e) => setOpens(e.target.value)} /></label>
             <label>Closes at <span className="field-helper">Optional. Windhoek time (CAT). Closes automatically at this time.</span>
               <input type="datetime-local" value={closes} onChange={(e) => setCloses(e.target.value)} /></label>
-            <label>Results will be shared on <span className="field-helper">Optional. Windhoek time (CAT). Display only: voters see it on their receipt. Publishing results stays manual.</span>
+            <label>Winners will be announced on <span className="field-helper">Optional. Windhoek time (CAT). Display only: voters see it on their receipt.</span>
               <input type="datetime-local" value={release} onChange={(e) => setRelease(e.target.value)} /></label>
           </div>
         </section>

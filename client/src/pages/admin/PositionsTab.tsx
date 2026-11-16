@@ -250,7 +250,7 @@ function PositionDetail({ c, p, reload, editable, canEditPosition }: { c: Campai
         <Dialog title={`${withdrawing.name} withdraws?`} confirmLabel="Withdraw candidate" danger busy={busy} confirmDisabled={why.trim().length < 10}
           onConfirm={() => { const x = withdrawing; setWithdrawing(null); void act(() => api('POST', `/api/campaigns/${c.id}/candidates/${x.id}/withdraw`, { reason: why.trim() })); }} onCancel={() => setWithdrawing(null)}>
           <p>{withdrawing.name} stays on the ballot but can no longer be chosen. Votes already cast for them become void. This cannot be undone.</p>
-          <label>Reason<span className="field-helper">At least 10 characters. Voters will see it on the ballot page and in the published results.</span><textarea rows={3} value={why} onChange={(e) => setWhy(e.target.value)} maxLength={1000} /></label>
+          <label>Reason<span className="field-helper">At least 10 characters. Voters will see it on the ballot page.</span><textarea rows={3} value={why} onChange={(e) => setWhy(e.target.value)} maxLength={1000} /></label>
         </Dialog>
       )}
     </section>
@@ -494,7 +494,7 @@ export function SettingsTab({ c, reload }: { c: CampaignDetail; reload: () => Pr
       <section className="form-section">
         <SectionTitle icon="chart">Results</SectionTitle>
         <label className="check"><input type="checkbox" checked={!!c.results_group_by_region} disabled={busy} onChange={(e) => void setGroup(e.target.checked)} /> Show results grouped by region</label>
-        <p className="field-helper">Applies to the results page, published results and the CSV, Excel and PDF exports, and groups the ballot by region with a region filter (a position with more than 8 candidates always gets them). You can change it at any time.</p>
+        <p className="field-helper">Applies to the results page and the CSV, Excel and PDF exports, and groups the ballot by region with a region filter (a position with more than 8 candidates always gets them). You can change it at any time.</p>
       </section>
       <ErrorBox message={error} />
       <RegionsEditor c={c} reload={reload} />

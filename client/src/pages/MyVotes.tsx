@@ -5,7 +5,7 @@ import { Icon } from '../icons';
 import { closesIn, useNow } from '../time';
 import { ErrorBox, PageTitle, Spinner } from '../ui';
 
-interface Item { shareToken: string; title: string; description: string | null; closesAt: string | null; opensAt: string | null; resultsPublished: boolean; voterState: string; positions?: { voted: number; total: number } }
+interface Item { shareToken: string; title: string; description: string | null; closesAt: string | null; opensAt: string | null; voterState: string; positions?: { voted: number; total: number }; receipts?: { position: string; code: string }[] }
 
 const label: Record<string, { text: string; cls: string }> = {
   can_vote: { text: 'Vote now', cls: 'chip-open' }, already_voted: { text: 'Voted', cls: 'chip-closed' },
@@ -38,9 +38,14 @@ export function MyVotes() {
                   <strong className="vote-item-title">{c.title}</strong>
                   {c.description && <p className="muted small excerpt">{c.description}</p>}
                   {c.positions && c.positions.total > 1 && <p className="meta vote-progress-line"><Icon name="check" /> {c.positions.voted} of {c.positions.total} positions voted</p>}
+                  {c.voterState === 'closed' && (c.receipts?.length ?? 0) > 0 && (
+                    <ul className="list my-receipts" aria-label={`Your receipt numbers for ${c.title}`}>
+                      {c.receipts!.map((r, i) => <li key={i} className="position-receipt">{c.receipts!.length > 1 ? `${r.position}: ` : 'Receipt '}{r.code}</li>)}
+                    </ul>
+                  )}
                   <p className="meta"><Icon name="clock" /> {c.closesAt ? `${fmtDate(c.closesAt)}${left ? ` · ${left.replace('Closes in ', '')} left` : ''}` : 'No closing time'}</p>
                 </div>
-                <span className={`chip ${l.cls}`}>{c.voterState === 'closed' && c.resultsPublished ? 'Results' : l.text}</span>
+                <span className={`chip ${l.cls}`}>{l.text}</span>
               </Link>
             </li>
           );
