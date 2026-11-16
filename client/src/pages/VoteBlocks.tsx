@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
 import { api, ApiError, fmtDate, type Notice, type Results } from '../api';
 import { Icon } from '../icons';
@@ -257,6 +258,10 @@ export function PositionBallot({ token, position, campaign, single, onBack, onDo
   }
 
   const release = campaign.resultsReleaseAt ?? ballot?.campaign?.resultsReleaseAt ?? null;
+  // The Help button lives in the white top bar (right side, 44x44) when the page has one; without a bar it sits beside the back link.
+  const [helpSlot, setHelpSlot] = useState<HTMLElement | null>(null);
+  useEffect(() => { setHelpSlot(document.getElementById('topbar-help')); }, []);
+  const helpButton = <button type="button" className="help-button" aria-label="Help: how voting works" onClick={() => setHelp(true)}><Icon name="help" size={22} /></button>;
 
   if (step === 'receipt') {
     return (
@@ -303,8 +308,9 @@ export function PositionBallot({ token, position, campaign, single, onBack, onDo
     <div className="ballot-screen">
       <div className="ballot-topline">
         {single ? <BackLink to="/votes">My votes</BackLink> : <button type="button" className="back-link back-button" onClick={onBack}>← All positions</button>}
-        <button type="button" className="help-button" aria-label="Help: how voting works" onClick={() => setHelp(true)}><Icon name="help" size={22} /></button>
+        {!helpSlot && helpButton}
       </div>
+      {helpSlot && createPortal(helpButton, helpSlot)}
       <p className="ballot-eyebrow">{campaign.title}</p>
       <p className="ballot-step">Step 1 of 2 · Choose{multi ? ` ${seats}` : ''}</p>
       <h1 className="ballot-title">{position.title}</h1>

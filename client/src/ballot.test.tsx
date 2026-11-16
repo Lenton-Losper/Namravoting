@@ -205,6 +205,19 @@ describe('the statement and help sheets', () => {
     expect(screen.getByRole('button', { name: /^Alice Amutenya/ }).getAttribute('aria-pressed')).toBe('true');
   });
 
+  it('the help button sits in the white top bar when there is one (right side), and beside the back link when there is not', async () => {
+    table[URL_INFO] = info(); table[`GET ${URL_POS}`] = ballot();
+    const slot = document.createElement('div'); slot.id = 'topbar-help'; document.body.prepend(slot);
+    page();
+    const btn = await screen.findByRole('button', { name: 'Help: how voting works' });
+    expect(slot.contains(btn)).toBe(true);
+    expect(document.querySelector('.ballot-topline')?.contains(btn)).toBe(false);
+    cleanup(); slot.remove();
+    page();
+    const inline = await screen.findByRole('button', { name: 'Help: how voting works' });
+    expect(document.querySelector('.ballot-topline')?.contains(inline)).toBe(true);
+  });
+
   it('the help button explains the three steps and anonymity', async () => {
     table[URL_INFO] = info(); table[`GET ${URL_POS}`] = ballot();
     const user = userEvent.setup();

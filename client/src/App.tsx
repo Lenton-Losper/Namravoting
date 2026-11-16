@@ -53,6 +53,7 @@ function TopBar() {
               <span className="avatar-round" aria-hidden="true">{initials(user.displayName).slice(0, 1)}</span>
               <button className="signout-btn" onClick={() => void logout()}>Sign out →</button>
             </div>
+            <div id="topbar-help" className="topbar-slot" />   {/* the ballot puts its Help button here (spec: top bar, right side, 44x44) */}
             <button className="hamburger" aria-label={open ? 'Close menu' : 'Open menu'} aria-expanded={open} aria-controls="mobile-menu" onClick={() => setOpen((o) => !o)}>
               <Icon name={open ? 'close' : 'menu'} size={22} />
             </button>

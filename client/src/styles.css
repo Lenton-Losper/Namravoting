@@ -638,3 +638,5 @@ body:has(.ballot-screen) .hamburger { color: var(--b-navy); border-color: var(--
   .prow-head { padding: 16px; }
   .prow-body { padding: 16px; }
 }
+.topbar-slot { display: flex; align-items: center; }
+.topbar-slot:empty { display: none; }
