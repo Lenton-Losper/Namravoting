@@ -64,7 +64,7 @@ describe('identity comes only from the server session', () => {
     const s2 = await login(app, S2);
     await s2.get(`/api/vote/${c.token}?email=${S1.email}`).set('x-user-email', S1.email).expect(403);
     await s2.post(`/api/vote/${c.token}?email=${S1.email}`).set('x-user-email', S1.email).send({ candidateId: c.candidates[0] }).expect(403);
-    await s2.get(`/api/vote/${c.token}/results?email=${S1.email}`).set('x-user-email', S1.email).expect(403);
+    await s2.get(`/api/vote/${c.token}/results?email=${S1.email}`).set('x-user-email', S1.email).expect(404);   // there is no results route for anyone
     await s2.get('/api/campaigns/mine').set('x-roles', 'CampaignAdmin').set('x-user-roles', 'CampaignAdmin').expect(403);
     expect(await count('vote_receipts', c.id)).toBe(0);
   });

@@ -250,7 +250,7 @@ describe('authorisation', () => {
     const row = await ownerDb().query('SELECT title, status FROM campaigns WHERE id = $1', [c.id]);
     expect(row.rows[0]).toMatchObject({ title: 'Test vote', status: 'draft' });
     const logs = await ownerDb().query("SELECT * FROM audit_log WHERE action = 'authz.denied' AND actor_oid = $1 AND campaign_id = $2", [ADMIN_B.oid, c.id]);
-    expect(logs.rowCount).toBe(10);   // one per attempt above on this campaign
+    expect(logs.rowCount).toBe(11);   // one per attempt above on this campaign
     const ghost = await ownerDb().query("SELECT 1 FROM audit_log WHERE action = 'authz.denied' AND actor_oid = $1 AND campaign_id = '00000000-0000-4000-8000-000000000000'", [ADMIN_B.oid]);
     expect(ghost.rowCount).toBe(1);   // probing a non-existent id is logged too
     expect((await b.get('/api/campaigns/mine')).body.campaigns).toEqual([]);

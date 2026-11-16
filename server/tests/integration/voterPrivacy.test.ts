@@ -31,7 +31,7 @@ async function closedWithVotes(announce: boolean) {
   await s1.post(`/api/vote/${e.token}/positions/${chair.id}`).send({ candidateId: chair.candidates[0].id }).expect(201);
   await s2.post(`/api/vote/${e.token}/positions/${chair.id}`).send({ candidateId: chair.candidates[0].id }).expect(201);
   await s1.post(`/api/vote/${e.token}/positions/${members.id}`).send({ candidateIds: [members.candidates[0].id, members.candidates[1].id] }).expect(201);
-  await s2.post(`/api/vote/${e.token}/positions/${members.id}`).send({ candidateIds: [members.candidates[0].id, members.candidates[2].id] }).expect(201);
+  await s2.post(`/api/vote/${e.token}/positions/${members.id}`).send({ candidateIds: [members.candidates[0].id, members.candidates[1].id] }).expect(201);   // Di 2, Eli 2: both win (no tie at the cut)
   await admin.post(`/api/campaigns/${e.id}/close`).send({ reason: 'Closing for the test run' }).expect(200);
   if (announce) await admin.post(`/api/campaigns/${e.id}/announce-winners`).expect(201);
   return { admin, e, s1, s2, s3: await login(app, S3) };
@@ -66,7 +66,7 @@ describe('a voter never receives results or counts', () => {
     expect(seen.positions[0]).toEqual({ title: 'Chair', winners: ['Ann'] });
     expect(seen.positions[1].title).toBe('Members');
     expect(seen.positions[1].winners).toHaveLength(2);                                                    // choose-2: both seat holders are named
-    expect(seen.positions[1].winners).toContain('Di');
+    expect(seen.positions[1].winners).toEqual(['Di', 'Eli']);
     expect(JSON.stringify(seen)).not.toMatch(/\d+ votes?|"votes"|turnout|%|tally/i);
     expect((await s3.get(`/api/vote/${e.token}`).expect(200)).body.announcement).toBeNull();               // no receipt, no announcement
     expect((await s1.get('/api/vote').expect(200)).body.campaigns.find((c: { shareToken: string }) => c.shareToken === e.token)).toMatchObject({ voterState: 'closed' });

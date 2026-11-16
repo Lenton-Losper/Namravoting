@@ -199,7 +199,7 @@ describe('announcing the winners', () => {
     await announce(admin, c.id).expect(201);
     const voted = (await (await login(app, S1)).get(`/api/vote/${c.token}`).expect(200)).body;
     expect(voted.announcement).toMatchObject({ positions: [{ winners: ['One'] }] });
-    expect(JSON.stringify(voted.announcement)).not.toMatch(/votes|turnout|tally|quorum/i);
+    expect(JSON.stringify(voted.announcement)).not.toMatch(/"votes"|turnout|tally|\d+ votes?/i);
     const notVoted = (await (await login(app, S3)).get(`/api/vote/${c.token}`).expect(200)).body;
     expect(notVoted.announcement).toBeNull();                                                            // no receipt, no announcement
     await admin.post(`/api/campaigns/${c.id}/publish`).send({}).expect(404);

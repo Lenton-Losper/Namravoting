@@ -77,7 +77,8 @@ describe('SEC-01: no steering and no small-count inference', () => {
 
     const page = (await voter.get(`/api/vote/${c.token}`).expect(200)).body;
     expect(page.voterState).toBe('can_vote');
-    expect(page.notices).toEqual([expect.objectContaining({ kind: 'reset', reason: REASON, votes_cleared: 1 })]);
+    expect(page.notices).toEqual([expect.objectContaining({ kind: 'reset', reason: REASON })]);
+    expect(page.notices[0].votes_cleared).toBeUndefined();   // a voter is never told how many votes there were
     expect(page.notices[0].candidates).toBeUndefined();
     // the creator learns nothing about the discarded round while the vote is open
     const mine = (await c.admin.get(`/api/campaigns/${c.id}/results`).expect(200)).body;

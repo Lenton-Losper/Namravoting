@@ -77,7 +77,7 @@ describe('results per position', () => {
     await (await login(app, S1)).get(`/api/vote/${e.token}/results`).expect(404);
     const pv = (await admin.get(`/api/campaigns/${e.id}/announcement`).expect(200)).body;
     expect(pv.positions.map((p: { title: string }) => p.title)).toEqual(['Press Secretary', 'Finance Officer', 'Treasurer']);
-    expect(pv.blocks).toEqual([{ code: 'tied', message: 'Tied: create a run-off', positions: ['Press Secretary'] }]);
+    expect(pv.blocks).toEqual([{ code: 'tied', message: 'Tied: create a run-off', positions: ['Press Secretary', 'Finance Officer'] }]);   // both are level
     expect((await admin.post(`/api/campaigns/${e.id}/announce-winners`).expect(409)).body.code).toBe('tied');
     // the admin's own results keep the per-position shape, with regions
     const r = (await admin.get(`/api/campaigns/${e.id}/results`).expect(200)).body;

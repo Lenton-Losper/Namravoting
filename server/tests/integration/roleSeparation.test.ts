@@ -61,12 +61,14 @@ describe('a plain voter and a candidate are not admins', () => {
     expect((await w.otherAdmin.get('/api/campaigns/mine').expect(200)).body.campaigns).toEqual([]);
   });
 
-  it('My votes lists no drafts, and no closed campaign the voter did not vote in', async () => {
+  it('My votes lists no drafts, a closed campaign only to people who voted in it, and nobody gets results', async () => {
     const w = await world();
     const list = (await w.voter.get('/api/vote').expect(200)).body.campaigns.map((c: { title: string }) => c.title);
     expect(list).toContain('Open vote');
     expect(list).not.toContain('Secret draft');
-    expect(list).not.toContain('Closed vote');                              // closed, and this voter has no receipt in it
+    expect(list).toContain('Closed vote');                                  // this voter (S3) voted in it: listed, as Closed
+    const other = (await w.candidate.get('/api/vote').expect(200)).body.campaigns.map((c: { title: string }) => c.title);
+    expect(other).not.toContain('Closed vote');                             // S1 did not vote in it: not listed
     await w.voter.get(`/api/vote/${w.closed.token}/results`).expect(404);   // a voter has no results route at all
     const draftBallot = (await w.voter.get(`/api/vote/${w.draft.token}`).expect(200)).body;
     expect(draftBallot.positions).toEqual([]);                              // a draft's ballot shows no positions or candidates
