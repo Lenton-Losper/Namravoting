@@ -2,9 +2,10 @@
 #
 #   cp .env.example .env     # then fill it in (HOSTING.md section 3)
 #   docker compose build
+#   (create the database roles once: HOSTING.md section 1)
 #   docker compose run --rm app node server/dist/migrateCli.js     # create/upgrade the database tables
 #   docker compose up -d                                            # app only, database provided by the hosting team
-#   docker compose --profile localdb up -d                          # app + a Postgres 16 container on this VM (optional)
+#   docker compose --profile localdb up -d                          # app + a Postgres 16 container on this VM (optional; HOSTING.md 3.4)
 #
 # The app listens on 127.0.0.1:8080 only: the reverse proxy (nginx / IIS) on the VM forwards /voting-app to it, unchanged.
 # For development use docker-compose.dev.yml (database only) instead.
@@ -37,20 +38,19 @@ services:
     # The image has its own HEALTHCHECK (GET /voting-app/api/health, 200 only when the database answers).
 
   # OPTIONAL: PostgreSQL 16 on this VM, for when the hosting team does not provide a database. Off unless --profile localdb is given.
-  # Inside it the owner role is a superuser, so the migrations create the namra_app role themselves.
+  # Its administrator is the usual "postgres" superuser; you create namra_owner / namra_app / the database with the SQL in HOSTING.md section 1.
   db:
     profiles: ["localdb"]
     image: postgres:16
     restart: unless-stopped
     environment:
-      POSTGRES_USER: namra_owner
+      POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}   # required when the localdb profile is on (set it in .env)
-      POSTGRES_DB: namra
     # No published port: only the app container reaches it (host name "db").
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U namra_owner -d namra"]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres"]
       interval: 5s
       timeout: 3s
       retries: 20

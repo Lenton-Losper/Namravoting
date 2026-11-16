@@ -50,3 +50,63 @@ jobs:
         run: npm test
       - name: Build (client typecheck + bundle, server)
         run: npm run build
+
+  # Proves HOSTING.md: the Docker setup from a source checkout, end to end (Postgres 16, the role SQL from HOSTING.md, migrations, health, smoke flow).
+  hosting:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Docker install under /voting-app (image build, localdb Postgres 16, role SQL, migrations, health, smoke flow)
+        run: bash scripts/hosting-check-docker.sh
+
+  # Builds the release package, keeps it as an artifact, and proves BOTH ways the hosting team can run it WITHOUT building:
+  # Docker (Dockerfile.release) and `npm ci --omit=dev` + node server/dist/index.js.
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: ci_superuser_password
+        ports:
+          - 5434:5432
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1 -U postgres"
+          --health-interval 3s --health-timeout 3s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Build for /voting-app
+        run: BASE_PATH=/voting-app npm run build
+      - name: Package (scans every file for secrets first)
+        run: python3 scripts/make-release.py "$RUNNER_TEMP/voting-app-release.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: voting-app-release
+          path: ${{ runner.temp }}/voting-app-release.zip
+          retention-days: 30
+      - name: Unpack twice, as the hosting team would
+        run: |
+          mkdir "$RUNNER_TEMP/as-docker" "$RUNNER_TEMP/as-node"
+          unzip -q "$RUNNER_TEMP/voting-app-release.zip" -d "$RUNNER_TEMP/as-docker"
+          unzip -q "$RUNNER_TEMP/voting-app-release.zip" -d "$RUNNER_TEMP/as-node"
+          cat "$RUNNER_TEMP/as-node/RELEASE.txt"
+          test ! -e "$RUNNER_TEMP/as-node/.env" && test ! -d "$RUNNER_TEMP/as-node/node_modules"
+      - name: Package, plain Node (npm ci --omit=dev, start, smoke flow)
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: 5434
+          PGUSER: postgres
+          PGPASSWORD: ci_superuser_password
+        run: bash scripts/hosting-check-node.sh "$RUNNER_TEMP/as-node"
+      - name: Package, Docker (Dockerfile.release, localdb Postgres 16, role SQL, migrations, health, smoke flow)
+        run: bash scripts/hosting-check-docker.sh "$RUNNER_TEMP/as-docker"

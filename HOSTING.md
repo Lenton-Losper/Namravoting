@@ -14,7 +14,15 @@
 
 URL once installed: **`https://<host>/voting-app/`** (the app lives under `/voting-app`; the reverse proxy forwards that path unchanged).
 
+> ## Three things not to miss
+>
+> 1. **`TRUST_PROXY=1` is required behind nginx or IIS.** Without it every visitor looks like the proxy's address, they all share one rate limit (10 votes a minute), and people are locked out as soon as a few vote at once. Put `TRUST_PROXY=1` in the settings (use `2` if there are two proxies in a row).
+> 2. **`namra_owner` needs `CREATEROLE`** (the SQL in section 1 gives it). The migration creates and re-sets the password of the `namra_app` role; without it the migration stops with "permission denied".
+> 3. **Changing the path means a rebuild.** `/voting-app` is compiled into the web client's file addresses. To use another path you need a new build (and a new `BASE_PATH`, proxy rule and Entra redirect URI). The server refuses to start if the build and `BASE_PATH` disagree.
+
 Two ways to run it. Pick one: **A. Docker (preferred)** or **B. plain Node 22 + systemd**. Both need the database (section 1), the settings (section 2) and a reverse proxy (section 5).
+
+**The release package (`voting-app-release.zip`) is already built for `/voting-app`** (`client/dist` and `server/dist` are inside). Nobody has to build anything: Docker uses `Dockerfile.release`, which only installs the runtime packages, and the Node install is `npm ci --omit=dev` and start. `RELEASE.txt` in the package says which version it is. The build steps below are only for a plain source checkout.
 
 | | |
 |---|---|
@@ -84,7 +92,7 @@ Needs Docker Engine with the Compose plugin (v2.20 or newer). Run the commands i
 
 ```bash
 cp .env.example .env            # then edit .env as in section 2 (delete the development lines above the production section)
-docker compose build            # builds the image; BASE_PATH=/voting-app is compiled into the web client
+docker compose build            # release package: installs the runtime packages only. Source checkout: also compiles the app (BASE_PATH=/voting-app)
 ```
 
 ### 3.2 Create the tables (migrations), then start
@@ -110,10 +118,10 @@ If the container exits at once, `docker compose logs app` shows one line startin
 
 ### 3.4 Optional: PostgreSQL 16 in Docker on the same VM
 
-Only if the hosting team prefers not to run the database separately. The database is a normal `postgres:16` container with its own volume (`pgdata`) and no published port. In this case the owner is a superuser inside the container, so **skip the SQL in section 1**; the migration creates `namra_app`. In `.env`:
+Only if the hosting team prefers not to run the database separately. It is a normal `postgres:16` container with its own volume (`pgdata`) and no published port; only the app container reaches it (host name `db`). Its administrator is the usual `postgres` superuser, and you create the roles and the database with **the same SQL as section 1**. In `.env`:
 
 ```
-POSTGRES_PASSWORD=<owner password>
+POSTGRES_PASSWORD=<password of the postgres superuser inside the container>
 MIGRATE_DATABASE_URL=postgres://namra_owner:<owner password>@db:5432/namra
 DATABASE_URL=postgres://namra_app:<app password>@db:5432/namra
 APP_DB_PASSWORD=<app password>
@@ -125,6 +133,7 @@ Then add `--profile localdb` to every command:
 ```bash
 docker compose --profile localdb build
 docker compose --profile localdb up -d db
+docker compose --profile localdb exec db psql -U postgres     # paste the SQL from section 1 (with your two passwords), then \q
 docker compose --profile localdb run --rm app node server/dist/migrateCli.js
 docker compose --profile localdb up -d
 ```
@@ -149,10 +158,10 @@ sudo chown votingapp:votingapp /var/lib/voting-app/uploads
 sudo mkdir -p /opt/voting-app/app && sudo unzip voting-app-release.zip -d /opt/voting-app/app
 sudo chown -R votingapp:votingapp /opt/voting-app
 
-# 3. Install and build. BASE_PATH must be set for the build: it is compiled into the web client.
+# 3. Install the runtime packages. The release package is already built for /voting-app.
 cd /opt/voting-app/app
-sudo -u votingapp npm ci
-sudo -u votingapp env BASE_PATH=/voting-app npm run build
+sudo -u votingapp npm ci --omit=dev
+#    Only for a source checkout (no client/dist folder): npm ci, then  env BASE_PATH=/voting-app npm run build
 
 # 4. Settings: the file from section 2 plus these four lines, readable only by root and the service
 sudo cp .env.example /etc/voting-app/voting-app.env      # then edit it (delete the development lines)
@@ -210,7 +219,9 @@ journalctl -u voting-app -n 50 --no-pager                         # "NamRA votin
 
 `Restart=on-failure` keeps it running after a crash, and `enable` starts it at boot.
 
-Upgrade: unzip the new release over `/opt/voting-app/app` (the env file lives in `/etc`, so it is kept), `sudo -u votingapp npm ci`, `sudo -u votingapp env BASE_PATH=/voting-app npm run build`, run the migration command from step 5, `sudo systemctl restart voting-app`.
+Upgrade: unzip the new release over `/opt/voting-app/app` (the env file lives in `/etc`, so it is kept), `sudo -u votingapp npm ci --omit=dev`, run the migration command from step 5, `sudo systemctl restart voting-app`.
+
+Without systemd (for a quick test): `cd /opt/voting-app/app && set -a && . /etc/voting-app/voting-app.env && set +a && node server/dist/index.js`.
 
 ## 5. Reverse proxy: forward `/voting-app` unchanged
 
@@ -272,7 +283,7 @@ Test and reload: `sudo nginx -t && sudo systemctl reload nginx`. Keep `TRUST_PRO
 ## 6. After it is running
 
 - Sign in at `https://voting.namra.org.na/voting-app/` with a NamRA account listed in `ADMIN_OIDS`, create a test campaign, open its share link on a phone.
-- Changing the path later (for example from `/voting-app` to `/vote`) means changing `BASE_PATH`, **rebuilding** (Docker: change both places in `docker-compose.yml` and `docker compose build`; Node: build with the new value), the proxy rule and the Entra redirect URI. The server refuses to start if the built client and `BASE_PATH` disagree.
+- Changing the path later (for example from `/voting-app` to `/vote`) means **a rebuild**: a new package built with the new path (or, from source: change both places in `docker-compose.yml` and `docker compose build`, or `env BASE_PATH=/vote npm run build`), plus `BASE_PATH`, the proxy rule and the Entra redirect URI. The server refuses to start if the built client and `BASE_PATH` disagree.
 - Backups, restores and retention: `docs/disaster-recovery.md`, `docs/retention.md`. Day-to-day settings: `docs/operations.md`.
 
 ## 7. If something is wrong
