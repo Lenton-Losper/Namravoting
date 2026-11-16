@@ -22,7 +22,7 @@ SECRET_PATTERNS = [
     (r'cfut_[A-Za-z0-9]{20,}', 'Cloudflare token'),
     (r'(?:postgres(?:ql)?|mysql)://[^:@/\s]+:(?!(?:OWNER_PASSWORD|APP_PASSWORD|PASSWORD|password|REDACTED|x|y|p|<)[@/])[^@\s<>$"\'`{}]{6,}@(?!(?:localhost|127\.0\.0\.1|db|DB_HOST|db\.internal)[:/])[A-Za-z0-9.-]+', 'database URL with a password'),
     (r'[A-Za-z0-9_~.-]{3}8Q~[A-Za-z0-9_~.-]{30,}', 'Microsoft Entra client secret'),
-    (r'(?:SESSION_SECRET|CSRF_SECRET|ENTRA_CLIENT_SECRET|NEON_API_KEY|CLOUDFLARE_API_TOKEN|R2_SECRET_ACCESS_KEY)\s*=\s*(?!change-me|\s|<|\$)[^\s#]{12,}', 'secret setting with a value'),
+    (r'(?:SESSION_SECRET|CSRF_SECRET|ENTRA_CLIENT_SECRET|NEON_API_KEY|CLOUDFLARE_API_TOKEN|R2_SECRET_ACCESS_KEY)[ \t]*=[ \t]*(?!change-me|<|\$)[^\s#]{12,}', 'secret setting with a value'),
 ]
 # fixtures in tests are fake on purpose
 SCAN_SKIP = ('server/tests/', 'client/src/', 'package-lock.json', 'client/public/')
