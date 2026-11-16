@@ -103,7 +103,7 @@ export async function setMembers(rows: [string, boolean][]) {
 
 export interface ElectionSpec {
   title?: string; eligibility?: 'all' | 'umoja' | 'list'; abstain?: boolean; start?: boolean;
-  positions: { title: string; candidates: (string | { name: string; region?: string })[]; min?: number; max?: number }[];
+  positions: { title: string; candidates: (string | { name: string; region?: string })[]; min?: number; max?: number; seats?: number; ruleText?: string }[];
 }
 export interface Election { id: string; token: string; regions: Record<string, string>; positions: { id: string; title: string; candidates: { id: string; name: string }[] }[] }
 
@@ -114,7 +114,7 @@ export async function makeElection(admin: Session, spec: ElectionSpec): Promise<
   const regions = Object.fromEntries(regionRows.map((r) => [r.name, r.id]));
   const positions: Election['positions'] = [];
   for (const p of spec.positions) {
-    const pos = (await admin.post(`/api/campaigns/${c.id}/positions`).send({ title: p.title, ...(p.min ? { min_candidates: p.min } : {}), ...(p.max ? { max_candidates: p.max } : {}) }).expect(201)).body;
+    const pos = (await admin.post(`/api/campaigns/${c.id}/positions`).send({ title: p.title, ...(p.min ? { min_candidates: p.min } : {}), ...(p.max ? { max_candidates: p.max } : {}), ...(p.seats ? { seats: p.seats } : {}), ...(p.ruleText ? { rule_text: p.ruleText } : {}) }).expect(201)).body;
     const candidates: { id: string; name: string }[] = [];
     for (const cand of p.candidates) {
       const name = typeof cand === 'string' ? cand : cand.name;

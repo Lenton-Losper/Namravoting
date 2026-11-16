@@ -58,3 +58,12 @@ candidate. `candidate` carries `regionId`, `regionName`, `isAbstain` and `withdr
    `computeResult` rule.
 4. Settings go in `positions.rules`; add a field-level validation where positions are edited (`domain/validation.ts`, `routes/positions.ts`).
 5. Add a test next to `rulesHooks.test.ts`. The default behaviour tests (`tests/unit/rules.test.ts`) must keep passing.
+
+## Choose-N positions (built in, no longer a future hook)
+
+A position with `seats > 1` is a choose-N position. `validateSelection(position, picks)` in `domain/rules.ts` is the rule: exactly `seats`
+distinct candidates, or the Abstain line on its own (never mixed in, and not one of the seats). `castVote` calls it before writing anything, so a
+wrong count, a repeat or a foreign candidate leaves no receipt and no count. One request carries all the picks (`candidateIds`), one receipt covers
+them, and each pick gets one vote. An Abstain ballot abstains from every seat: it adds `seats` votes to the Abstain line, so the integrity check
+(counters = receipts x seats, per position) stays exact. `computeResult` returns the top `seats` contenders; when the last seat is shared by more
+candidates than fit, the clear winners win and the candidates level on that seat are reported as `tied`.

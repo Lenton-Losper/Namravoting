@@ -5,7 +5,7 @@ import { isVotingWindowOpen, shouldAutoClose } from '../domain/status.js';
 import { refreshStatus } from './campaigns.js';
 import { restampAfterVote } from './tallies.js';
 import { logNotMember, umojaStanding } from './umoja.js';
-import { BallotRejected, validateBallot } from '../domain/rules.js';
+import { BallotRejected, validateBallot, validateSelection } from '../domain/rules.js';
 
 /** Test seam: lets a test force a specific interleaving (e.g. a close landing right after the status read). Empty in production. */
 export const testHooks: { afterCampaignRead?: () => Promise<void> } = {};
@@ -29,8 +29,8 @@ type Outcome = { kind: 'recorded' } | { kind: 'closed' } | { kind: 'close_due' }
 
 /**
  * Casts a ballot. One transaction (READ COMMITTED; the locks below do the ordering):
- *   lock the campaign row FOR SHARE -> re-check open + eligible -> INSERT receipt (one per MEMBER and POSITION, SEC-03) -> votes = votes + 1
- *   on the candidate's tally row (a candidate of another campaign matches no row and rolls the receipt back) -> COMMIT.
+ *   lock the campaign row FOR SHARE -> re-check open + eligible -> check the selection (exactly `seats` candidates) -> INSERT receipt (one per
+ *   MEMBER and POSITION, SEC-03) -> votes = votes + 1 on each picked candidate's tally row (a candidate of another campaign matches no row and rolls the receipt back) -> COMMIT.
  * A close or reset takes FOR UPDATE on the same campaign row, so it waits for votes in flight and a vote that arrives after it
  * sees the new state. Any failure rolls everything back. Deadlocks are retried up to 3 times.
  *
@@ -38,7 +38,8 @@ type Outcome = { kind: 'recorded' } | { kind: 'closed' } | { kind: 'close_due' }
  * the candidate id. After the commit all tally rows are re-stamped (services/tallies.ts) so their hidden xmin does not
  * match the voter's receipt.
  */
-export async function castVote(voterOid: string, voterEmail: string, shareToken: string, candidateId: string, positionId?: string): Promise<{ receiptCode: string }> {
+export async function castVote(voterOid: string, voterEmail: string, shareToken: string, candidate: string | string[], positionId?: string): Promise<{ receiptCode: string }> {
+  const picks = Array.isArray(candidate) ? candidate : [candidate];
   let outcome: Outcome | undefined;
   let receiptCode = '';
   let campaignId: string | undefined;
@@ -77,35 +78,50 @@ export async function castVote(voterOid: string, voterEmail: string, shareToken:
           memberKey = s.memberKey;
         }
 
-        // The candidate decides the position (a candidate belongs to exactly one). A candidate with no counter row is not on this ballot:
-        // another campaign's, not approved, or unknown.
-        const cand = (await c.query(
-          `SELECT t.position_id, k.name, k.is_abstain, (k.withdrawn_at IS NOT NULL) AS withdrawn, k.region_id, r.name AS region_name,
+        // The candidates decide the position (a candidate belongs to exactly one). A candidate with no counter row is not on this ballot:
+        // another campaign's, not approved, or unknown. Every pick must be on the SAME position (and the one named, if one was named).
+        if (new Set(picks).size !== picks.length) throw new HttpError(400, 'Each candidate can be chosen only once', 'duplicate_candidate');
+        const rows = (await c.query(
+          `SELECT t.position_id, t.candidate_id, k.name, k.is_abstain, (k.withdrawn_at IS NOT NULL) AS withdrawn, k.region_id, r.name AS region_name,
                   p.title, p.seats, p.rules, p.min_candidates, p.max_candidates
              FROM tallies t JOIN candidates k ON k.id = t.candidate_id AND k.campaign_id = t.campaign_id
              JOIN positions p ON p.id = t.position_id LEFT JOIN regions r ON r.id = k.region_id
-            WHERE t.campaign_id = $1 AND t.candidate_id = $2`, [camp.id, candidateId])).rows[0];
-        if (!cand || (positionId && positionId !== cand.position_id)) throw new HttpError(400, 'Candidate does not belong to this position', 'invalid_candidate');
-        votedPosition = cand.position_id;
+            WHERE t.campaign_id = $1 AND t.candidate_id = ANY($2::uuid[])`, [camp.id, picks])).rows;
+        const first = rows[0];
+        if (!first || rows.length !== picks.length || rows.some((x) => x.position_id !== first.position_id) || (positionId && positionId !== first.position_id)) {
+          throw new HttpError(400, 'Candidate does not belong to this position', 'invalid_candidate');
+        }
+        votedPosition = first.position_id;
+        const rulePos = { id: first.position_id, title: first.title, seats: first.seats, rules: first.rules, minCandidates: first.min_candidates, maxCandidates: first.max_candidates };
+        const ruleCands = picks.map((id) => {
+          const x = rows.find((y) => y.candidate_id === id)!;
+          return { id, name: x.name, regionId: x.region_id, regionName: x.region_name, isAbstain: x.is_abstain, withdrawn: x.withdrawn };
+        });
 
-        // The primary key (account) and the unique (campaign, position, member) constraint are the authority for "one vote per position": a
-        // duplicate surfaces as 23505, whether it is the same account twice or a second account of the same member.
-        // The receipt code goes on the receipt row only. NEVER log it (this function logs nothing about a vote).
-        await c.query('INSERT INTO vote_receipts (campaign_id, position_id, voter_oid, member_key, receipt_code) VALUES ($1, $2, $3, $4, $5)', [camp.id, cand.position_id, voterOid, memberKey, receiptCode]);
-
-        // Election rules (domain/rules.ts). A withdrawn candidate cannot be chosen: the campaign row is held FOR SHARE and a withdrawal takes
-        // it FOR UPDATE, so this check cannot race with one. Throwing rolls the receipt back.
+        // Election rules (domain/rules.ts), judged BEFORE anything is written: exactly `seats` candidates, or Abstain alone; no repeats; nobody
+        // withdrawn. A withdrawn candidate cannot be chosen: the campaign row is held FOR SHARE and a withdrawal takes it FOR UPDATE, so this
+        // check cannot race with one. Throwing rolls everything back.
         try {
-          validateBallot(
-            { id: cand.position_id, title: cand.title, seats: cand.seats, rules: cand.rules, minCandidates: cand.min_candidates, maxCandidates: cand.max_candidates },
-            { key: memberKey, oid: voterOid },
-            { id: candidateId, name: cand.name, regionId: cand.region_id, regionName: cand.region_name, isAbstain: cand.is_abstain, withdrawn: cand.withdrawn });
+          validateSelection(rulePos, ruleCands);
+          for (const rc of ruleCands) validateBallot(rulePos, { key: memberKey, oid: voterOid }, rc);
         } catch (e) {
           if (e instanceof BallotRejected) throw new HttpError(e.status, e.message, e.code);
           throw e;
         }
-        const t = await c.query('UPDATE tallies SET votes = votes + 1 WHERE campaign_id = $1 AND candidate_id = $2', [camp.id, candidateId]);
-        if (t.rowCount === 0) throw new HttpError(400, 'Candidate does not belong to this campaign', 'invalid_candidate');
+
+        // The primary key (account) and the unique (campaign, position, member) constraint are the authority for "one vote per position": a
+        // duplicate surfaces as 23505, whether it is the same account twice or a second account of the same member. ONE receipt covers the
+        // whole selection. The receipt code goes on the receipt row only. NEVER log it (this function logs nothing about a vote).
+        await c.query('INSERT INTO vote_receipts (campaign_id, position_id, voter_oid, member_key, receipt_code) VALUES ($1, $2, $3, $4, $5)', [camp.id, first.position_id, voterOid, memberKey, receiptCode]);
+
+        // One vote for each pick. An Abstain ballot abstains from EVERY seat, so it adds `seats` to the Abstain line: that keeps "counters = receipts
+        // x seats" exact for the integrity check, whatever was chosen. (The tally guard allows +1 per statement, hence one statement per vote.)
+        for (const rc of ruleCands) {
+          for (let i = 0; i < (rc.isAbstain ? rulePos.seats : 1); i++) {
+            const t = await c.query('UPDATE tallies SET votes = votes + 1 WHERE campaign_id = $1 AND candidate_id = $2', [camp.id, rc.id]);
+            if (t.rowCount === 0) throw new HttpError(400, 'Candidate does not belong to this campaign', 'invalid_candidate');
+          }
+        }
         return { kind: 'recorded' } as Outcome;
       });
       break;

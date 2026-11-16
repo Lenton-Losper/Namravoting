@@ -7,7 +7,7 @@ import { HttpError, notFound } from '../errors.js';
 import { currentUser, getCurrentUser, requireUser, type AuthUser } from '../auth/index.js';
 import { clientIp } from '../auth/limits.js';
 import { voterState } from '../domain/status.js';
-import { tokenParams, uuid, voteBody } from '../domain/validation.js';
+import { positionVoteBody, tokenParams, uuid, voteBody } from '../domain/validation.js';
 import { getNotices, getResetHistory, getResults, refreshStatus, type CampaignRow } from '../services/campaigns.js';
 import { castVote, notMemberMessage } from '../services/voting.js';
 import { isSnapshotMemberSql, liveMemberKey, logNotMember, umojaStanding } from '../services/umoja.js';
@@ -117,7 +117,7 @@ export function voteRouter(): Router {
     if (s.notMember) throw new HttpError(403, notMemberMessage, 'not_member');
     if (!s.eligible) throw new HttpError(403, 'You are not eligible to vote in this campaign', 'not_eligible');
     const showCandidates = c.status !== 'draft';
-    const posRows = (await getPool().query('SELECT id, title, description, seats FROM positions WHERE campaign_id = $1 ORDER BY sort_order, created_at', [c.id])).rows;
+    const posRows = (await getPool().query('SELECT id, title, description, seats, rule_text FROM positions WHERE campaign_id = $1 ORDER BY sort_order, created_at', [c.id])).rows;
     // Candidates are loaded only for positions the caller has NOT voted in: a done position stays closed (its ballot is not served again).
     const open = posRows.filter((p) => !s.votedPositions.has(p.id));
     const cands = showCandidates && open.length ? await ballotCandidates(c.id, open.map((p) => p.id as string)) : [];
@@ -133,7 +133,7 @@ export function voteRouter(): Router {
       regions,
       progress: { voted: s.votedPositions.size, total: s.total },
       positions: showCandidates ? posRows.map((p) => ({
-        id: p.id, title: p.title, description: p.description, seats: p.seats, voted: s.votedPositions.has(p.id),
+        id: p.id, title: p.title, description: p.description, seats: p.seats, ruleText: p.rule_text, voted: s.votedPositions.has(p.id),
         receiptCode: s.receiptCodes.get(p.id) ?? null,
         candidateCount: cands.filter((x) => x.position_id === p.id && !x.is_abstain && !x.withdrawn_at).length,
       })) : [],
@@ -150,14 +150,14 @@ export function voteRouter(): Router {
     const s = await standing(c, u);
     if (s.notMember) throw new HttpError(403, notMemberMessage, 'not_member');
     if (!s.eligible) throw new HttpError(403, 'You are not eligible to vote in this campaign', 'not_eligible');
-    const pos = (await getPool().query('SELECT id, title, description, seats FROM positions WHERE id = $1 AND campaign_id = $2', [pid.data, c.id])).rows[0];
+    const pos = (await getPool().query('SELECT id, title, description, seats, rule_text FROM positions WHERE id = $1 AND campaign_id = $2', [pid.data, c.id])).rows[0];
     if (!pos) throw notFound();
     if (c.status === 'closed') throw new HttpError(409, 'Voting has closed', 'closed');
     if (c.status === 'draft') throw new HttpError(409, 'Voting is not open yet', 'not_open');
     if (s.votedPositions.has(pos.id)) throw new HttpError(409, 'You have already voted in this position', 'already_voted');
     const cands = await ballotCandidates(c.id, [pos.id]);
     res.set('Cache-Control', 'no-store').json({
-      position: { id: pos.id, title: pos.title, description: pos.description },
+      position: { id: pos.id, title: pos.title, description: pos.description, seats: pos.seats, ruleText: pos.rule_text },
       campaign: { title: c.title, closesAt: c.closes_at, resultsReleaseAt: c.results_release_at ?? null },
       groupByRegion: !!c.results_group_by_region,
       voterState: s.state,
@@ -184,9 +184,9 @@ export function voteRouter(): Router {
   // NOTE: never log req.body here; it contains the ballot.
   r.post('/:shareToken', voteLimiter, async (req, res) => {
     const shareToken = parseToken(req);
-    const { candidateId, positionId } = voteBody.parse(req.body);
+    const { candidateId, candidateIds, positionId } = voteBody.parse(req.body);
     const u = currentUser(req);
-    const { receiptCode } = await castVote(u.oid, u.email, shareToken, candidateId, positionId);
+    const { receiptCode } = await castVote(u.oid, u.email, shareToken, (candidateIds ?? candidateId)!, positionId);
     res.status(201).set('Cache-Control', 'no-store').json({ recorded: true, receiptCode });
   });
 
@@ -195,9 +195,9 @@ export function voteRouter(): Router {
     const shareToken = parseToken(req);
     const pid = uuid.safeParse(req.params.pid);
     if (!pid.success) throw notFound();
-    const { candidateId } = z.object({ candidateId: uuid }).strict().parse(req.body);
+    const { candidateId, candidateIds } = positionVoteBody.parse(req.body);
     const u = currentUser(req);
-    const { receiptCode } = await castVote(u.oid, u.email, shareToken, candidateId, pid.data);
+    const { receiptCode } = await castVote(u.oid, u.email, shareToken, (candidateIds ?? candidateId)!, pid.data);
     res.status(201).set('Cache-Control', 'no-store').json({ recorded: true, receiptCode });
   });
 

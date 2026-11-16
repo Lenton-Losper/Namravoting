@@ -54,9 +54,9 @@ export function positionsRouter(d: Deps): Router {
     const b = positionBody.parse(req.body);
     const created = await d.inDraftTx(c.id, async (tx) => {
       const { rows } = await tx.query(
-        `INSERT INTO positions (campaign_id, title, description, seats, min_candidates, max_candidates, sort_order)
-         VALUES ($1,$2,$3,$4,$5,$6,(SELECT COALESCE(max(sort_order), 0) + 1 FROM positions WHERE campaign_id = $1)) RETURNING id, title`,
-        [c.id, b.title, b.description ?? null, b.seats ?? 1, b.min_candidates ?? null, b.max_candidates ?? null]);
+        `INSERT INTO positions (campaign_id, title, description, seats, min_candidates, max_candidates, rule_text, sort_order)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,(SELECT COALESCE(max(sort_order), 0) + 1 FROM positions WHERE campaign_id = $1)) RETURNING id, title`,
+        [c.id, b.title, b.description ?? null, b.seats ?? 1, b.min_candidates ?? null, b.max_candidates ?? null, b.rule_text ?? null]);
       if (c.allow_abstain) await addAbstainLines(tx, c.id);   // a campaign that allows abstaining gets the line on every position
       await audit(tx, u.oid, 'position.add', c.id, { position_id: rows[0].id, title: rows[0].title });
       return rows[0];
@@ -88,14 +88,15 @@ export function positionsRouter(d: Deps): Router {
       if (live) {
         // Open campaign with "Allow edits after start": title and description only (the database enforces the same).
         if (b.seats !== undefined || b.min_candidates !== undefined || b.max_candidates !== undefined || b.status !== undefined) {
-          throw new HttpError(409, 'Once voting has started only a position\'s title and description can change', 'locked');
+          throw new HttpError(409, 'Once voting has started only a position\'s title, description and eligibility text can change', 'locked');
         }
         const changes: { what: string; name?: string; from?: string | null; to?: string | null }[] = [];
         if (b.title !== undefined && b.title !== cur.title) changes.push({ what: 'position_title', name: cur.title, from: cur.title, to: b.title });
         if (b.description !== undefined && (b.description ?? null) !== (cur.description ?? null)) changes.push({ what: 'position_description', name: cur.title, from: trunc(cur.description), to: trunc(b.description) });
+        if (b.rule_text !== undefined && (b.rule_text ?? null) !== (cur.rule_text ?? null)) changes.push({ what: 'position_rule_text', name: cur.title, from: trunc(cur.rule_text), to: trunc(b.rule_text) });
         if (!changes.length) return;
-        await tx.query('UPDATE positions SET title = coalesce($3, title), description = CASE WHEN $4::boolean THEN $5 ELSE description END WHERE id = $1 AND campaign_id = $2',
-          [pid, c.id, b.title ?? null, b.description !== undefined, b.description ?? null]);
+        await tx.query('UPDATE positions SET title = coalesce($3, title), description = CASE WHEN $4::boolean THEN $5 ELSE description END, rule_text = CASE WHEN $6::boolean THEN $7 ELSE rule_text END WHERE id = $1 AND campaign_id = $2',
+          [pid, c.id, b.title ?? null, b.description !== undefined, b.description ?? null, b.rule_text !== undefined, b.rule_text ?? null]);
         await audit(tx, u.oid, 'campaign.edit_after_start', c.id, { changes });
         return;
       }
@@ -106,12 +107,13 @@ export function positionsRouter(d: Deps): Router {
         `UPDATE positions SET title = coalesce($3, title),
            description = CASE WHEN $4::boolean THEN $5 ELSE description END,
            seats = coalesce($6, seats),
+           rule_text = CASE WHEN $12::boolean THEN $13 ELSE rule_text END,
            min_candidates = CASE WHEN $7::boolean THEN $8::int ELSE min_candidates END,
            max_candidates = CASE WHEN $9::boolean THEN $10::int ELSE max_candidates END,
            status = coalesce($11, status)
          WHERE id = $1 AND campaign_id = $2`,
         [pid, c.id, b.title ?? null, b.description !== undefined, b.description ?? null, b.seats ?? null,
-         b.min_candidates !== undefined, b.min_candidates ?? null, b.max_candidates !== undefined, b.max_candidates ?? null, b.status ?? null]);
+         b.min_candidates !== undefined, b.min_candidates ?? null, b.max_candidates !== undefined, b.max_candidates ?? null, b.status ?? null, b.rule_text !== undefined, b.rule_text ?? null]);
       await audit(tx, u.oid, 'position.update', c.id, { position_id: pid, fields: Object.keys(b) });
     });
     res.json({ positions: await positionBlocks(camp(res)) });

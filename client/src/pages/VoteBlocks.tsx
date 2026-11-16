@@ -14,7 +14,7 @@ import { BackLink, ErrorBox, NoticeBanner, NoticeList, PositionResults, Spinner,
  * Each position is its own vote, in any order; a done position is never opened again (the server refuses its ballot: 409).
  */
 
-export interface BlockPosition { id: string; title: string; description: string | null; voted: boolean; candidateCount: number; receiptCode?: string | null }
+export interface BlockPosition { id: string; title: string; description: string | null; seats?: number; ruleText?: string | null; voted: boolean; candidateCount: number; receiptCode?: string | null }
 export interface BlocksInfo {
   title: string; description: string | null; opensAt: string | null; closesAt: string | null; resultsPublished: boolean;
   resultsReleaseAt?: string | null; groupByRegion?: boolean;
@@ -26,7 +26,7 @@ export interface BallotCandidate {
   regionId: string | null; region: string | null;
 }
 interface Ballot {
-  position: { id: string; title: string; description: string | null };
+  position: { id: string; title: string; description: string | null; seats?: number; ruleText?: string | null };
   regions: { id: string; name: string }[]; candidates: BallotCandidate[]; progress: { voted: number; total: number };
   campaign?: { title: string; closesAt: string | null; resultsReleaseAt?: string | null };
   groupByRegion?: boolean;
@@ -168,7 +168,7 @@ export function PositionBallot({ token, position, campaign, single, onBack, onDo
   const [ballot, setBallot] = useState<Ballot | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [region, setRegion] = useState('');
-  const [selected, setSelected] = useState<string | null>(null);
+  const [picked, setPicked] = useState<string[]>([]);   // one id for a one-seat position, up to `seats` for a choose-N position (or the Abstain line alone)
   const [step, setStep] = useState<Step>('choose');
   const [receipt, setReceipt] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -191,7 +191,7 @@ export function PositionBallot({ token, position, campaign, single, onBack, onDo
   useEffect(() => {
     let id: string | null = null;
     try { id = sessionStorage.getItem(pendingKey(token, position.id)); sessionStorage.removeItem(pendingKey(token, position.id)); } catch { /* storage unavailable */ }
-    if (id) setSelected(id);
+    if (id) setPicked(id.split(',').filter(Boolean));
   }, [token, position.id]);
 
   const all = ballot?.candidates ?? [];
@@ -202,26 +202,44 @@ export function PositionBallot({ token, position, campaign, single, onBack, onDo
   // Regions that actually have candidates, in the campaign's order. Candidates with no region are listed WITHOUT any heading.
   const regionsUsed = useMemo(() => (ballot?.regions ?? []).filter((r) => people.some((c) => c.regionId === r.id)), [ballot, people]);
   const visible = useMemo(() => (showRegions && region ? people.filter((c) => c.regionId === region) : people), [people, region, showRegions]);
+  const seats = Math.max(1, ballot?.position.seats ?? 1);
+  const multi = seats > 1;
   // A choice that the filter hides (or that no longer exists) is dropped, so nobody confirms a candidate they cannot see.
   useEffect(() => {
-    if (selected && ballot && selected !== abstain?.id && !visible.some((c) => c.id === selected)) setSelected(null);
-  }, [visible, selected, ballot, abstain]);
-  const chosen = all.find((c) => c.id === selected) ?? null;
+    if (!ballot) return;
+    setPicked((cur) => { const keep = cur.filter((id) => id === abstain?.id || visible.some((c) => c.id === id)); return keep.length === cur.length ? cur : keep; });
+  }, [visible, ballot, abstain]);
+  const chosen = picked.map((id) => all.find((c) => c.id === id)).filter((c): c is BallotCandidate => !!c);   // in the order they were picked
+  const abstaining = chosen.length === 1 && chosen[0].isAbstain;
+  const pickedPeople = chosen.filter((c) => !c.isAbstain).length;
+  const full = multi && pickedPeople >= seats;
+  const ready = abstaining || (multi ? pickedPeople === seats : chosen.length === 1);
+  /** One tap on a card. One seat: it becomes the choice. Several seats: it is added, or taken off again; nothing more once `seats` are picked. */
+  function toggle(c: BallotCandidate) {
+    if (c.withdrawn) return;
+    setPicked((cur) => {
+      if (!multi) return [c.id];
+      if (c.isAbstain) return cur.includes(c.id) ? [] : [c.id];       // Abstain stands alone
+      const people = cur.filter((id) => id !== abstain?.id);
+      if (people.includes(c.id)) return people.filter((id) => id !== c.id);
+      return people.length >= seats ? people : [...people, c.id];
+    });
+  }
 
   async function submit() {
-    if (!selected || submitting.current) return;
+    if (!ready || submitting.current) return;
     submitting.current = true; setBusy(true);
-    try { sessionStorage.setItem(pendingKey(token, position.id), selected); } catch { /* storage unavailable */ }
+    try { sessionStorage.setItem(pendingKey(token, position.id), picked.join(',')); } catch { /* storage unavailable */ }
     try {
-      const r = await api<{ recorded: boolean; receiptCode?: string }>('POST', url, { candidateId: selected });
+      const r = await api<{ recorded: boolean; receiptCode?: string }>('POST', url, multi ? { candidateIds: picked } : { candidateId: picked[0] });
       clearPending(token, position.id);
-      setSelected(null);                                   // the chosen candidate is intentionally NOT kept on screen
+      setPicked([]);                                       // the chosen candidates are intentionally NOT kept on screen
       setReceipt(r.receiptCode ?? null); setStep('receipt');
     } catch (e) {
       setStep('choose');
       if (e instanceof ApiError && e.status === 401) return;   // being signed back in; the ballot comes back with the choice selected
       clearPending(token, position.id);
-      if (e instanceof ApiError && [403, 404, 409].includes(e.status)) { setSelected(null); onBack(); }   // definitive: show the true state
+      if (e instanceof ApiError && [403, 404, 409].includes(e.status)) { setPicked([]); onBack(); }   // definitive: show the true state
       else {
         // Network or server error: the outcome is unknown. Ask the server; if the vote landed this ballot is "already voted" (409).
         const fresh = await load();
@@ -253,12 +271,13 @@ export function PositionBallot({ token, position, campaign, single, onBack, onDo
   }
 
   const card = (c: BallotCandidate) => {
-    const on = selected === c.id;
+    const on = picked.includes(c.id);
     const line = cardLine(c);
+    const dimmed = full && !on && !c.withdrawn;   // the limit is reached: the other cards cannot be added until one is taken off
     return (
-      <li key={c.id} className={`ballot-card${on ? ' is-selected' : ''}${compact ? ' is-compact' : ''}${c.withdrawn ? ' is-withdrawn' : ''}`}>
-        <button type="button" className="ballot-card-main" aria-pressed={on} disabled={c.withdrawn} onClick={() => setSelected(c.id)}>
-          <span className="ballot-radio" aria-hidden="true">{on && <span className="ballot-radio-dot" />}</span>
+      <li key={c.id} className={`ballot-card${on ? ' is-selected' : ''}${compact ? ' is-compact' : ''}${c.withdrawn ? ' is-withdrawn' : ''}${dimmed ? ' is-dimmed' : ''}`}>
+        <button type="button" className="ballot-card-main" aria-pressed={on} disabled={c.withdrawn || dimmed} onClick={() => toggle(c)}>
+          <span className={`ballot-radio${multi ? ' is-check' : ''}`} aria-hidden="true">{on && (multi ? <Icon name="check" size={16} /> : <span className="ballot-radio-dot" />)}</span>
           <Avatar url={c.photoUrl} name={c.name} size={compact ? 'sm' : 'lg'} />
           <span className="ballot-card-text">
             <span className="ballot-card-name"><strong>{c.name}</strong>{c.region && <span className="ballot-card-region"> – {c.region}</span>}</span>
@@ -287,14 +306,19 @@ export function PositionBallot({ token, position, campaign, single, onBack, onDo
         <button type="button" className="help-button" aria-label="Help: how voting works" onClick={() => setHelp(true)}><Icon name="help" size={22} /></button>
       </div>
       <p className="ballot-eyebrow">{campaign.title}</p>
-      <p className="ballot-step">Step 1 of 2 · Choose</p>
+      <p className="ballot-step">Step 1 of 2 · Choose{multi ? ` ${seats}` : ''}</p>
       <h1 className="ballot-title">{position.title}</h1>
+      {ballot?.position.ruleText && <p className="rule-text"><Icon name="info" size={16} /> <span>{ballot.position.ruleText}</span></p>}
       <div className="ballot-chips">
         {campaign.closesAt && <span className="ballot-chip"><Icon name="clock" size={14} /> Closes {fmtDate(campaign.closesAt)}</span>}
         <span className="ballot-chip"><Icon name="lock" size={14} /> Your vote is anonymous</span>
       </div>
       {ballot?.position.description && <p className="ballot-intro">{ballot.position.description}</p>}
-      <p className="ballot-intro">Pick one candidate. You'll see your choice again before anything is submitted.</p>
+      <p className="ballot-intro" role={multi ? 'status' : undefined}>
+        {!multi ? "Pick one candidate. You'll see your choice again before anything is submitted."
+          : full ? `You've picked ${seats} of ${seats}. Unselect one to change.`
+          : `Pick exactly ${seats} candidates. You'll see your choices again before anything is submitted.`}
+      </p>
       <ErrorBox message={uncertain ? null : error} />   {/* the "may not have been recorded" screen says it better */}
       {!ballot && !error && !uncertain && <Spinner />}
       {uncertain && (
@@ -327,35 +351,43 @@ export function PositionBallot({ token, position, campaign, single, onBack, onDo
           {abstain && (
             <div className="abstain-block">
               <p className="abstain-or">Or, if you don't want to choose a candidate:</p>
-              <button type="button" className={`abstain-option${selected === abstain.id ? ' is-selected' : ''}`} aria-pressed={selected === abstain.id} onClick={() => setSelected(abstain.id)}>
-                <span className="ballot-radio" aria-hidden="true">{selected === abstain.id && <span className="ballot-radio-dot" />}</span>
-                <span><strong>Abstain</strong> (none of the above)<span className="abstain-note">Counts as a vote cast, for no candidate.</span></span>
+              <button type="button" className={`abstain-option${picked.includes(abstain.id) ? ' is-selected' : ''}`} aria-pressed={picked.includes(abstain.id)} onClick={() => toggle(abstain)}>
+                <span className="ballot-radio" aria-hidden="true">{picked.includes(abstain.id) && <span className="ballot-radio-dot" />}</span>
+                <span><strong>Abstain</strong> (none of the above)<span className="abstain-note">{multi ? `Counts as a vote cast, for no candidate, in all ${seats} places.` : 'Counts as a vote cast, for no candidate.'}</span></span>
               </button>
             </div>
           )}
           <div className="ballot-footer">
-            {chosen
-              ? <button type="button" className="ballot-btn ballot-btn-primary" onClick={() => setStep('confirm')}>{chosen.isAbstain ? 'Review: abstain' : `Review vote for ${firstName(chosen.name)}`}</button>
-              : <><button type="button" className="ballot-btn ballot-btn-primary" disabled>Review vote</button><p className="ballot-footer-hint">Select a candidate to continue</p></>}
+            {ready
+              ? <button type="button" className="ballot-btn ballot-btn-primary" onClick={() => setStep('confirm')}>
+                  {abstaining ? 'Review: abstain' : multi ? `Review ${seats} votes` : `Review vote for ${firstName(chosen[0].name)}`}
+                </button>
+              : multi
+                ? <button type="button" className="ballot-btn ballot-btn-primary" disabled>{pickedPeople === 0 ? `Select ${seats} candidates` : `${pickedPeople} of ${seats} selected`}</button>
+                : <><button type="button" className="ballot-btn ballot-btn-primary" disabled>Review vote</button><p className="ballot-footer-hint">Select a candidate to continue</p></>}
           </div>
         </>
       )}
 
-      {step === 'confirm' && chosen && (
+      {step === 'confirm' && ready && (
         <Sheet label="Confirm your vote" onClose={() => setStep('choose')} busy={busy}>
           <p className="ballot-step">Step 2 of 2 · Confirm</p>
           <h2 className="sheet-title">Confirm your vote</h2>
-          <div className="confirm-choice">
-            {chosen.isAbstain
-              ? <span className="confirm-text"><strong>Abstain</strong><span>{position.title}: none of the above</span></span>
-              : <><Avatar url={chosen.photoUrl} name={chosen.name} size="md" /><span className="confirm-text"><strong>{chosen.name}</strong><span>{[position.title, chosen.region].filter(Boolean).join(' · ')}</span></span></>}
+          <div className="confirm-choices">
+            {chosen.map((c) => (
+              <div className="confirm-choice" key={c.id}>
+                {c.isAbstain
+                  ? <span className="confirm-text"><strong>Abstain</strong><span>{position.title}: none of the above</span></span>
+                  : <><Avatar url={c.photoUrl} name={c.name} size="md" /><span className="confirm-text"><strong>{c.name}</strong><span>{[position.title, c.region].filter(Boolean).join(' · ')}</span></span></>}
+              </div>
+            ))}
           </div>
           <p className="confirm-warning"><Icon name="alert" size={20} /> <span>Once you submit, your vote can't be changed.</span></p>
           <button type="button" className="ballot-btn ballot-btn-primary ballot-btn-submit" disabled={busy} onClick={() => void submit()}>{busy ? 'Submitting…' : 'Submit my vote'}</button>
           <button type="button" className="ballot-btn ballot-btn-secondary" disabled={busy} onClick={() => setStep('choose')}>Change my choice</button>
         </Sheet>
       )}
-      {statement && <StatementSheet c={statement} onClose={() => setStatement(null)} onChoose={() => { setSelected(statement.id); setRegion((r) => (r && statement.regionId !== r ? '' : r)); setStatement(null); }} />}
+      {statement && <StatementSheet c={statement} onClose={() => setStatement(null)} onChoose={() => { if (!picked.includes(statement.id)) toggle(statement); setRegion((r) => (r && statement.regionId !== r ? '' : r)); setStatement(null); }} />}
       {help && <HelpSheet onClose={() => setHelp(false)} />}
     </div>
   );
@@ -449,6 +481,8 @@ export function CampaignBlocks({ token, info, reload }: { token: string; info: B
               aria-label={p.voted ? `${p.title}: voted${p.receiptCode ? `, receipt ${p.receiptCode}` : ''}` : `${p.title}: ${p.candidateCount} candidates, not voted yet`}>
               <span className="position-title">{p.title}</span>
               {p.description && <span className="muted small excerpt">{p.description}</span>}
+              {p.ruleText && <span className="rule-text"><Icon name="info" size={16} /> <span>{p.ruleText}</span></span>}
+              {(p.seats ?? 1) > 1 && !p.voted && <span className="muted small">Choose {p.seats}</span>}
               {p.voted
                 ? <><span className="chip chip-closed position-status"><Icon name="check" size={14} /> Voted</span>{p.receiptCode && <span className="position-receipt">Receipt {p.receiptCode}</span>}</>
                 : <span className="chip chip-open position-status">{p.candidateCount} candidate{p.candidateCount === 1 ? '' : 's'}</span>}

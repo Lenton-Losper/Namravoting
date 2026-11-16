@@ -438,3 +438,117 @@ describe('every new ballot screen has no axe violations (WCAG 2.1 A and AA, plus
     expect(await audit(b.container)).toEqual([]);
   });
 });
+
+// ---- multi-position campaigns: choose-N ("Additional Members: choose exactly 2", 13 candidates) ------------------------------------------------------
+describe('a position with several seats', () => {
+  const thirteen = Array.from({ length: 13 }, (_, i) => cand(`n${i + 1}`, `Candidate ${i + 1}`, { regionId: i % 2 ? 'r1' : 'r2', region: i % 2 ? 'Erongo' : 'Khomas', pledge: `Pledge ${i + 1}` }));
+  const members = (over: Record<string, unknown> = {}) => ballot([...thirteen, ABSTAIN], { position: { id: 'p1', title: 'Additional Members', description: null, seats: 2, ruleText: 'Must be from the HR Department' }, ...over });
+  const one = (n: number) => screen.getByRole('button', { name: new RegExp(`^Candidate ${n}\\b`) }) as HTMLButtonElement;
+  const open = () => { table[URL_INFO] = info({}, [{ id: 'p1', title: 'Additional Members', description: null, seats: 2, ruleText: 'Must be from the HR Department', voted: false, candidateCount: 13, receiptCode: null }]); table[`GET ${URL_POS}`] = members(); };
+
+  it('says the rule up front: "Choose 2", the eligibility line, compact cards (13 > 6) and the region filter (13 > 8)', async () => {
+    open(); page();
+    await screen.findByRole('button', { name: /^Candidate 1\b/ });
+    expect(screen.getByText('Step 1 of 2 · Choose 2')).toBeTruthy();
+    expect(screen.getByText('Must be from the HR Department').closest('.rule-text')?.querySelector('svg')).toBeTruthy();   // with an info icon
+    expect(screen.getByText("Pick exactly 2 candidates. You'll see your choices again before anything is submitted.")).toBeTruthy();
+    expect(document.querySelectorAll('.ballot-card.is-compact')).toHaveLength(13);
+    expect(screen.getByLabelText('Region')).toBeTruthy();
+  });
+
+  it('uses checkboxes: the footer counts "Select 2 candidates" -> "1 of 2 selected" -> "Review 2 votes"; at the limit the other cards are dimmed and disabled until one is unselected', async () => {
+    open(); const user = userEvent.setup(); page();
+    await screen.findByRole('button', { name: /^Candidate 1\b/ });
+    expect(document.querySelectorAll('.ballot-radio.is-check')).toHaveLength(13);                       // square indicators, not radios
+    expect((screen.getByRole('button', { name: 'Select 2 candidates' }) as HTMLButtonElement).disabled).toBe(true);
+    await user.click(one(3));
+    expect((screen.getByRole('button', { name: '1 of 2 selected' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(one(4).disabled).toBe(false);
+    await user.click(one(9));
+    expect((screen.getByRole('button', { name: 'Review 2 votes' }) as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.getByText("You've picked 2 of 2. Unselect one to change.")).toBeTruthy();
+    expect(one(3).getAttribute('aria-pressed')).toBe('true'); expect(one(9).getAttribute('aria-pressed')).toBe('true');
+    expect(one(4).disabled).toBe(true); expect(one(4).closest('.ballot-card')?.classList.contains('is-dimmed')).toBe(true);
+    expect(one(3).disabled).toBe(false);                                                                // the picked ones stay clickable
+    await user.click(one(4));                                                                           // a disabled card cannot be added
+    expect(one(4).getAttribute('aria-pressed')).toBe('false');
+    await user.click(one(3));                                                                           // unselect one: the limit is lifted
+    expect(one(4).disabled).toBe(false);
+    expect((screen.getByRole('button', { name: '1 of 2 selected' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByText("You've picked 2 of 2. Unselect one to change.")).toBeNull();
+  });
+
+  it('the confirm sheet lists every chosen candidate and sends exactly those ids in one request', async () => {
+    open(); table[`POST ${URL_POS}`] = { recorded: true, receiptCode: CODE };
+    const user = userEvent.setup(); page();
+    await screen.findByRole('button', { name: /^Candidate 1\b/ });
+    await user.click(one(9)); await user.click(one(3));
+    await user.click(screen.getByRole('button', { name: 'Review 2 votes' }));
+    const sheet = screen.getByRole('dialog', { name: 'Confirm your vote' });
+    expect(within(sheet).getByText('Candidate 9')).toBeTruthy(); expect(within(sheet).getByText('Candidate 3')).toBeTruthy();
+    expect(sheet.querySelectorAll('.confirm-choice')).toHaveLength(2);
+    expect(calls.some((c) => c.method === 'POST')).toBe(false);
+    await user.click(within(sheet).getByRole('button', { name: 'Submit my vote' }));
+    await screen.findByText('Your vote is in');
+    expect(calls.filter((c) => c.method === 'POST' && c.url === URL_POS)).toEqual([{ method: 'POST', url: URL_POS, body: { candidateIds: ['n9', 'n3'] } }]);
+    expect(screen.getByText(CODE)).toBeTruthy();
+    expect(screen.queryByText('Candidate 9')).toBeNull();                                               // the choices are not kept on screen
+  });
+
+  it('Abstain stays a separate option: choosing it clears the candidates', async () => {
+    open(); table[`POST ${URL_POS}`] = { recorded: true, receiptCode: CODE };
+    const user = userEvent.setup(); page();
+    await screen.findByRole('button', { name: /^Candidate 1\b/ });
+    await user.click(one(1)); await user.click(one(2));
+    await user.click(screen.getByRole('button', { name: /^Abstain/ }));
+    expect(one(1).getAttribute('aria-pressed')).toBe('false'); expect(one(2).disabled).toBe(false);
+    await user.click(screen.getByRole('button', { name: 'Review: abstain' }));
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Submit my vote' }));
+    await screen.findByText('Your vote is in');
+    expect(calls.find((c) => c.method === 'POST' && c.url === URL_POS)?.body).toEqual({ candidateIds: ['ab'] });
+  });
+
+  it('a one-seat position still sends a single candidateId and shows no checkboxes', async () => {
+    table[URL_INFO] = info(); table[`GET ${URL_POS}`] = ballot(); table[`POST ${URL_POS}`] = { recorded: true, receiptCode: CODE };
+    const user = userEvent.setup(); page();
+    await user.click(await screen.findByRole('button', { name: /^Ben Basson/ }));
+    await user.click(screen.getByRole('button', { name: 'Review vote for Ben' }));
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Submit my vote' }));
+    await screen.findByText('Your vote is in');
+    expect(calls.find((c) => c.method === 'POST' && c.url === URL_POS)?.body).toEqual({ candidateId: 'c2' });
+    expect(document.querySelector('.ballot-radio.is-check')).toBeNull();
+  });
+
+  it('the campaign home shows the eligibility line and "Choose 2" on the position block', async () => {
+    table[URL_INFO] = info({}, [
+      { id: 'p1', title: 'Additional Members', description: null, seats: 2, ruleText: 'Must be from the HR Department', voted: false, candidateCount: 13, receiptCode: null },
+      { id: 'p2', title: 'Secretary', description: null, seats: 1, ruleText: null, voted: false, candidateCount: 3, receiptCode: null }]);
+    page();
+    await screen.findByText('Must be from the HR Department');
+    expect(screen.getByText('Choose 2')).toBeTruthy();
+    expect(screen.getAllByText(/^Choose \d/)).toHaveLength(1);                                          // the one-seat block says nothing extra
+  });
+
+  it('the stylesheet: a 6px-radius square indicator, dimmed cards, the 13px #4A5565 eligibility line', () => {
+    const css = readFileSync(path.resolve(__dirname, 'styles.css'), 'utf8');
+    const rule = (selector: string) => {
+      const esc = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const m = new RegExp(`(?:^|\\n)${esc} \\{([^}]*)\\}`).exec(css);
+      if (!m) throw new Error(`no rule for ${selector}`);
+      return m[1];
+    };
+    expect(rule('.ballot-radio.is-check')).toMatch(/border-radius: 6px/);
+    expect(rule('.is-selected .ballot-radio.is-check')).toMatch(/background: var\(--b-navy\)/);
+    expect(rule('.ballot-card.is-dimmed')).toMatch(/opacity: \.55/);
+    expect(rule('.rule-text')).toMatch(/font-size: 13px[^}]*color: var\(--b-secondary\)/);
+  });
+
+  it('has no axe violations: the choose step at the limit (dimmed cards) and the confirm sheet listing two candidates', async () => {
+    open(); const user = userEvent.setup(); const { container } = page();
+    await screen.findByRole('button', { name: /^Candidate 1\b/ });
+    await user.click(one(3)); await user.click(one(9));
+    expect(await audit(container)).toEqual([]);
+    await user.click(screen.getByRole('button', { name: 'Review 2 votes' }));
+    expect(await audit(document.body)).toEqual([]);
+  });
+});

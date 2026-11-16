@@ -71,6 +71,8 @@ export const positionBody = z.object({
   title: line(200),
   description: lines(2000).nullable().optional(),
   seats: z.number().int().min(1).max(50).optional(),
+  /** Informational eligibility line shown to voters (e.g. "Must be from the HR Department"). Never checked at the ballot. */
+  rule_text: line(200).nullable().optional(),
   min_candidates: z.number().int().min(1).max(500).nullable().optional(),
   max_candidates: z.number().int().min(1).max(500).nullable().optional(),
 }).strict().refine((v) => v.min_candidates == null || v.max_candidates == null || v.max_candidates >= v.min_candidates, { message: 'The maximum cannot be below the minimum', path: ['max_candidates'] });
@@ -78,6 +80,7 @@ export const positionPatchBody = z.object({
   title: line(200).optional(),
   description: lines(2000).nullable().optional(),
   seats: z.number().int().min(1).max(50).optional(),
+  rule_text: line(200).nullable().optional(),
   min_candidates: z.number().int().min(1).max(500).nullable().optional(),
   max_candidates: z.number().int().min(1).max(500).nullable().optional(),
   /** Nominations for this position: open or closed by hand. */
@@ -112,7 +115,11 @@ export const eligibleBody = z.discriminatedUnion('mode', [
 
 export const closeBody = z.object({ reason: z.string().transform(cleanMultiline).pipe(z.string().trim().min(10, 'Give a reason of at least 10 characters').max(1000)).optional() }).strict();
 export const ackBody = z.object({ note: z.string().transform(cleanMultiline).pipe(z.string().trim().min(10, 'Write what you found, at least 10 characters').max(1000)) }).strict();
-export const voteBody = z.object({ candidateId: uuid, positionId: uuid.optional() }).strict();
+/** One candidate (`candidateId`) or the whole selection for a several-seat position (`candidateIds`): never both. The server checks the count. */
+export const voteBody = z.object({ candidateId: uuid.optional(), candidateIds: z.array(uuid).min(1).max(50).optional(), positionId: uuid.optional() }).strict()
+  .refine((v) => (v.candidateId === undefined) !== (v.candidateIds === undefined), { message: 'Send candidateId or candidateIds' });
+export const positionVoteBody = z.object({ candidateId: uuid.optional(), candidateIds: z.array(uuid).min(1).max(50).optional() }).strict()
+  .refine((v) => (v.candidateId === undefined) !== (v.candidateIds === undefined), { message: 'Send candidateId or candidateIds' });
 export const idParams = z.object({ id: uuid });
 export const candParams = z.object({ id: uuid, cid: uuid });
 export const tokenParams = z.object({ shareToken: z.string().regex(/^[A-Za-z0-9_-]{32,128}$/) });

@@ -13,7 +13,7 @@ export async function seedRegions(db: Queryable, campaignId: string): Promise<vo
 }
 
 export interface PositionRow {
-  id: string; campaign_id: string; title: string; description: string | null; sort_order: number; seats: number;
+  id: string; campaign_id: string; title: string; description: string | null; sort_order: number; seats: number; rule_text: string | null;
   min_candidates: number | null; max_candidates: number | null; status: 'open' | 'closed'; rules: Record<string, unknown>; invite_token: string | null;
 }
 
@@ -84,7 +84,7 @@ export async function positionBlocks(c: CampaignRow): Promise<PositionBlock[]> {
   return rows.map((p) => {
     const res = results?.positions.find((x) => x.id === p.id);
     return {
-      id: p.id, title: p.title, description: p.description, sort_order: p.sort_order, seats: p.seats,
+      id: p.id, title: p.title, description: p.description, sort_order: p.sort_order, seats: p.seats, rule_text: p.rule_text,
       min_candidates: p.min_candidates, max_candidates: p.max_candidates, status: p.status,
       nomination_state: nominationState(c, p, now),
       invite_url: p.invite_token ? `${getConfig().publicBaseUrl}/n/${p.invite_token}` : null,

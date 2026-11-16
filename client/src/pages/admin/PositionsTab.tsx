@@ -32,14 +32,15 @@ function PositionDialog({ c, existing, live, onDone, onCancel }: { c: CampaignDe
   const [title, setTitle] = useState(existing?.title ?? '');
   const [description, setDescription] = useState(existing?.description ?? '');
   const [seats, setSeats] = useState(String(existing?.seats ?? 1));
+  const [ruleText, setRuleText] = useState(existing?.rule_text ?? '');
   const [min, setMin] = useState(existing?.min_candidates ? String(existing.min_candidates) : '');
   const [max, setMax] = useState(existing?.max_candidates ? String(existing.max_candidates) : '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   async function save() {
     setBusy(true); setError(null);
-    const body = live ? { title, description: description || null }
-      : { title, description: description || null, seats: Number(seats) || 1, min_candidates: min ? Number(min) : null, max_candidates: max ? Number(max) : null };
+    const body = live ? { title, description: description || null, rule_text: ruleText.trim() || null }
+      : { title, description: description || null, rule_text: ruleText.trim() || null, seats: Number(seats) || 1, min_candidates: min ? Number(min) : null, max_candidates: max ? Number(max) : null };
     try {
       if (existing) await api('PATCH', `/api/campaigns/${c.id}/positions/${existing.id}`, body);
       else await api('POST', `/api/campaigns/${c.id}/positions`, body);
@@ -51,14 +52,15 @@ function PositionDialog({ c, existing, live, onDone, onCancel }: { c: CampaignDe
       <div className="stack">
         <label>Title<span className="field-helper">For example “Press Secretary”. Shown to voters on the position block.</span><input value={title} onChange={(e) => setTitle(e.target.value)} maxLength={200} required /></label>
         <label>Description<span className="field-helper">Optional.</span><textarea rows={2} value={description} onChange={(e) => setDescription(e.target.value)} maxLength={2000} /></label>
+        <label>Who can stand<span className="field-helper">Optional, up to 200 characters, for example “Must be from the HR Department”. Voters see it under the title. It is information only: it does not stop anyone from voting; you apply it when you accept nominations.</span><input value={ruleText} onChange={(e) => setRuleText(e.target.value)} maxLength={200} /></label>
         {!live && (
           <div className="field-grid">
-            <label>Seats<span className="field-helper">Kept for future election rules. Today the candidate with the most votes wins.</span><input type="number" min={1} max={50} value={seats} onChange={(e) => setSeats(e.target.value)} /></label>
+            <label>Seats<span className="field-helper">How many candidates each voter must pick (1 for a single winner). A voter picks exactly this many, and the candidates with the most votes win the seats.</span><input type="number" min={1} max={50} value={seats} onChange={(e) => setSeats(e.target.value)} /></label>
             <label>Fewest candidates<span className="field-helper">Optional. Default 2.</span><input type="number" min={1} max={500} value={min} onChange={(e) => setMin(e.target.value)} /></label>
             <label>Most candidates<span className="field-helper">Optional.</span><input type="number" min={1} max={500} value={max} onChange={(e) => setMax(e.target.value)} /></label>
           </div>
         )}
-        {live && <p className="field-helper">Voting is open: only the title and description can change. The change is recorded and shown to voters.</p>}
+        {live && <p className="field-helper">Voting is open: only the title, description and eligibility text can change. The change is recorded and shown to voters.</p>}
         <ErrorBox message={error} />
       </div>
     </Dialog>

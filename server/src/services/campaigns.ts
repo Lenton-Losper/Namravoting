@@ -51,9 +51,9 @@ export const integrityMessage = (e: IntegrityBlocked) =>
   `Receipts (${e.receipts}) and tallies (${e.ballots}) do not match${e.positions.length ? ` (in: ${e.positions.join(', ')})` : ''}, so the campaign was NOT closed. Investigate (see the audit log), then acknowledge to allow closing.`;
 
 /** Receipts and the sum of the counters, per position (in ballot order). */
-export async function positionCounts(db: Queryable, campaignId: string): Promise<{ id: string; title: string; ballots: number; receipts: number }[]> {
+export async function positionCounts(db: Queryable, campaignId: string): Promise<{ id: string; title: string; seats: number; ballots: number; receipts: number }[]> {
   const { rows } = await db.query(
-    `SELECT p.id, p.title,
+    `SELECT p.id, p.title, p.seats,
             coalesce((SELECT sum(t.votes) FROM tallies t WHERE t.campaign_id = p.campaign_id AND t.position_id = p.id), 0)::int AS ballots,
             (SELECT count(*) FROM vote_receipts v WHERE v.campaign_id = p.campaign_id AND v.position_id = p.id)::int AS receipts
        FROM positions p WHERE p.campaign_id = $1 ORDER BY p.sort_order, p.created_at`, [campaignId]);
@@ -84,8 +84,9 @@ export async function closeInTx(
   const perPosition = await positionCounts(db, campaignId);
   const ballots = perPosition.reduce((n, p) => n + p.ballots, 0);
   const receipts = perPosition.reduce((n, p) => n + p.receipts, 0);
-  const mismatched = perPosition.filter((p) => p.ballots !== p.receipts).map((p) => p.title);
-  const integrity: Integrity = { ballots, receipts, match: ballots === receipts && mismatched.length === 0 };
+  // A ballot adds one vote per seat (an abstaining ballot adds one per seat to the Abstain line), so the counters must equal receipts x seats.
+  const mismatched = perPosition.filter((p) => p.ballots !== p.receipts * p.seats).map((p) => p.title);
+  const integrity: Integrity = { ballots, receipts, match: mismatched.length === 0 };
   let acknowledged = false;
   if (!integrity.match) {
     // acknowledged = an admin has acknowledged the latest block; nothing is blocked yet on the very first attempt

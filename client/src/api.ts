@@ -71,7 +71,7 @@ export interface Region { id: string; name: string; sort_order?: number; candida
 export type NominationState = 'not_invited' | 'open' | 'closed' | 'expired' | 'ended';
 /** One block on the campaign page: a position with its candidate counts and nomination status (and, once closed, its outcome). */
 export interface Position {
-  id: string; title: string; description: string | null; sort_order: number; seats: number; min_candidates: number | null; max_candidates: number | null;
+  id: string; title: string; description: string | null; sort_order: number; seats: number; rule_text?: string | null; min_candidates: number | null; max_candidates: number | null;
   status: 'open' | 'closed'; nomination_state: NominationState; invite_url: string | null; required: number;
   counts: { approved: number; submitted: number; rejected: number; withdrawn: number; invited: number };
   result: { turnout: number; winners: string[]; tie: string[] | null } | null;
@@ -101,7 +101,7 @@ export interface Campaign {
 export interface IntegrityBlock { ballots: number; receipts: number; at: string }
 export interface CampaignDetail extends Campaign { positions?: Position[]; regions?: Region[]; nominations_close_at?: string | null; nominate_eligibility?: 'all' | 'umoja' | null; results_group_by_region?: boolean; turnout: number; candidates: Candidate[]; eligible_emails: string[]; umoja_active_count: number; integrity_block?: IntegrityBlock | null; edited_after_start?: Notice[] }
 /** A reset or an early close, with the reason the creator gave. Shown to voters (SEC-01). */
-export interface EditChange { what: 'title' | 'description' | 'closes_at' | 'candidate_added' | 'candidate_edited' | 'candidate_removed' | 'position_title' | 'position_description'; name?: string; from?: string | null; to?: string | null }
+export interface EditChange { what: 'title' | 'description' | 'closes_at' | 'candidate_added' | 'candidate_edited' | 'candidate_removed' | 'position_title' | 'position_description' | 'position_rule_text'; name?: string; from?: string | null; to?: string | null }
 export interface Notice { kind: 'reset' | 'closed_early' | 'edited_after_start' | 'candidate_withdrawn'; candidate?: string; at: string; by: string | null; reason: string; votes_cleared?: number; candidates?: { name: string; votes: number; position?: string }[]; changes?: EditChange[] }
 export interface ResetEntry extends Notice { votes_cleared: number }
 /** `candidates` is null while the campaign is open: per-candidate counts exist only after it has closed (SEC-01). */
