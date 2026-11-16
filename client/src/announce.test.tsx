@@ -138,7 +138,8 @@ describe('My votes and notices for voters', () => {
   it('one position: "Receipt UV-…" without the position name', async () => {
     table['GET /api/vote'] = { campaigns: [item({ positions: { voted: 1, total: 1 }, receipts: [{ position: 'Chair', code: 'UV-AAAA-BBBB' }] })] };
     render(<MemoryRouter><MyVotes /></MemoryRouter>);
-    expect((await screen.findByText(/Receipt UV-AAAA-BBBB/)).textContent).toBe('Receipt UV-AAAA-BBBB');
+    const list = await screen.findByRole('list', { name: /receipt numbers/ });
+    expect(within(list).getByRole('listitem').textContent).toBe('Receipt UV-AAAA-BBBB');
   });
 
   it('a reset notice shows the reason and time, and without a count says so plainly (a voter is never told how many votes there were)', () => {

@@ -40,7 +40,7 @@ export function MyVotes() {
                   {c.positions && c.positions.total > 1 && <p className="meta vote-progress-line"><Icon name="check" /> {c.positions.voted} of {c.positions.total} positions voted</p>}
                   {c.voterState === 'closed' && (c.receipts?.length ?? 0) > 0 && (
                     <ul className="list my-receipts" aria-label={`Your receipt numbers for ${c.title}`}>
-                      {c.receipts!.map((r, i) => <li key={i} className="position-receipt">{c.receipts!.length > 1 ? `${r.position}: ` : 'Receipt '}{r.code}</li>)}
+                      {c.receipts!.map((r, i) => <li key={i} className="position-receipt">{c.receipts!.length > 1 ? `${r.position}: ` : 'Receipt '}<span className="nowrap">{r.code}</span></li>)}
                     </ul>
                   )}
                   <p className="meta"><Icon name="clock" /> {c.closesAt ? `${fmtDate(c.closesAt)}${left ? ` · ${left.replace('Closes in ', '')} left` : ''}` : 'No closing time'}</p>
