@@ -19,6 +19,9 @@ export function dbClientConfig(url: string, env: NodeJS.ProcessEnv = process.env
   let u: URL;
   try { u = new URL(url); } catch { return { connectionString: url }; }
   if (LOCAL_DB_HOSTS.has(u.hostname.toLowerCase())) return { connectionString: url };
+  // Deliberate operator choice (an environment variable, never the URL): no TLS to a database on the same VM or a trusted private
+  // network, e.g. the Docker "db" service in docker-compose.yml. Everything else keeps TLS with certificate checks.
+  if (env.DB_TLS?.trim().toLowerCase() === 'off') { for (const p of SSL_PARAMS) u.searchParams.delete(p); return { connectionString: u.toString() }; }
   for (const p of SSL_PARAMS) u.searchParams.delete(p);
   const raw = env.DB_SSL_CA?.trim();
   const ca = raw ? (raw.includes('BEGIN CERTIFICATE') ? raw : fs.readFileSync(raw, 'utf8')) : undefined;

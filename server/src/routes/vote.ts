@@ -61,7 +61,7 @@ async function ballotCandidates(campaignId: string, positionIds: string[]): Prom
       WHERE k.campaign_id = $1 AND k.position_id = ANY($2::uuid[]) AND k.status = 'approved' ORDER BY p.sort_order, p.created_at, k.sort_order, k.name`, [campaignId, positionIds])).rows;
 }
 const candidateOut = (x: BallotCandidate) => ({
-  id: x.id, name: x.name, bio: x.bio, pledge: x.pledge, photoUrl: x.photo_path ? `/api/photos/${x.id}` : null, isAbstain: x.is_abstain, withdrawn: x.withdrawn_at !== null,
+  id: x.id, name: x.name, bio: x.bio, pledge: x.pledge, photoUrl: x.photo_path ? `${getConfig().basePath}/api/photos/${x.id}` : null, isAbstain: x.is_abstain, withdrawn: x.withdrawn_at !== null,
   positionId: x.position_id, regionId: x.region_id, region: x.region,
 });
 

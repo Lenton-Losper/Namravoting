@@ -23,7 +23,6 @@ const MAX_PENDING_FLOWS = 6;
 const STATE_RE = /^[A-Za-z0-9_-]{16,128}$/;
 const AUTH_TTL_MS = 10 * 60 * 1000;
 const SCOPE = 'openid profile email User.Read';
-const FAIL = '/login?error=signin_failed';
 
 /** Test seams only: the real service is always login.microsoftonline.com over https. */
 export interface EntraOptions { authorityBase?: string; graphBase?: string; allowInsecure?: boolean }
@@ -51,8 +50,9 @@ export function mountEntra(app: Express, config: Config, opts: EntraOptions = {}
   }, e.clientId, {}, oidc.ClientSecretPost(e.clientSecret));
   if (opts.allowInsecure) oidc.allowInsecureRequests(oc);
   const keys: JWTVerifyGetKey = createRemoteJWKSet(new URL(jwksUri), { cacheMaxAge: 60 * 60 * 1000, cooldownDuration: 30_000 });
-  const authCookie = (extra = {}) => cookieOptions(config, { httpOnly: true, sameSite: 'lax', path: '/auth', ...extra });   // Lax: Microsoft redirects back cross-site
-  const siteRoot = new URL(e.redirectUri).origin + '/';
+  const authCookie = (extra = {}) => cookieOptions(config, { httpOnly: true, sameSite: 'lax', path: `${config.basePath}/auth`, ...extra });   // Lax: Microsoft redirects back cross-site
+  const siteRoot = new URL(e.redirectUri).origin + config.basePath + '/';
+  const FAIL = config.basePath + '/login?error=signin_failed';
 
   app.get('/auth/login', async (req: Request, res: Response) => {
     const verifier = oidc.randomPKCECodeVerifier();
@@ -63,8 +63,8 @@ export function mountEntra(app: Express, config: Config, opts: EntraOptions = {}
     const resume = req.query.resume === '1';
     // Already signed in (valid session): there is nothing to sign in to. Go straight to the target, no second Microsoft round trip.
     const current = sessionUser(req);
-    if (current) { res.set('Cache-Control', 'no-store'); return res.redirect(landingFor(next, current.roles.includes(ADMIN_ROLE))); }
-    pruneFlows(req, res);
+    if (current) { res.set('Cache-Control', 'no-store'); return res.redirect(config.basePath + landingFor(next, current.roles.includes(ADMIN_ROLE))); }
+    pruneFlows(req, res, config.basePath);
     const payload: AuthState = { s: state, n: nonce, v: verifier, next, exp: Date.now() + AUTH_TTL_MS };
     res.cookie(AUTH_COOKIE_PREFIX + state, sign(signingKey(config, 'authflow'), payload), authCookie({ maxAge: AUTH_TTL_MS }));
     res.set('Cache-Control', 'no-store');
@@ -115,7 +115,7 @@ export function mountEntra(app: Express, config: Config, opts: EntraOptions = {}
       await upsertUser(user);
       await createSession(req, res, config, { oid: user.oid, email, claimAdmin });
       const admin = rolesFor(config, { claimAdmin, oid: user.oid, email }).length > 0;
-      res.redirect(landingFor(st.next, admin));
+      res.redirect(config.basePath + landingFor(st.next, admin));
     } catch (err) {
       // Log the reason (never tokens or secrets); the browser only learns that sign-in failed.
       logRejected(err);
@@ -133,11 +133,11 @@ export function mountEntra(app: Express, config: Config, opts: EntraOptions = {}
     res.json({ redirect: oidc.buildEndSessionUrl(oc, { post_logout_redirect_uri: siteRoot, client_id: e.clientId }).href });
   });
   // A GET never signs anyone out. Old bookmarks and links simply land on the site root.
-  app.get('/auth/logout', (_req: Request, res: Response) => { res.set('Cache-Control', 'no-store'); res.redirect('/'); });
+  app.get('/auth/logout', (_req: Request, res: Response) => { res.set('Cache-Control', 'no-store'); res.redirect(config.basePath + '/'); });
 }
 
 /** Drops expired pending-flow cookies and, past MAX_PENDING_FLOWS, the oldest ones, so repeated taps can't grow the Cookie header. */
-function pruneFlows(req: Request, res: Response): void {
+function pruneFlows(req: Request, res: Response, basePath: string): void {
   const flows: { name: string; exp: number }[] = [];
   for (const part of (req.headers.cookie ?? '').split(';')) {
     const i = part.indexOf('=');
@@ -149,7 +149,7 @@ function pruneFlows(req: Request, res: Response): void {
   }
   const live = flows.filter((f) => f.exp > Date.now()).sort((a, b) => b.exp - a.exp);
   const drop = [...flows.filter((f) => f.exp <= Date.now()), ...live.slice(MAX_PENDING_FLOWS - 1)];
-  for (const f of drop) res.clearCookie(f.name, { httpOnly: true, sameSite: 'lax', path: '/auth' });
+  for (const f of drop) res.clearCookie(f.name, { httpOnly: true, sameSite: 'lax', path: `${basePath}/auth` });
 }
 
 /** Graph `GET /me?$select=employeeId,displayName,mail`. Any failure means "no code" (-> not_member), never a failed sign-in. */

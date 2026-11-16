@@ -3,6 +3,29 @@ import { z } from 'zod';
 import { loadDotEnv } from './env.js';
 import { normalizeEmployeeCode } from './domain/employeeCode.js';
 
+/** BASE_PATH: '' (or '/') = the root of the host; otherwise "/voting-app" style (leading slash, no trailing slash, plain URL-safe segments). */
+export function normalizeBasePath(raw: string | undefined): string {
+  const t = (raw ?? '').trim().replace(/\/+$/, '');
+  if (t === '') return '';
+  if (!/^\/[A-Za-z0-9._~-]+(?:\/[A-Za-z0-9._~-]+)*$/.test(t) || t.split('/').some((s) => s === '.' || s === '..')) {
+    throw new Error('Refusing to start: BASE_PATH must look like /voting-app (a leading slash, no trailing slash, letters, digits and - . _ ~ only)');
+  }
+  return t;
+}
+/** TRUST_PROXY: a hop count ("1"), or "loopback" / "linklocal" / "uniquelocal", or a comma list of proxy addresses. Never plain "true" (it would trust any client). */
+export function parseTrustProxy(raw: string | undefined): number | string | false {
+  const t = (raw ?? '').trim();
+  if (t === '' || t === 'false' || t === '0') return false;
+  if (/^\d{1,2}$/.test(t)) return Number(t);
+  if (t === 'true') throw new Error('Refusing to start: TRUST_PROXY=true would believe any client that claims an address. Use the number of proxies in front of the app (e.g. 1), or their addresses');
+  if (!/^[A-Za-z0-9.:/,_ -]+$/.test(t)) throw new Error('Refusing to start: TRUST_PROXY must be a number of proxies (e.g. 1), loopback / linklocal / uniquelocal, or a comma-separated list of addresses');
+  return t;
+}
+/** origin + BASE_PATH, unless the origin already ends with it (PUBLIC_BASE_URL may have been given with the path). */
+function withBasePath(origin: string, basePath: string): string {
+  return basePath && !origin.endsWith(basePath) ? origin + basePath : origin;
+}
+
 export function parseConfig(env: NodeJS.ProcessEnv) {
   const schema = z.object({
     NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
@@ -29,6 +52,11 @@ export function parseConfig(env: NodeJS.ProcessEnv) {
     ADMIN_EMAILS_FALLBACK: z.enum(['true', 'false']).optional(),
     ENTRA_SECRET_EXPIRES_AT: z.string().optional(),
     PUBLIC_BASE_URL: z.string().url().default('http://localhost:5173'),
+    // The URL path the app is served under when it shares a host with other sites (e.g. /voting-app). Empty = the root of the host.
+    BASE_PATH: z.string().default(''),
+    // Behind a reverse proxy (nginx, IIS): how many proxies sit in front of the app (usually 1), so the visitor's own address is taken from
+    // X-Forwarded-For. Without it every visitor looks like the proxy and shares one rate-limit bucket. Unset = no proxy in front.
+    TRUST_PROXY: z.string().optional(),
     SESSION_SECRET: z.string().min(32, 'SESSION_SECRET must be at least 32 characters'),
     // Rotation: the previous secret is accepted for verification only; CSRF_SECRET lets the CSRF key rotate on its own (auth/keys.ts).
     SESSION_SECRET_PREVIOUS: z.string().min(32, 'SESSION_SECRET_PREVIOUS must be at least 32 characters').optional(),
@@ -47,6 +75,7 @@ export function parseConfig(env: NodeJS.ProcessEnv) {
     LATE_VOTERS: z.enum(['true', 'false']).default('true'),
   });
   const e = schema.parse(env);
+  const basePath = normalizeBasePath(e.BASE_PATH);
   if (e.AUTH_MODE === 'dev' && e.NODE_ENV === 'production') {
     throw new Error('Refusing to start: AUTH_MODE=dev is not allowed when NODE_ENV=production');
   }
@@ -70,7 +99,7 @@ export function parseConfig(env: NodeJS.ProcessEnv) {
   if (e.NODE_ENV === 'production' && e.SESSION_SECRET.startsWith('change-me')) {
     throw new Error('Refusing to start: set a real SESSION_SECRET in production');
   }
-  const entra = e.AUTH_MODE === 'entra' ? parseEntra(e) : null;
+  const entra = e.AUTH_MODE === 'entra' ? parseEntra(e, basePath) : null;
   // SEC-07: the demo membership override must never ride along into a real election by accident. In production it needs an
   // explicit DEMO=true; the admin banner (auth/notices.ts) shows it whenever it is active.
   if (entra && e.NODE_ENV === 'production' && entra.demoMemberEmails.length > 0 && e.DEMO !== 'true') {
@@ -88,7 +117,10 @@ export function parseConfig(env: NodeJS.ProcessEnv) {
     // Dev mode listens on this machine only (set DEV_LAN=true for `npm run dev:lan`); every other mode listens on all interfaces
     // because the Cloudflare Worker reaches the container from outside it.
     bindHost: e.AUTH_MODE === 'dev' && e.DEV_LAN !== 'true' ? '127.0.0.1' : '0.0.0.0',
-    publicBaseUrl: e.PUBLIC_BASE_URL.replace(/\/$/, ''),
+    basePath,
+    trustProxy: parseTrustProxy(e.TRUST_PROXY),
+    // Every link the app builds for people (share links, QR codes, nomination links, emails) starts here: the origin plus BASE_PATH.
+    publicBaseUrl: withBasePath(e.PUBLIC_BASE_URL.replace(/\/$/, ''), basePath),
     sessionSecret: e.SESSION_SECRET,
     sessionSecretPrevious: e.SESSION_SECRET_PREVIOUS ?? null,
     csrfSecret: e.CSRF_SECRET ?? null,
@@ -119,7 +151,7 @@ export interface EntraConfig {
 }
 
 /** AUTH_MODE=entra needs every ENTRA_* setting. Names the missing keys, never values. */
-function parseEntra(e: { ENTRA_TENANT_ID?: string; ENTRA_CLIENT_ID?: string; ENTRA_CLIENT_SECRET?: string; ENTRA_REDIRECT_URI?: string; ADMIN_EMAILS?: string; ADMIN_OIDS?: string; ADMIN_EMAILS_FALLBACK?: string; DEMO_MEMBER_EMAILS?: string; ENTRA_SECRET_EXPIRES_AT?: string }): EntraConfig {
+function parseEntra(e: { ENTRA_TENANT_ID?: string; ENTRA_CLIENT_ID?: string; ENTRA_CLIENT_SECRET?: string; ENTRA_REDIRECT_URI?: string; ADMIN_EMAILS?: string; ADMIN_OIDS?: string; ADMIN_EMAILS_FALLBACK?: string; DEMO_MEMBER_EMAILS?: string; ENTRA_SECRET_EXPIRES_AT?: string }, basePath = ''): EntraConfig {
   const need = ['ENTRA_TENANT_ID', 'ENTRA_CLIENT_ID', 'ENTRA_CLIENT_SECRET', 'ENTRA_REDIRECT_URI'] as const;
   const missing = need.filter((k) => !e[k]?.trim());
   if (missing.length) throw new Error(`Refusing to start: AUTH_MODE=entra requires ${missing.join(', ')}`);
@@ -128,7 +160,7 @@ function parseEntra(e: { ENTRA_TENANT_ID?: string; ENTRA_CLIENT_ID?: string; ENT
   if (!uuid.test(e.ENTRA_CLIENT_ID!.trim())) throw new Error('Refusing to start: ENTRA_CLIENT_ID must be a client (application) GUID');
   let redirect: URL;
   try { redirect = new URL(e.ENTRA_REDIRECT_URI!.trim()); } catch { throw new Error('Refusing to start: ENTRA_REDIRECT_URI must be an absolute URL'); }
-  if (redirect.pathname !== '/auth/callback') throw new Error('Refusing to start: ENTRA_REDIRECT_URI must end with /auth/callback');
+  if (redirect.pathname !== `${basePath}/auth/callback`) throw new Error(`Refusing to start: ENTRA_REDIRECT_URI must end with ${basePath}/auth/callback`);
   const adminOids = (e.ADMIN_OIDS ?? '').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
   for (const o of adminOids) if (!uuid.test(o)) throw new Error('Refusing to start: ADMIN_OIDS must be a comma-separated list of Entra object ids (GUIDs)');
   const adminEmails = (e.ADMIN_EMAILS ?? '').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);

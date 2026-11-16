@@ -205,7 +205,7 @@ async function removePhotos(photos: unknown): Promise<void> {
 const VISIBLE = "(c.created_by = $1 OR EXISTS (SELECT 1 FROM campaign_members m WHERE m.campaign_id = c.id AND m.user_oid = $1 AND m.role = 'co_admin'))";
 const shareUrl = (token: string) => `${getConfig().publicBaseUrl}/v/${token}`;
 const present = (c: CampaignRow) => ({ ...c, share_url: shareUrl(c.share_token) });
-const photoUrl = (cand: { id: string; photo_path: string | null }) => (cand.photo_path ? `/api/photos/${cand.id}` : null);
+const photoUrl = (cand: { id: string; photo_path: string | null }) => (cand.photo_path ? `${getConfig().basePath}/api/photos/${cand.id}` : null);
 
 export function adminRouter(): Router {
   const r = Router();
@@ -254,7 +254,7 @@ export function adminRouter(): Router {
       const t = tallies.filter((x) => x.campaign_id === cid).sort((a, b) => b.votes - a.votes);
       if (!t.length || t[0].votes === 0) return null;
       const tie = t.length > 1 && t[1].votes === t[0].votes;
-      return { id: t[0].id as string, name: t[0].name as string, votes: t[0].votes as number, tie, photo_url: t[0].photo_path ? `/api/photos/${t[0].id}` : null };
+      return { id: t[0].id as string, name: t[0].name as string, votes: t[0].votes as number, tie, photo_url: t[0].photo_path ? `${getConfig().basePath}/api/photos/${t[0].id}` : null };
     };
     const slim = (c: (typeof rows)[number]) => ({
       id: c.id, title: c.title, status: c.status, created_at: c.created_at, opens_at: c.opens_at, closes_at: c.closes_at,

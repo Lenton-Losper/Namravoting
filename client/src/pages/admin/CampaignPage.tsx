@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
+import { withBase } from '../../basePath';
 import { api, fmtDate, fromLocalInput, type Campaign, type CampaignDetail, type Results, type SealCheck } from '../../api';
 import { Icon } from '../../icons';
 import { SharePanel } from '../../share';
@@ -178,10 +179,10 @@ function ResultsTab({ c, reload }: { c: CampaignDetail; reload: () => Promise<vo
     <>
       <SectionTitle icon="chart" actions={c.status === 'closed' ? (
         <>
-          <a className="btn btn-secondary btn-sm" href={`/api/campaigns/${c.id}/results.csv`} download><Icon name="download" /> Export CSV</a>
-          <a className="btn btn-secondary btn-sm" href={`/api/campaigns/${c.id}/results.xlsx`} download><Icon name="download" /> Export Excel (.xlsx)</a>
-          <a className="btn btn-secondary btn-sm" href={`/api/campaigns/${c.id}/results.pdf`} download><Icon name="download" /> Export PDF</a>
-          <a className="btn btn-secondary btn-sm" href={`/api/campaigns/${c.id}/audit-bundle.zip`} download><Icon name="download" /> Audit bundle (.zip)</a>
+          <a className="btn btn-secondary btn-sm" href={withBase(`/api/campaigns/${c.id}/results.csv`)} download><Icon name="download" /> Export CSV</a>
+          <a className="btn btn-secondary btn-sm" href={withBase(`/api/campaigns/${c.id}/results.xlsx`)} download><Icon name="download" /> Export Excel (.xlsx)</a>
+          <a className="btn btn-secondary btn-sm" href={withBase(`/api/campaigns/${c.id}/results.pdf`)} download><Icon name="download" /> Export PDF</a>
+          <a className="btn btn-secondary btn-sm" href={withBase(`/api/campaigns/${c.id}/audit-bundle.zip`)} download><Icon name="download" /> Audit bundle (.zip)</a>
         </>
       ) : undefined}>{c.status === 'open' ? 'Turnout' : 'Results'}{c.status === 'open' && <span className="muted count"> · updates every 15 s</span>}</SectionTitle>
       <ErrorBox message={err ?? error} />

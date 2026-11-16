@@ -1,12 +1,13 @@
 import { safeNext } from './safeNext';
+import { stripBase, withBase } from './basePath';
 import { formatWindhoek, isoToLocalInput, localInputToIso } from './windhoek';
 
 export class ApiError extends Error {
   constructor(public status: number, message: string, public code?: string) { super(message); }
 }
 
-/** Page navigation, as an object so tests can observe it. */
-export const navigation = { assign: (u: string) => window.location.assign(u), replace: (u: string) => window.location.replace(u) };
+/** Page navigation, as an object so tests can observe it. Takes app paths ("/login"); the base path is added here. */
+export const navigation = { assign: (u: string) => window.location.assign(withBase(u)), replace: (u: string) => window.location.replace(withBase(u)) };
 export const SESSION_EXPIRED_MESSAGE = 'Your session expired, signing you back in…';
 
 let expiredHandler: (() => void) | null = null;
@@ -17,8 +18,9 @@ export const resetSessionExpiredGuard = () => { redirecting = false; };
 /** Any 401 means the session is gone: forget the user, then go to /login?next=<where we are>, which goes straight to Microsoft. */
 function sessionExpired() {
   if (redirecting) return;                      // several calls can fail at once: one redirect
-  const here = window.location.pathname + window.location.search;
-  if (window.location.pathname.startsWith('/login')) return;
+  const path = stripBase(window.location.pathname);
+  const here = path + window.location.search;
+  if (path.startsWith('/login')) return;
   redirecting = true;
   resetCsrf(); expiredHandler?.();
   const next = safeNext(here);
@@ -29,7 +31,7 @@ let csrf: string | null = null;
 /** Forget the cached CSRF token: it is bound to the session, so sign-in and sign-out make it stale (SEC-15). */
 export const resetCsrf = () => { csrf = null; };
 async function csrfToken(force = false): Promise<string> {
-  if (!csrf || force) csrf = ((await (await fetch('/api/csrf', { credentials: 'same-origin' })).json()) as { token: string }).token;
+  if (!csrf || force) csrf = ((await (await fetch(withBase('/api/csrf'), { credentials: 'same-origin' })).json()) as { token: string }).token;
   return csrf;
 }
 
@@ -42,11 +44,11 @@ export async function api<T = unknown>(method: string, url: string, body?: unkno
   if (body instanceof FormData) payload = body;
   else if (body !== undefined) { headers['Content-Type'] = 'application/json'; payload = JSON.stringify(body); }
   if (method !== 'GET') headers['X-CSRF-Token'] = await csrfToken();
-  let res = await fetch(url, { method, headers, body: payload, credentials: 'same-origin' }).catch(() => null);
+  let res = await fetch(withBase(url), { method, headers, body: payload, credentials: 'same-origin' }).catch(() => null);
   // Cold start / rollout: the gateway answers 502-504 while the app container comes up. Retry reads quietly.
   for (let n = 0; method === 'GET' && (!res || [502, 503, 504].includes(res.status)) && n < RETRIES; n++) {
     await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
-    res = await fetch(url, { method, headers, credentials: 'same-origin' }).catch(() => null);
+    res = await fetch(withBase(url), { method, headers, credentials: 'same-origin' }).catch(() => null);
   }
   if (!res) throw new ApiError(0, "Can't reach the server. Check your connection and retry.");
   if (res.status === 403 && method !== 'GET' && retry) {

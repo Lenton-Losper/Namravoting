@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
+import { withBase } from './basePath';
 import { api, navigation, onSessionExpired, resetCsrf, type User } from './api';
 
 export interface AdminNotice { kind: 'admin_by_email' | 'secret_expiry'; daysLeft?: number; expired?: boolean }
@@ -25,7 +26,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Demo: identity is the Cloudflare Access session, so signing out means ending that session.
     if (authMode === 'demo') { window.location.assign('/cdn-cgi/access/logout'); return; }
     // Entra: the server revokes the app session, then we send the browser through Microsoft's sign-out, back to the site root.
-    if (authMode === 'entra') { const r = await api<{ redirect?: string }>('POST', '/api/logout'); resetCsrf(); window.location.assign(r?.redirect ?? '/'); return; }
+    if (authMode === 'entra') { const r = await api<{ redirect?: string }>('POST', '/api/logout'); resetCsrf(); window.location.assign(r?.redirect ?? withBase('/')); return; }
     await api('POST', '/api/logout'); resetCsrf(); setUser(null); navigation.assign('/login');
   }, [authMode]);
   return <Ctx.Provider value={{ observing, authMode, notices, user, loading, refresh, logout, isAdmin: !!user?.roles.includes('CampaignAdmin') }}>{children}</Ctx.Provider>;

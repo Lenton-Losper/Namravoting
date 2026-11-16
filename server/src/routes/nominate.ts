@@ -55,7 +55,7 @@ async function mayNominate(c: CampaignRow, u: AuthUser): Promise<{ ok: boolean; 
 
 const profileOut = (k: Record<string, unknown> | undefined) => (k ? {
   id: k.id, name: k.name, bio: k.bio, pledge: k.pledge ?? null, regionId: k.region_id, status: k.status, reviewReason: k.status === 'rejected' ? k.review_reason : null,
-  photoUrl: k.photo_path ? `/api/photos/${k.id}` : null, submittedAt: k.submitted_at,
+  photoUrl: k.photo_path ? `${getConfig().basePath}/api/photos/${k.id}` : null, submittedAt: k.submitted_at,
 } : null);
 
 export function nominateRouter(): Router {

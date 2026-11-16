@@ -14,5 +14,5 @@ export function readCookie(req: Request, name: string): string | undefined {
 }
 
 export function cookieOptions(config: Config, extra: CookieOptions = {}): CookieOptions {
-  return { sameSite: 'strict', secure: config.isProd, path: '/', ...extra };
+  return { sameSite: 'strict', secure: config.isProd, path: config.basePath || '/', ...extra };
 }

@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import { withBase } from '../basePath';
 import { api, navigation, resetCsrf, SESSION_EXPIRED_MESSAGE, type User } from '../api';
 import { useAuth } from '../auth';
 import { landingFor, safeNext as validateNext } from '../safeNext';
@@ -41,7 +42,7 @@ function MicrosoftSignIn() {
   useEffect(() => { if (user) nav(landingFor(safeNext, isAdmin), { replace: true }); }, [user, isAdmin, safeNext, nav]);
   if (user) return <Spinner label="Signing you in…" />;
   if (auto) return <main className="login-page"><div className="card card-accent login-card"><div className="login-brand"><Wordmark dark /></div><p className="note" role="status">{SESSION_EXPIRED_MESSAGE}</p><Spinner /></div></main>;
-  const href = `/auth/login${safeNext ? `?next=${encodeURIComponent(safeNext)}` : ''}`;
+  const href = withBase(`/auth/login${safeNext ? `?next=${encodeURIComponent(safeNext)}` : ''}`);
   return (
     <main className="login-page">
       <div className="card card-accent login-card">

@@ -10,7 +10,7 @@ Prerequisites: **Node 20+**, **Docker Desktop** (running).
 
 ```powershell
 copy .env.example .env      # then edit SESSION_SECRET (32+ chars)
-docker compose up -d --wait # Postgres 16 on localhost:5433
+docker compose -f docker-compose.dev.yml up -d --wait # Postgres 16 on localhost:5433
 npm install
 npm run migrate             # applies server/migrations/*.sql (creates the restricted app DB role too)
 npm run seed                # 2 admins, 5 staff, 1 draft campaign with 3 candidates

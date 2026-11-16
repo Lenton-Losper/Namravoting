@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
-import { api, fmtDate, type CampaignDetail } from '../../api';
+import { api, fmtDate, navigation, type CampaignDetail } from '../../api';
 import { ErrorBox, SectionTitle, Spinner } from '../../ui';
 
 export interface TeamMember { oid: string; role: 'co_admin' | 'observer'; name: string; email: string; added_at: string }
@@ -86,7 +86,7 @@ export function TeamTab({ c, reload }: { c: CampaignDetail; reload: () => Promis
                   </>
                 )}
                 {owner && a.status === 'approved' && a.executable && (
-                  <button className="btn btn-danger btn-sm" disabled={busy} onClick={() => void act(() => api('POST', `${base}/approvals/${a.id}/execute`), a.kind === 'permanent_delete' ? async () => { window.location.assign('/admin'); } : reload)}>Carry it out now</button>
+                  <button className="btn btn-danger btn-sm" disabled={busy} onClick={() => void act(() => api('POST', `${base}/approvals/${a.id}/execute`), a.kind === 'permanent_delete' ? async () => { navigation.assign('/admin'); } : reload)}>Carry it out now</button>
                 )}
                 {owner && a.status === 'approved' && !a.executable && <span className="muted small">Approval older than {t.approval_valid_hours} hours: cancel and ask again.</span>}
                 {owner && (a.status === 'pending' || a.status === 'approved') && (

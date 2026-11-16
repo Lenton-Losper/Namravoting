@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import { Icon } from './icons';
+import { withBase } from './basePath';
 import { Dialog } from './ui';
 
 export interface Shareable { id: string; title: string; share_url: string; status: 'draft' | 'open' | 'closed' }
@@ -59,8 +60,8 @@ export function SharePanel({ c, compact = false }: { c: Shareable; compact?: boo
           <img className={compact ? 'qr' : 'qr qr-large'} src={`/api/campaigns/${c.id}/qr.png`} alt="QR code for the voting link"
             width={compact ? 160 : 240} height={compact ? 160 : 240} />
           <div className="share-row share-row-center">
-            <a className="btn btn-secondary" href={`/api/campaigns/${c.id}/qr.png?download=1`} download="voting-qr.png"><Icon name="download" /> Download QR (PNG)</a>
-            <a className="btn btn-secondary" href={`/api/campaigns/${c.id}/poster.pdf`} download><Icon name="download" /> Download poster (PDF)</a>
+            <a className="btn btn-secondary" href={withBase(`/api/campaigns/${c.id}/qr.png?download=1`)} download="voting-qr.png"><Icon name="download" /> Download QR (PNG)</a>
+            <a className="btn btn-secondary" href={withBase(`/api/campaigns/${c.id}/poster.pdf`)} download><Icon name="download" /> Download poster (PDF)</a>
           </div>
         </>
       )}

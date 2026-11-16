@@ -189,7 +189,7 @@ export function positionsRouter(d: Deps): Router {
         WHERE k.position_id = $1 AND NOT k.is_abstain ORDER BY k.submitted_at NULLS FIRST, k.sort_order, k.name`, [pid]);
     res.set('Cache-Control', 'no-store').json({
       nominations: rows.map((x) => ({
-        id: x.id, name: x.name, bio: x.bio, pledge: x.pledge, photo_url: x.photo_path && !c.photos_purged_at ? `/api/photos/${x.id}` : null, status: x.status, region_id: x.region_id, region: x.region,
+        id: x.id, name: x.name, bio: x.bio, pledge: x.pledge, photo_url: x.photo_path && !c.photos_purged_at ? `${getConfig().basePath}/api/photos/${x.id}` : null, status: x.status, region_id: x.region_id, region: x.region,
         submitted_at: x.submitted_at, submitted_by: x.submitted_by, submitted_by_email: x.submitted_by_email, review_reason: x.review_reason, reviewed_at: x.reviewed_at, reviewed_by: x.reviewed_by,
       })),
     });

@@ -1,19 +1,60 @@
+# NamRA Voting, production-style run on a single VM. See HOSTING.md.
+#
+#   cp .env.example .env     # then fill it in (HOSTING.md section 3)
+#   docker compose build
+#   docker compose run --rm app node server/dist/migrateCli.js     # create/upgrade the database tables
+#   docker compose up -d                                            # app only, database provided by the hosting team
+#   docker compose --profile localdb up -d                          # app + a Postgres 16 container on this VM (optional)
+#
+# The app listens on 127.0.0.1:8080 only: the reverse proxy (nginx / IIS) on the VM forwards /voting-app to it, unchanged.
+# For development use docker-compose.dev.yml (database only) instead.
+
+x-base-path: &base_path /voting-app
+
 services:
+  app:
+    build:
+      context: .
+      args:
+        BASE_PATH: *base_path          # compiled into the client's asset URLs
+    image: namra-voting:latest
+    restart: unless-stopped
+    env_file: .env                     # secrets and settings: DATABASE_URL, SESSION_SECRET, ENTRA_*, ...
+    environment:
+      NODE_ENV: production
+      PORT: "8080"
+      BASE_PATH: *base_path            # must equal the build argument above (the server refuses to start otherwise)
+      STORAGE: disk
+      UPLOAD_DIR: /data/uploads
+    ports:
+      - "127.0.0.1:${APP_PORT:-8080}:8080"
+    volumes:
+      - uploads:/data/uploads          # candidate photos: back this volume up with the database
+    depends_on:
+      db:
+        condition: service_healthy
+        required: false                # only when the localdb profile is on (needs Docker Compose 2.20 or newer)
+    # The image has its own HEALTHCHECK (GET /voting-app/api/health, 200 only when the database answers).
+
+  # OPTIONAL: PostgreSQL 16 on this VM, for when the hosting team does not provide a database. Off unless --profile localdb is given.
+  # Inside it the owner role is a superuser, so the migrations create the namra_app role themselves.
   db:
+    profiles: ["localdb"]
     image: postgres:16
+    restart: unless-stopped
     environment:
       POSTGRES_USER: namra_owner
-      POSTGRES_PASSWORD: namra_owner_dev
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}   # required when the localdb profile is on (set it in .env)
       POSTGRES_DB: namra
-    ports:
-      - "5433:5432"
+    # No published port: only the app container reaches it (host name "db").
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ./docker/init-test-db.sql:/docker-entrypoint-initdb.d/init-test-db.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U namra_owner -d namra"]
-      interval: 3s
+      interval: 5s
       timeout: 3s
       retries: 20
+
 volumes:
+  uploads:
   pgdata:

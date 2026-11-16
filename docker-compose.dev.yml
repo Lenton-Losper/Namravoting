@@ -1,0 +1,19 @@
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: namra_owner
+      POSTGRES_PASSWORD: namra_owner_dev
+      POSTGRES_DB: namra
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./docker/init-test-db.sql:/docker-entrypoint-initdb.d/init-test-db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U namra_owner -d namra"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+volumes:
+  pgdata:

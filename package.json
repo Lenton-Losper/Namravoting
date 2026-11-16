@@ -12,7 +12,7 @@
     "seed": "npm run seed -w server",
     "test": "npm test -w server && npm test -w client",
     "build": "npm run build -w client && npm run build -w server",
-    "db:up": "docker compose up -d --wait",
+    "db:up": "docker compose -f docker-compose.dev.yml up -d --wait",
     "umoja:import": "npm run umoja:import -w server --",
     "umoja:match": "npm run umoja:match -w server --",
     "retention": "npm run retention -w server --",

@@ -18,7 +18,7 @@ coverage
 **/*.test.ts
 worker
 docker
-docker-compose.yml
+docker-compose*.yml
 scripts
 README.md
 *.log
