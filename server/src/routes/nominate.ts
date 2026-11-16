@@ -27,17 +27,17 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX
 
 interface Ctx {
   campaign: CampaignRow & { db_now: Date };
-  position: { id: string; title: string; description: string | null; status: 'open' | 'closed'; invite_token: string | null };
+  position: { id: string; title: string; description: string | null; rule_text: string | null; status: 'open' | 'closed'; invite_token: string | null };
 }
 
 async function load(req: Request): Promise<Ctx> {
   const p = tokenParams.safeParse(req.params);
   if (!p.success) throw notFound();
   const row = (await getPool().query(
-    `SELECT p.id AS pid, p.title AS ptitle, p.description AS pdesc, p.status AS pstatus, p.invite_token, c.*, clock_timestamp() AS db_now
+    `SELECT p.id AS pid, p.title AS ptitle, p.description AS pdesc, p.rule_text AS prule, p.status AS pstatus, p.invite_token, c.*, clock_timestamp() AS db_now
        FROM positions p JOIN campaigns c ON c.id = p.campaign_id WHERE p.invite_token = $1`, [p.data.shareToken])).rows[0];
   if (!row) throw notFound();
-  return { campaign: row, position: { id: row.pid, title: row.ptitle, description: row.pdesc, status: row.pstatus, invite_token: row.invite_token } };
+  return { campaign: row, position: { id: row.pid, title: row.ptitle, description: row.pdesc, rule_text: row.prule, status: row.pstatus, invite_token: row.invite_token } };
 }
 
 /** Same eligibility rule as voting unless the campaign sets its own for nominations (all staff, or Umoja members only). */
@@ -77,7 +77,7 @@ export function nominateRouter(): Router {
       `SELECT id, name, bio, pledge, region_id, status, review_reason, photo_path, submitted_at FROM candidates WHERE position_id = $1 AND submitted_by_oid = $2`, [p.id, u.oid])).rows[0];
     const regions = (await getPool().query('SELECT id, name FROM regions WHERE campaign_id = $1 ORDER BY sort_order, name', [c.id])).rows;
     res.set('Cache-Control', 'no-store').json({
-      campaign: { title: c.title }, position: { id: p.id, title: p.title, description: p.description },
+      campaign: { title: c.title }, position: { id: p.id, title: p.title, description: p.description, ruleText: p.rule_text },
       state, closesAt: c.nominations_close_at ?? null, regions, defaultName: u.displayName,
       profile: profileOut(mine),
       // A profile can be edited until the admin approves it, while nominations are open.

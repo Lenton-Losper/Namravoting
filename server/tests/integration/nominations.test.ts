@@ -303,3 +303,34 @@ describe('who may nominate', () => {
     await (await login(app, S2)).get(`/api/nominate/${token}`).expect(200);
   });
 });
+
+describe('several positions and the eligibility line', () => {
+  it('shows a position\'s eligibility line (information only) to the candidate on the nomination form', async () => {
+    const { admin, e, invite } = await setup();
+    await admin.patch(`/api/campaigns/${e.id}/positions/${e.positions[0].id}`).send({ rule_text: 'Must be from the HR Department' }).expect(200);
+    const t0 = (await invite(0)).token, t1 = (await invite(1)).token;
+    const s = await login(app, S1);
+    expect((await s.get(`/api/nominate/${t0}`).expect(200)).body.position).toMatchObject({ title: 'Press Secretary', ruleText: 'Must be from the HR Department' });
+    expect((await s.get(`/api/nominate/${t1}`).expect(200)).body.position.ruleText).toBeNull();
+    // information only: a member who is not from HR is not stopped from submitting
+    await submit(s, t0, { name: 'Sam Staff', region_id: e.regions.Khomas }).expect(200);
+  });
+
+  it('the same person can stand in two positions: one profile per position, approved and counted separately', async () => {
+    const { admin, e, invite } = await setup();
+    const t0 = (await invite(0)).token, t1 = (await invite(1)).token;
+    const s = await login(app, S1);
+    await submit(s, t0, { name: 'Sam Staff', region_id: e.regions.Khomas }).expect(200);
+    await submit(s, t1, { name: 'Sam Staff', region_id: e.regions.Khomas }).expect(200);
+    const a = await rows(e.positions[0].id), b = await rows(e.positions[1].id);
+    expect([a.length, b.length]).toEqual([1, 1]);
+    expect(a[0].id).not.toBe(b[0].id);
+    expect(a[0].submitted_by_oid).toBe(b[0].submitted_by_oid);
+    await admin.post(`/api/campaigns/${e.id}/candidates/${a[0].id}/approve`).expect(200);   // approving one does not approve the other
+    expect((await rows(e.positions[0].id))[0].status).toBe('approved');
+    expect((await rows(e.positions[1].id))[0].status).toBe('submitted');
+    // a second profile in the SAME position is still refused: the second submission updates the one profile
+    await submit(s, t1, { name: 'Sam Staff II', region_id: e.regions.Khomas }).expect(200);
+    expect((await rows(e.positions[1].id))).toHaveLength(1);
+  });
+});

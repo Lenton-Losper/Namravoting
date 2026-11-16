@@ -12,7 +12,7 @@ import { Dialog, ErrorBox, Spinner, Thumb } from '../ui';
 
 type State = 'not_invited' | 'open' | 'closed' | 'expired' | 'ended';
 interface Info {
-  campaign: { title: string }; position: { id: string; title: string; description: string | null };
+  campaign: { title: string }; position: { id: string; title: string; description: string | null; ruleText?: string | null };
   state: State; closesAt: string | null; regions: { id: string; name: string }[]; defaultName: string; canEdit: boolean;
   profile: { id: string; name: string; bio: string | null; pledge?: string | null; regionId: string | null; status: 'invited' | 'submitted' | 'approved' | 'rejected' | 'withdrawn'; reviewReason: string | null; photoUrl: string | null } | null;
 }
@@ -123,6 +123,7 @@ export function NominatePage() {
             <p className="meta">{info.campaign.title}</p>
             <h1 className="head-title">Stand for {info.position.title}</h1>
             {info.position.description && <p className="head-desc">{info.position.description}</p>}
+            {info.position.ruleText && <p className="rule-text"><Icon name="info" size={16} /> <span>{info.position.ruleText}</span></p>}
             {info.state === 'open' && info.closesAt && <p className="meta"><Icon name="clock" /> Nominations close {fmtDate(info.closesAt)}</p>}
           </div>
         </div>
