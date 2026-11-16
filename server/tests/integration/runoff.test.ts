@@ -59,12 +59,13 @@ describe('a tie is shown plainly', () => {
     await admin.post(`/api/campaigns/${c.id}/runoff`).expect(409);
   });
 
-  it('voters see the tie in the published results', async () => {
+  it('a tie blocks announcing the winners ("Tied: create a run-off"), and voters never see the tie', async () => {
     const admin = await login(app, ADMIN_A);
     const c = await closed(admin, [1, 1]);
-    await admin.post(`/api/campaigns/${c.id}/publish`).expect(200);
-    const r = (await (await login(app, S1)).get(`/api/vote/${c.token}/results`).expect(200)).body;
-    expect(r.tie.names).toEqual(['Cand 1', 'Cand 2']);
+    const r = await admin.post(`/api/campaigns/${c.id}/announce-winners`).expect(409);
+    expect([r.body.code, r.body.error]).toEqual(['tied', 'Tied: create a run-off']);
+    await (await login(app, S1)).get(`/api/vote/${c.token}/results`).expect(404);
+    expect((await (await login(app, S1)).get(`/api/vote/${c.token}`).expect(200)).body.announcement).toBeNull();
   });
 });
 

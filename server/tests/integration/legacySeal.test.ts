@@ -33,20 +33,20 @@ describe('a totals-only seal from before migration 009', () => {
     expect(v.sealed_tallies).toEqual([]);
   });
 
-  it('can be published and exported (CSV, Excel, PDF, audit bundle), and the restore check passes', async () => {
+  it('can be announced and exported (CSV, Excel, PDF, audit bundle), and the restore check passes', async () => {
     const c = await oldStyleClosed();
-    await c.admin.post(`/api/campaigns/${c.id}/publish`).expect(200);
+    await c.admin.post(`/api/campaigns/${c.id}/announce-winners`).expect(201);
     for (const f of ['results.csv', 'results.xlsx', 'results.pdf', 'audit-bundle.zip']) await c.admin.get(`/api/campaigns/${c.id}/${f}`).expect(200);
     expect((await c.admin.get(`/api/campaigns/${c.id}/results.csv`).expect(200)).text).toContain('Seal fingerprint,');
     expect(await sealCheck(ownerDb())).toMatchObject({ ok: true, detail: 'every closed campaign' });
   });
 
-  it('still catches a changed counter: verify fails, publishing is refused, and the restore check fails', async () => {
+  it('still catches a changed counter: verify fails, announcing is refused, and the restore check fails', async () => {
     const c = await oldStyleClosed();
     await ownerDb().query('UPDATE tallies SET votes = votes + 1 WHERE candidate_id = $1', [c.candidates[1]]);
     const v = (await c.admin.get(`/api/campaigns/${c.id}/verify`).expect(200)).body;
     expect(v.tallies_match).toBe(false);
-    expect((await c.admin.post(`/api/campaigns/${c.id}/publish`).expect(409)).body.code).toBe('integrity_failed');
+    expect((await c.admin.post(`/api/campaigns/${c.id}/announce-winners`).expect(409)).body.code).toBe('integrity_failed');
     expect((await sealCheck(ownerDb())).ok).toBe(false);
   });
 

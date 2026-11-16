@@ -215,11 +215,12 @@ describe('ballot secrecy walk', () => {
     await admin.get('/api/campaigns/mine').expect(200);
     await admin.get('/api/campaigns/summary').expect(200);
     await admin.post(`/api/campaigns/${c.id}/close`).expect(200);
-    await admin.post(`/api/campaigns/${c.id}/publish`).expect(200);
+    await admin.post(`/api/campaigns/${c.id}/announce-winners`).expect(201);
     await admin.get(`/api/campaigns/${c.id}/results.csv`).expect(200);
     await admin.get(`/api/campaigns/summary`).expect(200);
     const s1 = await login(app, S1);
-    await s1.get(`/api/vote/${c.token}/results`).expect(200);
+    await s1.get(`/api/vote/${c.token}/results`).expect(404);          // a voter has no results route
+    await s1.get(`/api/vote/${c.token}`).expect(200);                  // ...only the announced winners, by name
 
     const voterIds = voters.flatMap((u) => [u.oid, u.email]);
     expect(responseLog.length).toBeGreaterThan(30);

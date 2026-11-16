@@ -66,7 +66,7 @@ describe('a co-admin can run the campaign, but not do the owner-only things', ()
     await t.B.post(`/api/campaigns/${t.id}/start`).expect(200);
     await vote(t.token, S2, t.cands[0]);
     await t.B.post(`/api/campaigns/${t.id}/close`).send({}).expect(200);
-    await t.B.post(`/api/campaigns/${t.id}/publish`).expect(200);
+    await t.B.post(`/api/campaigns/${t.id}/announce-winners`).expect(201);
     for (const f of ['csv', 'xlsx', 'pdf']) await t.B.get(`/api/campaigns/${t.id}/results.${f}`).expect(200);
     expect((await ownerDb().query("SELECT actor_oid FROM audit_log WHERE campaign_id = $1 AND action = 'campaign.start'", [t.id])).rows[0].actor_oid).toBe(ADMIN_B.oid);   // audited as the person who did it
   });

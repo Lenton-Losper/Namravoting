@@ -267,12 +267,12 @@ describe('reset votes', () => {
     expect(await rowCount('vote_receipts', f.id)).toBe(1);
   });
 
-  it('re-opens a CLOSED campaign (unpublishing the results); a passed closing time needs a new one', async () => {
+  it('re-opens a CLOSED campaign (voiding the winners announcement); a passed closing time needs a new one', async () => {
     const A = await login(app, ADMIN_A);
     const f = await fixture(A, 'open');
     await vote(await login(app, S1), f, 0).expect(201);
     await A.post(`/api/campaigns/${f.id}/close`).expect(200);
-    await A.post(`/api/campaigns/${f.id}/publish`).expect(200);
+    await A.post(`/api/campaigns/${f.id}/announce-winners`).expect(201);
     await ownerDb().query("UPDATE campaigns SET closes_at = now() - interval '1 hour' WHERE id = $1", [f.id]);
     const needNew = await A.post(`/api/campaigns/${f.id}/reset`).send(resetBody()).expect(409);
     expect(needNew.body.code).toBe('needs_new_close');
@@ -280,9 +280,9 @@ describe('reset votes', () => {
     await A.post(`/api/campaigns/${f.id}/reset`).send(resetBody({ closes_at: new Date(Date.now() - 3600_000).toISOString() })).expect(400);   // must be in the future
     const later = new Date(Date.now() + 2 * 3600_000).toISOString();
     await A.post(`/api/campaigns/${f.id}/reset`).send(resetBody({ closes_at: later })).expect(200);
-    const row = (await ownerDb().query('SELECT status, results_published, closes_at FROM campaigns WHERE id = $1', [f.id])).rows[0];
+    const row = (await ownerDb().query('SELECT status, winners_announced_at, closes_at FROM campaigns WHERE id = $1', [f.id])).rows[0];
     expect(row.status).toBe('open');
-    expect(row.results_published).toBe(false);
+    expect(row.winners_announced_at).toBeNull();
     expect(new Date(row.closes_at).toISOString()).toBe(later);
     await vote(await login(app, S1), f, 0).expect(201);                                    // can vote again
     expect((await audits(f.id, 'campaign.reset'))[0].details.previous_status).toBe('closed');
@@ -313,15 +313,15 @@ describe('reset votes', () => {
     expect(h[0].candidates).toBeUndefined();
     expect(new Date(h[0].at).getTime()).toBeGreaterThan(Date.now() - 60_000);
 
-    // a second reset appends; voters who can see the published results see the history (without per-candidate counts)
+    // a second reset appends; voters see the history's reasons (never a count, never per-candidate tallies)
     await vote(s1, f, 1).expect(201);
     await A.post(`/api/campaigns/${f.id}/reset`).send(resetBody({ reason: 'Second reset after another test run' })).expect(200);
     await vote(s2, f, 1).expect(201);
     await A.post(`/api/campaigns/${f.id}/close`).expect(200);
-    await A.post(`/api/campaigns/${f.id}/publish`).expect(200);
-    const seen = (await s1.get(`/api/vote/${f.token}/results`).expect(200)).body.resets;
+    const seen = (await s1.get(`/api/vote/${f.token}`).expect(200)).body.notices.filter((n: { kind: string }) => n.kind === 'reset');
     expect(seen.map((x: { reason: string }) => x.reason)).toEqual([REASON, 'Second reset after another test run']);
-    expect(seen[0]).toMatchObject({ by: 'Alice Admin', votes_cleared: 2 });
+    expect(seen[0]).toMatchObject({ by: 'Alice Admin' });
+    expect(seen[0]).not.toHaveProperty('votes_cleared');                                    // a voter is never told how many votes there were
     expect(seen[0]).not.toHaveProperty('candidates');
     expect(((await audits(f.id, 'campaign.reset')).length)).toBe(2);
   });

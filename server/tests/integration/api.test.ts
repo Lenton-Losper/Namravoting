@@ -49,15 +49,17 @@ describe('happy path', () => {
     const log = await ownerDb().query("SELECT details FROM audit_log WHERE campaign_id = $1 AND action = 'campaign.close'", [c.id]);
     expect(log.rows[0].details).toMatchObject({ ballots: 3, receipts: 3, match: true });
 
-    // already-voted / closed states, publish, CSV, voter results
+    // closed state, CSV, announce winners; a voter never gets results
     const s1 = await login(app, S1);
     expect((await s1.get(`/api/vote/${c.token}`)).body.voterState).toBe('closed');
-    await s1.get(`/api/vote/${c.token}/results`).expect(404);          // not yet published
+    await s1.get(`/api/vote/${c.token}/results`).expect(404);          // a voter can never ask for results
     const csvBefore = await admin.get(`/api/campaigns/${c.id}/results.csv`).expect(200);
     expect(csvBefore.text).toContain('Candidate 1,2');
-    await admin.post(`/api/campaigns/${c.id}/publish`).expect(200);
-    const pub = await s1.get(`/api/vote/${c.token}/results`).expect(200);
-    expect(pub.body.turnout.votes).toBe(3);
+    await admin.post(`/api/campaigns/${c.id}/announce-winners`).expect(201);
+    await s1.get(`/api/vote/${c.token}/results`).expect(404);          // and still not after the winners are announced
+    const seen = (await s1.get(`/api/vote/${c.token}`).expect(200)).body;
+    expect(seen.announcement.positions[0].winners).toEqual(['Candidate 1']);   // names only
+    expect(JSON.stringify(seen)).not.toMatch(/turnout|"votes"/);
   });
 
   it('start requires at least 2 candidates; QR and poster render', async () => {
@@ -74,11 +76,11 @@ describe('happy path', () => {
     expect((pdf.body as Buffer).subarray(0, 4).toString()).toBe('%PDF');
   });
 
-  it('csv/publish are closed-only', async () => {
+  it('csv/announce are closed-only', async () => {
     const admin = await login(app, ADMIN_A);
     const c = await makeCampaign(admin, 2);
     await admin.get(`/api/campaigns/${c.id}/results.csv`).expect(409);
-    await admin.post(`/api/campaigns/${c.id}/publish`).expect(409);
+    await admin.post(`/api/campaigns/${c.id}/announce-winners`).expect(409);
   });
 });
 
@@ -241,7 +243,8 @@ describe('authorisation', () => {
     await b.get(`${base}/results`).expect(404);
     await b.get(`${base}/results.csv`).expect(404);
     await b.get(`${base}/qr.png`).expect(404);
-    await b.post(`${base}/publish`).expect(404);
+    await b.post(`${base}/announce-winners`).expect(404);
+    await b.get(`${base}/announcement`).expect(404);
     const nonexistent = await b.get('/api/campaigns/00000000-0000-4000-8000-000000000000').expect(404);
     expect(nonexistent.body).toEqual({ error: 'Not found', code: undefined });
     const row = await ownerDb().query('SELECT title, status FROM campaigns WHERE id = $1', [c.id]);
@@ -283,9 +286,9 @@ describe('authorisation', () => {
     await a.put(`/api/campaigns/${c.id}/eligible`).send({ mode: 'all' }).expect(200);
     await a.post(`/api/campaigns/${c.id}/start`).expect(200);
     await a.post(`/api/campaigns/${c.id}/close`).expect(200);
-    await a.post(`/api/campaigns/${c.id}/publish`).expect(200);
+    await a.post(`/api/campaigns/${c.id}/announce-winners`).expect(201);
     const acts = (await ownerDb().query('SELECT action FROM audit_log WHERE campaign_id = $1', [c.id])).rows.map((r) => r.action);
-    for (const x of ['campaign.create', 'candidate.add', 'campaign.update', 'eligibility.set', 'campaign.start', 'campaign.close', 'results.publish'])
+    for (const x of ['campaign.create', 'candidate.add', 'campaign.update', 'eligibility.set', 'campaign.start', 'campaign.close', 'results.announce'])
       expect(acts).toContain(x);
   });
 });

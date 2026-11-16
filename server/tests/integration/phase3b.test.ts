@@ -22,10 +22,10 @@ async function openWithVotes(title = 'Integrity vote', closesInPast = false) {
   return { admin, ...c };
 }
 const tamper = (id: string, cand: string, by = 1) => ownerDb().query('UPDATE tallies SET votes = votes + $3 WHERE campaign_id = $1 AND candidate_id = $2', [id, cand, by]);
-const status = async (id: string) => (await ownerDb().query('SELECT status, results_published FROM campaigns WHERE id = $1', [id])).rows[0];
+const status = async (id: string) => (await ownerDb().query('SELECT status, winners_announced_at FROM campaigns WHERE id = $1', [id])).rows[0];
 const auditCount = async (id: string, action: string) => (await ownerDb().query('SELECT count(*)::int n FROM audit_log WHERE campaign_id = $1 AND action = $2', [id, action])).rows[0].n as number;
 
-describe('SEC-16: receipts != tallies blocks close and publish until an admin investigates', () => {
+describe('SEC-16: receipts != tallies blocks close and announcing until an admin investigates', () => {
   it('a manual close is refused, the campaign stays open, and the block is recorded once', async () => {
     const c = await openWithVotes();
     await tamper(c.id, c.candidates[0]);
@@ -88,15 +88,16 @@ describe('SEC-16: receipts != tallies blocks close and publish until an admin in
     expect(await auditCount(c.id, 'campaign.integrity.blocked')).toBe(0);
   });
 
-  it('a closed result that no longer matches its seal cannot be published (and can once it matches again)', async () => {
+  it('a closed result that no longer matches its seal cannot be announced (and is no longer blocked by it once it matches again)', async () => {
     const c = await openWithVotes();
     await c.admin.post(`/api/campaigns/${c.id}/close`).send({ reason: 'Everyone has voted already' }).expect(200);
     await tamper(c.id, c.candidates[0], 5);
-    const r = await c.admin.post(`/api/campaigns/${c.id}/publish`).expect(409);
+    const r = await c.admin.post(`/api/campaigns/${c.id}/announce-winners`).expect(409);
     expect(r.body.code).toBe('integrity_failed');
-    expect((await status(c.id)).results_published).toBe(false);
+    expect((await status(c.id)).winners_announced_at).toBeNull();
     await tamper(c.id, c.candidates[0], -5);
-    await c.admin.post(`/api/campaigns/${c.id}/publish`).expect(200);
+    // the seal matches again, so the integrity block is gone; this fixture is a 1-1 tie, which is what blocks it now
+    expect((await c.admin.post(`/api/campaigns/${c.id}/announce-winners`).expect(409)).body.code).toBe('tied');
   });
 });
 
@@ -188,8 +189,8 @@ describe('SEC-17: clean-up functions take the actor from a live session, and the
     const c = await makeCampaign(admin, 2, 'Reopen via reset');
     await admin.post(`/api/campaigns/${c.id}/start`).expect(200);
     await admin.post(`/api/campaigns/${c.id}/close`).expect(200);
-    await admin.post(`/api/campaigns/${c.id}/publish`).expect(200);
+    await admin.post(`/api/campaigns/${c.id}/announce-winners`).expect(201);
     await admin.post(`/api/campaigns/${c.id}/reset`).send({ confirm_title: 'Reopen via reset', reason: 'Re-run after a counting error', closes_at: new Date(Date.now() + 3600_000).toISOString() }).expect(200);
-    expect(await status(c.id)).toEqual({ status: 'open', results_published: false });
+    expect(await status(c.id)).toEqual({ status: 'open', winners_announced_at: null });
   });
 });

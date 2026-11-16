@@ -294,10 +294,11 @@ describe('secrecy across positions', () => {
     await e.admin.get(`/api/campaigns/${e.id}/results`).expect(200);
     await e.admin.get(`/api/campaigns/${e.id}/positions`).expect(200);
     await e.admin.post(`/api/campaigns/${e.id}/close`).expect(200);
-    await e.admin.post(`/api/campaigns/${e.id}/publish`).expect(200);
+    await e.admin.post(`/api/campaigns/${e.id}/announce-winners`).expect(201);
     await e.admin.get(`/api/campaigns/${e.id}/results`).expect(200);
     await e.admin.get(`/api/campaigns/${e.id}/results.csv`).expect(200);
-    await (await login(app, S1)).get(`/api/vote/${e.token}/results`).expect(200);
+    await (await login(app, S1)).get(`/api/vote/${e.token}/results`).expect(404);
+    await (await login(app, S1)).get(`/api/vote/${e.token}`).expect(200);                 // the announcement: names only
     const all = e.positions.flatMap((p) => p.candidates.map((c) => c.id));
     const voterIds = voters.flatMap((u) => [u.oid, u.email]);
     expect(responseLog.length).toBeGreaterThan(60);

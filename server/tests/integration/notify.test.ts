@@ -190,3 +190,47 @@ describe('the Graph mailer and the message text', () => {
     expect(composeMessage('open', { ...c, description: 'Pick one', closes_at: null }, now).text).toContain('Pick one');
   });
 });
+
+describe('the one-hour rule is an atomic claim (no double sends)', () => {
+  it('simultaneous requests send exactly once; the others are refused as too soon', async () => {
+    const log: Sent[] = []; notifyHooks.mailer = fakeMailer(log);
+    const admin = await login(app, ADMIN_A);
+    const c = await listed(admin, [S1.email, S2.email, S3.email]);
+    const rs = await Promise.all([1, 2, 3, 4].map(() => admin.post(`/api/campaigns/${c.id}/notify`).send({ kind: 'reminder' })));
+    expect(rs.map((r) => r.status).sort()).toEqual([200, 409, 409, 409]);
+    expect(rs.filter((r) => r.status === 409).every((r) => r.body.code === 'too_soon')).toBe(true);
+    expect(log).toHaveLength(1);                                                                          // one message went out
+    expect((await ownerDb().query("SELECT count(*)::int AS n FROM audit_log WHERE campaign_id = $1 AND action = 'notify.sent'", [c.id])).rows[0].n).toBe(1);
+    const claims = (await ownerDb().query('SELECT kind, claimed_by FROM notify_claims WHERE campaign_id = $1', [c.id])).rows;
+    expect(claims).toEqual([{ kind: 'reminder', claimed_by: ADMIN_A.oid }]);                              // a claim holds no names of recipients
+  });
+
+  it('a send that fails before anything goes out gives the claim back, so the admin can try again at once', async () => {
+    const admin = await login(app, ADMIN_A);
+    const c = await listed(admin, [S1.email, S2.email]);
+    notifyHooks.mailer = fakeMailer([], new MailRejected('Microsoft could not send the mail (HTTP 500).', false));
+    await admin.post(`/api/campaigns/${c.id}/notify`).send({ kind: 'reminder' }).expect(502);
+    expect((await ownerDb().query('SELECT count(*)::int AS n FROM notify_claims WHERE campaign_id = $1', [c.id])).rows[0].n).toBe(0);
+    const log: Sent[] = []; notifyHooks.mailer = fakeMailer(log);
+    await admin.post(`/api/campaigns/${c.id}/notify`).send({ kind: 'reminder' }).expect(200);            // no one-hour wait after a failure
+    expect(log).toHaveLength(1);
+  });
+
+  it('after an hour the claim can be taken again; before that it cannot', async () => {
+    const log: Sent[] = []; notifyHooks.mailer = fakeMailer(log);
+    const admin = await login(app, ADMIN_A);
+    const c = await listed(admin, [S1.email, S2.email]);
+    await admin.post(`/api/campaigns/${c.id}/notify`).send({ kind: 'reminder' }).expect(200);
+    await ownerDb().query("UPDATE notify_claims SET claimed_at = now() - interval '59 minutes' WHERE campaign_id = $1", [c.id]);
+    await admin.post(`/api/campaigns/${c.id}/notify`).send({ kind: 'reminder' }).expect(409);
+    await ownerDb().query("UPDATE notify_claims SET claimed_at = now() - interval '61 minutes' WHERE campaign_id = $1", [c.id]);
+    await admin.post(`/api/campaigns/${c.id}/notify`).send({ kind: 'reminder' }).expect(200);
+    expect(log).toHaveLength(2);
+  });
+
+  it('emailing the winners is a disabled stub (not built)', async () => {
+    const { WINNERS_EMAIL, sendWinnersEmail } = await import('../../src/services/notify.js');
+    expect(WINNERS_EMAIL.enabled).toBe(false);
+    await expect(sendWinnersEmail()).rejects.toThrow(/Mail\.Send/);
+  });
+});

@@ -84,7 +84,7 @@ describe('Umoja-only campaigns', () => {
     for (const leak of ['Umoja vote', 'Candidate 1', 'inactive', 'unknown', 'no_code', 'NAM0', 'candidates']) expect(text).not.toContain(leak);
     const post = await s.post(`/api/vote/${c.token}`).send({ candidateId: c.candidates[0] }).expect(403);
     expect(post.body.code).toBe('not_member');
-    await s.get(`/api/vote/${c.token}/results`).expect(403);
+    await s.get(`/api/vote/${c.token}/results`).expect(404);                 // no results route for anyone
     expect(await count('vote_receipts', c.id)).toBe(0);
     expect(await count('ballots', c.id)).toBe(0);
   });
@@ -112,7 +112,7 @@ describe('Umoja-only campaigns', () => {
     const h = (r: ReturnType<typeof s.get>) => r.set('x-employee-code', forged).set('x-employeeid', forged).set('x-user-employee-code', forged);
     expect((await h(s.get(`/api/vote/${c.token}${q}`)).expect(403)).body.code).toBe('not_member');
     expect((await h(s.post(`/api/vote/${c.token}${q}`)).send({ candidateId: c.candidates[0] }).expect(403)).body.code).toBe('not_member');
-    await h(s.get(`/api/vote/${c.token}/results${q}`)).expect(403);
+    await h(s.get(`/api/vote/${c.token}/results${q}`)).expect(404);
     // In the body the strict schema rejects the extra field outright; either way nothing is recorded.
     const body = await s.post(`/api/vote/${c.token}`).send({ candidateId: c.candidates[0], employee_code: forged, employeeCode: forged });
     expect([400, 403]).toContain(body.status);

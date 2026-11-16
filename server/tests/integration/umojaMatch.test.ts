@@ -119,7 +119,7 @@ describe('membership by Entra account id (oid)', () => {
     expect((await s.get(`/api/vote/${c.token}`).expect(403)).body.code).toBe('not_member');
     await s.post(`/api/vote/${c.token}`).send({ candidateId: c.candidates[0] }).expect(403);
     expect((await s.get('/api/vote').expect(200)).body.campaigns).toEqual([]);
-    expect((await s.get(`/api/vote/${c.token}/results`)).status).toBe(403);
+    expect((await s.get(`/api/vote/${c.token}/results`)).status).toBe(404);   // no results route for anyone
   });
 
   it('a matched account whose member row is inactive is not_member', async () => {
@@ -159,10 +159,11 @@ describe('membership by Entra account id (oid)', () => {
     const member = await login(app, noCode(S1));
     await member.post(`/api/vote/${c.token}`).send({ candidateId: c.candidates[0] }).expect(201);
     await admin.post(`/api/campaigns/${c.id}/close`).expect(200);
-    await admin.post(`/api/campaigns/${c.id}/publish`).expect(200);
-    await member.get(`/api/vote/${c.token}/results`).expect(200);
+    await admin.post(`/api/campaigns/${c.id}/announce-winners`).expect(201);
+    expect((await member.get(`/api/vote/${c.token}`).expect(200)).body.announcement.positions[0].winners).toEqual(['Candidate 1']);   // the member who voted sees the winners
     const other = await login(app, noCode(S2));
-    expect((await other.get(`/api/vote/${c.token}/results`)).status).toBe(403);
+    expect((await other.get(`/api/vote/${c.token}`)).status).toBe(403);                                                               // a non-member sees nothing
+    expect((await other.get(`/api/vote/${c.token}/results`)).status).toBe(404);
   });
 });
 

@@ -64,10 +64,8 @@ describe('SEC-01: no steering and no small-count inference', () => {
     // the voter sees it on the ballot page ...
     const page = (await voter.get(`/api/vote/${c.token}`).expect(200)).body;
     expect(page.notices).toEqual([expect.objectContaining({ kind: 'closed_early', reason: REASON, by: 'Alice Admin' })]);
-    // ... and in the published results
-    await c.admin.post(`/api/campaigns/${c.id}/publish`).expect(200);
-    const res = (await voter.get(`/api/vote/${c.token}/results`).expect(200)).body;
-    expect(res.notices).toEqual([expect.objectContaining({ kind: 'closed_early', reason: REASON })]);
+    // ... and there is no results route for a voter at all
+    await voter.get(`/api/vote/${c.token}/results`).expect(404);
   });
 
   it('a reset is announced to voters on the ballot page with its reason, and the reset round\'s counts stay hidden', async () => {

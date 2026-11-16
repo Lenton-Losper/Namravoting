@@ -167,7 +167,7 @@ describe('the results date', () => {
     await admin.patch(`/api/campaigns/${e.id}`).send({ results_release_at: '2030-02-01T06:00:00.000Z' }).expect(200);   // live: still allowed
     const page = (await (await login(app, S1)).get(`/api/vote/${e.token}`).expect(200)).body;
     expect(page.resultsReleaseAt).toBe('2030-02-01T06:00:00.000Z');
-    expect(page.resultsPublished).toBe(false);
+    expect(page).not.toHaveProperty('resultsPublished');                                  // voters are never told about results
     await admin.patch(`/api/campaigns/${e.id}`).send({ results_release_at: null }).expect(200);
     expect((await (await login(app, S1)).get(`/api/vote/${e.token}`).expect(200)).body.resultsReleaseAt).toBeNull();
     await admin.patch(`/api/campaigns/${e.id}`).send({ results_release_at: 'next tuesday' }).expect(400);

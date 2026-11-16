@@ -54,12 +54,13 @@ export async function previewAnnouncement(db: Queryable, c: Pick<CampaignRow, 'i
   }));
   const blocks: AnnounceBlock[] = [];
   if (announced) blocks.push({ code: 'already_announced', message: 'The winners have already been announced' });
-  const tied = positions.filter((p) => p.tie);
-  if (tied.length) blocks.push({ code: 'tied', message: 'Tied: create a run-off', positions: tied.map((p) => p.title) });
+  // The seal check comes first: a result that does not match its seal is the more serious problem, and a tie in it means nothing.
   const seal = await verifySeal(db, c.id);
   if (seal.sealed && (!seal.chain_ok || seal.tallies_match === false || seal.receipts_match === false)) {
     blocks.push({ code: 'integrity_failed', message: 'The result no longer matches what was sealed when the campaign closed. Run "Verify results integrity" and investigate before announcing.' });
   }
+  const tied = positions.filter((p) => p.tie);
+  if (tied.length) blocks.push({ code: 'tied', message: 'Tied: create a run-off', positions: tied.map((p) => p.title) });
   if (meta?.receipts_purged_at) blocks.push({ code: 'receipts_purged', message: 'The personal data of this campaign was removed, so nobody could be shown the announcement' });
   const q = results.quorum;
   return {

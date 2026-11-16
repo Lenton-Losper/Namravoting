@@ -72,11 +72,15 @@ describe('results per position', () => {
     expect(sum.closed[0].winner).toBeNull();
   });
 
-  it('voters see per-position results once published, with the same shape', async () => {
+  it('voters never see per-position results; announcing is blocked while Press Secretary is tied, and the preview shows each position', async () => {
     const { admin, e } = await closedElection();
-    await admin.post(`/api/campaigns/${e.id}/publish`).expect(200);
-    const r = (await (await login(app, S1)).get(`/api/vote/${e.token}/results`).expect(200)).body;
-    expect(r.positions.map((p: { title: string }) => p.title)).toEqual(['Press Secretary', 'Finance Officer', 'Treasurer']);
+    await (await login(app, S1)).get(`/api/vote/${e.token}/results`).expect(404);
+    const pv = (await admin.get(`/api/campaigns/${e.id}/announcement`).expect(200)).body;
+    expect(pv.positions.map((p: { title: string }) => p.title)).toEqual(['Press Secretary', 'Finance Officer', 'Treasurer']);
+    expect(pv.blocks).toEqual([{ code: 'tied', message: 'Tied: create a run-off', positions: ['Press Secretary'] }]);
+    expect((await admin.post(`/api/campaigns/${e.id}/announce-winners`).expect(409)).body.code).toBe('tied');
+    // the admin's own results keep the per-position shape, with regions
+    const r = (await admin.get(`/api/campaigns/${e.id}/results`).expect(200)).body;
     expect(r.positions[0].candidates.map((c: { region: string }) => c.region)).toEqual(['Khomas', 'Erongo', 'Zambezi']);
   });
 
@@ -117,8 +121,8 @@ describe('a seal per position', () => {
     const v = (await admin.get(`/api/campaigns/${e.id}/verify`).expect(200)).body;
     expect(v.tallies_match).toBe(false);
     expect(v.positions.map((p: { title: string; tallies_match: boolean }) => [p.title, p.tallies_match])).toEqual([['Press Secretary', true], ['Finance Officer', false], ['Treasurer', true]]);
-    // a result that no longer matches its seal is not published
-    expect((await admin.post(`/api/campaigns/${e.id}/publish`).expect(409)).body.code).toBe('integrity_failed');
+    // a result that no longer matches its seal is not announced (this is checked before the tie)
+    expect((await admin.post(`/api/campaigns/${e.id}/announce-winners`).expect(409)).body.code).toBe('integrity_failed');
   });
 
   it('a missing receipt breaks only its own position\'s receipts check', async () => {

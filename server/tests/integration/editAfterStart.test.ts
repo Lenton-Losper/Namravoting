@@ -158,15 +158,14 @@ describe('allow edits after start: title, description, closing time', () => {
     expect((await ownerDb().query('SELECT title FROM campaigns WHERE id = $1', [c.id])).rows[0].title).toBe('Edit test');
   });
 
-  it('a published result carries the "Edited after start" entry', async () => {
+  it('a closed campaign carries the "Edited after start" entry for voters', async () => {
     const admin = await login(app, ADMIN_A);
     const c = await make(admin, { allow: true, start: true });
     await admin.patch(`/api/campaigns/${c.id}`).send({ title: 'Renamed in flight' }).expect(200);
     const s1 = await login(app, S1);
     await s1.post(`/api/vote/${c.token}`).send({ candidateId: c.candidates[0] }).expect(201);
     await admin.post(`/api/campaigns/${c.id}/close`).send({}).expect(200);
-    await admin.post(`/api/campaigns/${c.id}/publish`).expect(200);
-    const pub = (await s1.get(`/api/vote/${c.token}/results`).expect(200)).body;
+    const pub = (await s1.get(`/api/vote/${c.token}`).expect(200)).body;
     const e = pub.notices.find((n: { kind: string }) => n.kind === 'edited_after_start');
     expect(e.changes[0]).toMatchObject({ what: 'title', to: 'Renamed in flight' });
     expect(e.at).toBeTruthy();

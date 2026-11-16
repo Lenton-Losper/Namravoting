@@ -28,7 +28,7 @@ async function fixture(admin: Session, stage: Stage): Promise<Fx> {
   await admin.put(`/api/campaigns/${c.id}/eligible`).send({ mode: 'list', emails: [S1.email] }).expect(200);
   if (stage !== 'draft') await admin.post(`/api/campaigns/${c.id}/start`).expect(200);
   if (stage === 'closed' || stage === 'published') await admin.post(`/api/campaigns/${c.id}/close`).expect(200);
-  if (stage === 'published') await admin.post(`/api/campaigns/${c.id}/publish`).expect(200);
+  if (stage === 'published') await admin.post(`/api/campaigns/${c.id}/announce-winners`).expect(201);   // "published" = the winners announced
   return { id: c.id, token: c.share_token, cands: [withPhoto.id, plain.id], photoCand: withPhoto.id, cleanup: [] };
 }
 
@@ -57,7 +57,8 @@ const adminRoutes: AdminRoute[] = [
   { name: 'POST /campaigns/:id/start', stage: 'draft', call: (s, f) => s.post(`/api/campaigns/${f.id}/start`), control: 200 },
   { name: 'POST /campaigns/:id/close', stage: 'open', call: (s, f) => s.post(`/api/campaigns/${f.id}/close`), control: 200 },
   { name: 'GET /campaigns/:id/results', stage: 'open', call: (s, f) => s.get(`/api/campaigns/${f.id}/results`), control: 200 },
-  { name: 'POST /campaigns/:id/publish', stage: 'closed', call: (s, f) => s.post(`/api/campaigns/${f.id}/publish`), control: 200 },
+  { name: 'POST /campaigns/:id/announce-winners', stage: 'closed', call: (s, f) => s.post(`/api/campaigns/${f.id}/announce-winners`), control: 201 },
+  { name: 'GET /campaigns/:id/announcement', stage: 'closed', call: (s, f) => s.get(`/api/campaigns/${f.id}/announcement`), control: 200 },
   { name: 'GET /campaigns/:id/qr.png', stage: 'open', call: (s, f) => s.get(`/api/campaigns/${f.id}/qr.png`), control: 200 },
   { name: 'GET /campaigns/:id/qr.png?download=1', stage: 'open', call: (s, f) => s.get(`/api/campaigns/${f.id}/qr.png?download=1`), control: 200 },
   { name: 'GET /campaigns/:id/poster.pdf', stage: 'open', call: (s, f) => s.get(`/api/campaigns/${f.id}/poster.pdf`), control: 200 },
@@ -132,7 +133,7 @@ interface VoterRoute { name: string; stage: Stage; call: (s: Session, f: Fx) => 
 const voterRoutes: VoterRoute[] = [
   { name: 'GET /vote/:token', stage: 'open', call: (s, f) => s.get(`/api/vote/${f.token}`), control: 200, refused: 403 },
   { name: 'POST /vote/:token', stage: 'open', call: (s, f) => s.post(`/api/vote/${f.token}`).send({ candidateId: f.cands[0] }), control: 201, refused: 403 },
-  { name: 'GET /vote/:token/results', stage: 'published', call: (s, f) => s.get(`/api/vote/${f.token}/results`), control: 200, refused: 403 },
+  { name: 'GET /vote/:token (closed, winners announced)', stage: 'published', call: (s, f) => s.get(`/api/vote/${f.token}`), control: 200, refused: 403 },
   { name: 'GET /photos/:cid (open campaign)', stage: 'open', call: (s, f) => s.get(`/api/photos/${f.photoCand}`), control: 200, refused: 404 },
 ];
 
