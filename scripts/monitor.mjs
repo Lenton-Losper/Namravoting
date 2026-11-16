@@ -3,18 +3,20 @@
 import { appendFileSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { checkApp, checkEntraToken, checkSecretExpiry, sendAlert, summarise } from './monitor-lib.mjs';
+import { checkEntraToken, checkSecretExpiry, microsoftChecksApply, runAppChecks, sendAlert, summarise } from './monitor-lib.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const wrangler = readFileSync(path.join(root, 'worker', 'wrangler.jsonc'), 'utf8');
 const base = (process.env.MONITOR_URL || wrangler.match(/"PUBLIC_BASE_URL"\s*:\s*"([^"]+)"/)?.[1] || '').replace(/\/$/, '');
 if (!base) { console.error('Cannot work out the app URL (set MONITOR_URL)'); process.exit(2); }
 
-const checks = await checkApp(base);
+const { checks, authMode } = await runAppChecks(base);
 
+// The Microsoft secret is only tested when the app signs in through Microsoft (AUTH_MODE=entra, or when the mode cannot be read): with the
+// typed-email demo an expired Entra secret affects nobody and must not raise an alert.
 // The Microsoft secret is tested hourly (the first run of each hour) and on a manual run, not every 15 minutes: it shows up in Entra's sign-in logs.
 const setting = (k) => process.env[k] || wrangler.match(new RegExp(String.raw`^\s*"${k}"\s*:\s*"([^"]+)"`, 'm'))?.[1];
-if (new Date().getUTCMinutes() < 15 || process.env.EVENT_NAME === 'workflow_dispatch') {
+if (microsoftChecksApply(authMode) && (new Date().getUTCMinutes() < 15 || process.env.EVENT_NAME === 'workflow_dispatch')) {
   checks.push(await checkEntraToken({ tenantId: setting('ENTRA_TENANT_ID'), clientId: setting('ENTRA_CLIENT_ID'), clientSecret: process.env.ENTRA_CLIENT_SECRET }));
   checks.push(checkSecretExpiry(setting('ENTRA_SECRET_EXPIRES_AT')));
 }

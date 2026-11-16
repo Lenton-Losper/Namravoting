@@ -1,6 +1,6 @@
 // The outside monitor (items 6 and 12): app up, sign-in redirect, alerts.
 import { describe, expect, it } from 'vitest';
-import { checkApp, checkEntraToken, checkSecretExpiry, sendAlert, summarise } from '../../../scripts/monitor-lib.mjs';
+import { checkApp, checkEntraToken, checkSecretExpiry, getAuthMode, microsoftChecksApply, runAppChecks, sendAlert, summarise } from '../../../scripts/monitor-lib.mjs';
 
 const BASE = 'https://app.example.test';
 const noSleep = async () => undefined;
@@ -113,5 +113,44 @@ describe('checkSecretExpiry (item 12)', () => {
   });
   it('accepts a full ISO time as well as a plain date', () => {
     expect(checkSecretExpiry('2027-05-30T12:00:00Z', now).ok).toBe(true);
+  });
+});
+
+describe('the sign-in method decides which Microsoft checks run', () => {
+  const app = (mode: unknown, session = true) => fake((u) => u.endsWith('/api/csrf') ? res(200, { token: 't' })
+    : u.endsWith('/api/session') ? (session ? res(200, { user: null, authMode: mode }) : res(500))
+    : res(200, {}, {}));   // /auth/login: 200, which is what an email-demo app answers (the old monitor failed on exactly this)
+
+  it('email-demo: no Microsoft redirect check, no failure, and the Microsoft secret checks are switched off', async () => {
+    const { checks, authMode } = await runAppChecks(BASE, { fetchImpl: app('email-demo'), sleep: noSleep });
+    expect(authMode).toBe('email-demo');
+    expect(checks.map((c) => [c.name, c.ok])).toEqual([['App answers', true], ['Sign-in method', true]]);
+    expect(summarise(checks).ok).toBe(true);
+    expect(microsoftChecksApply(authMode)).toBe(false);
+    for (const mode of ['demo', 'dev']) expect(microsoftChecksApply(mode)).toBe(false);
+  });
+
+  it('entra: the redirect check is kept (and fails if the app does not redirect to Microsoft), and the secret checks apply', async () => {
+    const good = fake((u) => u.endsWith('/api/csrf') ? res(200, { token: 't' }) : u.endsWith('/api/session') ? res(200, { authMode: 'entra' }) : res(302, {}, { location: 'https://login.microsoftonline.com/t/oauth2' }));
+    const a = await runAppChecks(BASE, { fetchImpl: good, sleep: noSleep });
+    expect(a.checks.map((c) => [c.name, c.ok])).toEqual([['App answers', true], ['Sign-in redirects to Microsoft', true]]);
+    expect(microsoftChecksApply(a.authMode)).toBe(true);
+    const bad = await runAppChecks(BASE, { fetchImpl: app('entra'), sleep: noSleep });
+    expect(bad.checks.find((c) => c.name === 'Sign-in redirects to Microsoft')?.ok).toBe(false);
+  });
+
+  it('when the mode cannot be read (500, not JSON, no field) the Microsoft checks are KEPT, so a broken answer never switches the alert off', async () => {
+    for (const f of [app('x', false), app(undefined), app(42), app('')]) {
+      const { checks, authMode } = await runAppChecks(BASE, { fetchImpl: f, sleep: noSleep });
+      expect(authMode).toBeNull();
+      expect(checks.some((c) => c.name === 'Sign-in redirects to Microsoft')).toBe(true);
+      expect(microsoftChecksApply(authMode)).toBe(true);
+    }
+    expect(await getAuthMode(BASE, { fetchImpl: (async () => { throw new Error('down'); }) as typeof fetch })).toBeNull();
+  });
+
+  it('an app that is down reports only "App answers" and an unknown mode', async () => {
+    const r = await runAppChecks(BASE, { fetchImpl: fake(() => res(503)), sleep: noSleep, retries: 1 });
+    expect(r.checks.map((c) => c.name)).toEqual(['App answers']); expect(r.authMode).toBeNull();
   });
 });

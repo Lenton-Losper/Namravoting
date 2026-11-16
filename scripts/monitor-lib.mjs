@@ -6,7 +6,26 @@
 const sleepReal = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** The app answers, and the sign-in starts a Microsoft sign-in. A cold start (the container waking up) gets a few patient retries. */
-export async function checkApp(base, { fetchImpl = fetch, sleep = sleepReal, retries = 4, delayMs = 15_000 } = {}) {
+/**
+ * The sign-in method the live app runs (`entra`, `email-demo`, `demo`, ...), read from its public /api/session. null = could not be read
+ * (app down, not JSON, no such field): callers then keep the Microsoft checks, so a broken answer never switches the alert off.
+ */
+export async function getAuthMode(base, { fetchImpl = fetch } = {}) {
+  try {
+    const r = await fetchImpl(`${base}/api/session`, { signal: AbortSignal.timeout(20_000) });
+    if (r.status !== 200) return null;
+    const j = await r.json();
+    return typeof j?.authMode === 'string' && j.authMode ? j.authMode : null;
+  } catch { return null; }
+}
+
+/** The Microsoft sign-in secret and redirect only matter when the app signs in through Microsoft (or when we cannot tell). */
+export const microsoftChecksApply = (authMode) => authMode === null || authMode === undefined || authMode === 'entra';
+
+export async function checkApp(base, opts = {}) { return (await runAppChecks(base, opts)).checks; }
+
+/** checkApp, plus the sign-in method it found (so the caller can decide whether the Microsoft secret checks apply). */
+export async function runAppChecks(base, { fetchImpl = fetch, sleep = sleepReal, retries = 4, delayMs = 15_000 } = {}) {
   const out = [];
   let last = 'no answer';
   for (let i = 0; i <= retries; i++) {
@@ -19,7 +38,14 @@ export async function checkApp(base, { fetchImpl = fetch, sleep = sleepReal, ret
     if (i < retries) await sleep(delayMs);
   }
   out.push({ name: 'App answers', ok: last === '', detail: last === '' ? `${base} is up` : `${base}: ${last}` });
-  if (last !== '') return out;   // no point testing the sign-in redirect of an app that is down
+  if (last !== '') return { checks: out, authMode: null };   // no point testing the sign-in redirect of an app that is down
+
+  const authMode = await getAuthMode(base, { fetchImpl });
+  if (!microsoftChecksApply(authMode)) {
+    // Not a Microsoft sign-in (e.g. the typed-email demo): the redirect to login.microsoftonline.com is not expected, so it is not tested.
+    out.push({ name: 'Sign-in method', ok: true, detail: `${authMode} (the Microsoft redirect and secret checks apply only to AUTH_MODE=entra)` });
+    return { checks: out, authMode };
+  }
 
   try {
     const r = await fetchImpl(`${base}/auth/login`, { redirect: 'manual', signal: AbortSignal.timeout(20_000) });
@@ -27,7 +53,7 @@ export async function checkApp(base, { fetchImpl = fetch, sleep = sleepReal, ret
     const ok = r.status === 302 && loc.startsWith('https://login.microsoftonline.com/');
     out.push({ name: 'Sign-in redirects to Microsoft', ok, detail: ok ? 'redirect to login.microsoftonline.com' : `HTTP ${r.status}${loc ? ` to ${new URL(loc, base).origin}` : ''}` });
   } catch (e) { out.push({ name: 'Sign-in redirects to Microsoft', ok: false, detail: String(e.message ?? e).slice(0, 120) }); }
-  return out;
+  return { checks: out, authMode };
 }
 
 /** Plain text report plus the failing lines, for the log and the alert. */

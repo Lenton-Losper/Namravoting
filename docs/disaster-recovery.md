@@ -12,7 +12,7 @@ every sealed result.
 | Losing the database completely | The **sealed result of every closed campaign** is copied to the R2 bucket at close (`sealed-<campaign>-<seq>.json`: counters + the seal fingerprint, no personal data) | The copies do not contain receipts, so a lost database cannot be rebuilt from them; they prove what the results were. |
 | Someone changing the audit trail or a counter | Hash-chained audit log, `Verify results integrity`, and `npm run restore:check` | Detects, does not prevent, an owner-level change. |
 | The container or the Worker is down | Redeploy from `main` (GitHub: Actions, Deploy, "Run workflow", type DEPLOY). Sessions and votes are in the database, so nothing is lost | A redeploy takes about 5 to 10 minutes. |
-| Microsoft sign-in stops working | The *Monitor* workflow checks the app and the Microsoft sign-in every 15 minutes from outside; the secret expiry is tracked (see `operations.md`) | An expired Entra secret locks everyone out until a new one is set. |
+| Microsoft sign-in stops working | The *Monitor* workflow checks the app and the Microsoft sign-in every 15 minutes from outside; the secret expiry is tracked (see `operations.md`). These Microsoft checks run only while the app's `AUTH_MODE` is `entra` (the Monitor reads it from the public `/api/session`); with `email-demo` or `demo` they are skipped, and if the mode cannot be read they are kept | An expired Entra secret locks everyone out until a new one is set. |
 
 ## Alerts
 The *Monitor* workflow (`.github/workflows/monitor.yml`) runs every 15 minutes **from GitHub**, not from Cloudflare, so it still runs when the app is down.
