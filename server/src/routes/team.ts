@@ -227,7 +227,7 @@ export function observeRouter(): Router {
   r.get('/', async (req, res) => {
     const u = currentUser(req);
     const { rows } = await getPool().query(
-      `SELECT c.id, c.title, c.status, c.opens_at, c.closes_at, c.results_published, c.archived_at, o.display_name AS owner,
+      `SELECT c.id, c.title, c.status, c.opens_at, c.closes_at, c.winners_announced_at, c.archived_at, o.display_name AS owner,
               (SELECT count(DISTINCT v.member_key)::int FROM vote_receipts v WHERE v.campaign_id = c.id) AS turnout
          FROM campaign_members m JOIN campaigns c ON c.id = m.campaign_id JOIN users o ON o.entra_oid = c.created_by
         WHERE m.user_oid = $1 AND m.role = 'observer' ORDER BY c.created_at DESC`, [u.oid]);
@@ -255,7 +255,7 @@ export function observeRouter(): Router {
         WHERE a.campaign_id = $1 ORDER BY a.seq DESC LIMIT 1000`, [id])).rows.reverse();
     res.set('Cache-Control', 'no-store').json({
       id: c.id, title: c.title, description: c.description, status: c.status, eligibility: c.eligibility, owner: c.owner,
-      opens_at: c.opens_at, closes_at: c.closes_at, results_published: c.results_published, archived: !!c.archived_at, require_approval: !!c.require_approval,
+      opens_at: c.opens_at, closes_at: c.closes_at, winners_announced_at: c.winners_announced_at ?? null, archived: !!c.archived_at, require_approval: !!c.require_approval,
       turnout: await getTurnout(db, id),
       // The sealed result exists only once the campaign is closed. While it runs an observer sees turnout, never per-candidate counts.
       result: closed ? await getResults(db, id) : null,

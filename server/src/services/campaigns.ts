@@ -11,7 +11,7 @@ import { restampTallies } from './tallies.js';
 export interface CampaignRow {
   id: string; share_token: string; created_by: string; title: string; description: string | null;
   status: Status; opens_at: Date | null; closes_at: Date | null; eligibility: 'all' | 'list' | 'umoja';
-  results_published: boolean; created_at: Date; archived_at: Date | null;
+  results_published: boolean; winners_announced_at?: Date | null; winners_announced_by?: string | null; winners_announcement?: { text: string; positions: { title: string; winners: string[] }[] } | null; created_at: Date; archived_at: Date | null;
   parent_campaign_id?: string | null; runoff_round?: number; allow_edits_after_start?: boolean; allow_abstain?: boolean; require_approval?: boolean; quorum_percent?: number | null; nominations_close_at?: Date | null; nominate_eligibility?: 'all' | 'umoja' | null; results_group_by_region?: boolean; results_release_at?: Date | null; publish_at?: Date | null; receipts_purged_at?: Date | null; photos_purged_at?: Date | null;
   /** The database clock when the row was read (only on queries that ask for it). */
   db_now?: Date;
@@ -114,11 +114,10 @@ export async function closeInTx(
 /** Lazy auto-close (replaces a cron job): closes the campaign if closes_at has passed. */
 export async function refreshStatus(campaignId: string): Promise<void> {
   // Cheap read first (SEC-08): every page load calls this, and a write transaction with a row lock per call is a free load generator.
-  const peek = (await getPool().query('SELECT status, opens_at, closes_at, results_published, publish_at, clock_timestamp() AS db_now FROM campaigns WHERE id = $1', [campaignId])).rows[0];
+  const peek = (await getPool().query('SELECT status, opens_at, closes_at, clock_timestamp() AS db_now FROM campaigns WHERE id = $1', [campaignId])).rows[0];
   if (!peek) return;
   const closeDue = shouldAutoClose(peek, peek.db_now);   // database time (SEC-18)
-  const publishDueSoon = !peek.results_published && peek.publish_at && peek.publish_at.getTime() <= peek.db_now.getTime() && (peek.status === 'closed' || closeDue);
-  if (!closeDue) { if (publishDueSoon) await publishDue(campaignId); return; }
+  if (!closeDue) return;
   const closed = await withTx(async (c) => {
     const { rows } = await c.query('SELECT status, opens_at, closes_at, clock_timestamp() AS db_now FROM campaigns WHERE id = $1 FOR UPDATE', [campaignId]);
     if (rows[0] && shouldAutoClose(rows[0], rows[0].db_now)) { await closeInTx(c, campaignId, null, 'auto'); return true; }
@@ -129,31 +128,6 @@ export async function refreshStatus(campaignId: string): Promise<void> {
     throw e;
   });
   if (closed) await backupSealedResult(campaignId);   // a copy of the sealed result outside the database (never throws)
-  if (closed && publishDueSoon) await publishDue(campaignId);
-}
-
-/**
- * Scheduled publishing: a closed campaign whose publish_at has passed is published, lazily, the first time anyone looks at it (like the
- * automatic close). The person who scheduled it is the "approved by". It is NOT published automatically when the result no longer matches
- * its seal or is below the quorum: a person has to look at that. Each such block is recorded once.
- */
-export async function publishDue(campaignId: string): Promise<boolean> {
-  return withTx(async (tx) => {
-    const c = (await tx.query('SELECT status, results_published, publish_at, publish_scheduled_by, quorum_percent, clock_timestamp() AS now FROM campaigns WHERE id = $1 FOR UPDATE', [campaignId])).rows[0];
-    if (!c || c.status !== 'closed' || c.results_published || !c.publish_at || c.publish_at.getTime() > c.now.getTime()) return false;
-    const blocked = async (reason: 'integrity_failed' | 'below_quorum') => {
-      const seen = await tx.query("SELECT 1 FROM audit_log WHERE campaign_id = $1 AND action = 'results.publish_blocked' AND details->>'reason' = $2 AND seq > coalesce((SELECT max(seq) FROM audit_log WHERE campaign_id = $1 AND action = 'results.publish_scheduled'), 0)", [campaignId, reason]);
-      if (!seen.rowCount) await audit(tx, null, 'results.publish_blocked', campaignId, { reason, scheduled_by: c.publish_scheduled_by });
-      return false;
-    };
-    const seal = await verifySeal(tx, campaignId);
-    if (seal.sealed && (!seal.chain_ok || seal.tallies_match === false || seal.receipts_match === false)) return blocked('integrity_failed');
-    const q = quorumOf(c.quorum_percent, await getTurnout(tx, campaignId));
-    if (q && q.met === false) return blocked('below_quorum');
-    await tx.query('UPDATE campaigns SET results_published = true, published_at = now(), published_by = $2, publish_scheduled = true WHERE id = $1', [campaignId, c.publish_scheduled_by]);
-    await audit(tx, null, 'results.publish', campaignId, { scheduled: true, approved_by: c.publish_scheduled_by });
-    return true;
-  });
 }
 
 /** A voter-visible event in a campaign's life: a reset, or an early close. Built from the permanent audit entries. */
@@ -190,6 +164,14 @@ export async function getNotices(db: Queryable, campaignId: string, withTallies:
     if (r.action === 'campaign.edit_after_start') return { kind: 'edited_after_start', at: r.at, by: r.by ?? null, reason: '', changes: (r.details?.changes ?? []) } as Notice;
     return { kind: 'closed_early', at: r.at, by: r.by ?? null, reason: String(r.details?.why ?? '') } as Notice;
   });
+}
+
+/**
+ * What a VOTER may be told about a campaign's history: the reason and time of a reset, an early close, an edit, a withdrawal, but never a count
+ * (a reset's `votes_cleared` is a turnout figure; `candidates` carries tallies).
+ */
+export function noticesForVoters(ns: Notice[]): Notice[] {
+  return ns.map((n) => { const { votes_cleared: _v, candidates: _c, ...rest } = n; return rest as Notice; });
 }
 
 /** Resets only (kept for the results payload shape the client already reads). */
@@ -232,7 +214,7 @@ export interface ResultsPayload {
   group_by_region: boolean;
   /** The minimum turnout set for this campaign and whether it was met (null = none set). A result below it is flagged. */
   quorum: Quorum | null;
-  /** Who published the results and when (null = not published, or published before this was recorded). */
+  /** Who announced the winners and when (null = not announced). Named `publication` for the older clients and exports. */
   publication: Publication | null;
 }
 
@@ -258,10 +240,10 @@ export async function getResults(db: Queryable, campaignId: string): Promise<Res
     };
   });
   const meta = (await db.query(
-    `SELECT c.quorum_percent, c.results_group_by_region, c.results_published, c.published_at, c.publish_scheduled, u.display_name AS by
-       FROM campaigns c LEFT JOIN users u ON u.entra_oid = c.published_by WHERE c.id = $1`, [campaignId])).rows[0];
+    `SELECT c.quorum_percent, c.results_group_by_region, c.winners_announced_at, u.display_name AS by
+       FROM campaigns c LEFT JOIN users u ON u.entra_oid = c.winners_announced_by WHERE c.id = $1`, [campaignId])).rows[0];
   return { candidates: cands.rows, positions, turnout, quorum: quorumOf(meta?.quorum_percent, turnout), group_by_region: !!meta?.results_group_by_region,
-    publication: meta?.results_published && meta.published_at ? { by: meta.by ?? null, at: meta.published_at, scheduled: !!meta.publish_scheduled } : null,
+    publication: meta?.winners_announced_at ? { by: meta.by ?? null, at: meta.winners_announced_at, scheduled: false } : null,
     tie: positions.length === 1 ? positions[0].tie : null };
 }
 

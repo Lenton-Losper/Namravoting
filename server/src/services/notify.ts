@@ -110,3 +110,14 @@ export function composeMessage(kind: NoticeKind, c: { title: string; description
   }
   return { subject: `Closing soon: ${c.title}`, text: `Voting in "${c.title}" closes ${closes ?? 'soon'} (Windhoek time)${hoursLeft !== null ? `, in about ${hoursLeft} hour${hoursLeft === 1 ? '' : 's'}` : ''}. If you have not voted yet, please do so now; if you already have, please ignore this.\n\n${how}\n${sign}` };
 }
+
+/**
+ * Emailing the winners to everyone who voted: NOT built yet. This is a disabled stub, so the admin screen can show the option greyed out and the code
+ * has one obvious place to grow. It would reuse createGraphMailer and BATCH above, and an audience taken from the receipts (never returned to the
+ * browser, never logged). It needs IT to grant the app the Mail.Send permission and the app to run AUTH_MODE=entra.
+ */
+export const WINNERS_EMAIL = {
+  enabled: false as const,
+  reason: 'Not available yet: it needs IT to grant the app the Mail.Send permission, and the app to sign in through Microsoft (AUTH_MODE=entra).',
+};
+export async function sendWinnersEmail(): Promise<never> { throw new MailRejected(WINNERS_EMAIL.reason, false); }

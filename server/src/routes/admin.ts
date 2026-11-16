@@ -10,7 +10,8 @@ import { teamRouter } from './team.js';
 import { notifyRouter } from './notify.js';
 import { lateRouter } from './late.js';
 import { backupSealedResult } from '../services/backup.js';
-import { publishBody, publishScheduleBody, withdrawBody } from '../domain/validation.js';
+import { announceBody, withdrawBody } from '../domain/validation.js';
+import { previewAnnouncement, sha256, type Announcement } from '../services/announce.js';
 import { buildAuditBundle } from '../services/auditBundle.js';
 import { buildCsv, buildPdf, buildXlsx, csvCell, gatherExport } from '../services/resultsExport.js';
 import QRCode from 'qrcode';
@@ -232,7 +233,7 @@ export function adminRouter(): Router {
     const mine = await getPool().query("SELECT id FROM campaigns c WHERE " + VISIBLE + " AND status = 'open'", [u.oid]);
     for (const row of mine.rows) await refreshStatus(row.id);
     const { rows } = await getPool().query(
-      `SELECT c.id, c.title, c.status, c.created_at, c.opens_at, c.closes_at, c.eligibility, c.results_published, c.archived_at,
+      `SELECT c.id, c.title, c.status, c.created_at, c.opens_at, c.closes_at, c.eligibility, c.winners_announced_at, c.archived_at,
               (SELECT count(DISTINCT v.member_key)::int FROM vote_receipts v WHERE v.campaign_id = c.id) AS turnout,
               CASE c.eligibility WHEN 'list' THEN (SELECT count(*)::int FROM eligible_voters e WHERE e.campaign_id = c.id)
                                 WHEN 'umoja' THEN (CASE WHEN c.status = 'draft' THEN (SELECT count(*)::int FROM umoja_members WHERE active)
@@ -257,7 +258,7 @@ export function adminRouter(): Router {
     };
     const slim = (c: (typeof rows)[number]) => ({
       id: c.id, title: c.title, status: c.status, created_at: c.created_at, opens_at: c.opens_at, closes_at: c.closes_at,
-      started_at: c.started_at, closed_at: c.closed_at, results_published: c.results_published, archived_at: c.archived_at,
+      started_at: c.started_at, closed_at: c.closed_at, winners_announced_at: c.winners_announced_at, archived_at: c.archived_at,
       turnout: c.turnout, eligible_count: c.eligible_count,
     });
     const open = rows.filter((c) => c.status === 'open');
@@ -668,7 +669,7 @@ export function adminRouter(): Router {
     const closed = c.status === 'closed';
     res.set('Cache-Control', 'no-store');
     res.json({
-      status: c.status, results_published: c.results_published, archived: !!c.archived_at,
+      status: c.status, winners_announced_at: c.winners_announced_at ?? null, archived: !!c.archived_at,
       ...(closed ? await getResults(getPool(), c.id) : { candidates: null, turnout: await getTurnout(getPool(), c.id), positions: await openPositionTurnouts(c.id) }),
       ...(closed ? { runoff: await runoffInfo(c) } : {}),
       resets: (await getNotices(getPool(), c.id, closed)).filter((n) => n.kind === 'reset'),
@@ -698,40 +699,36 @@ export function adminRouter(): Router {
     res.json({ acknowledged: true });
   });
 
-  r.post('/:id/publish', loadRunnable, async (req, res) => {
-    const c = camp(res);
-    const b = publishBody.parse(req.body ?? {});
-    await withTx(async (tx) => {
-      const { rows } = await tx.query('SELECT status FROM campaigns WHERE id = $1 FOR UPDATE', [c.id]);
-      if (rows[0]?.status !== 'closed') throw new HttpError(409, 'Results can only be published after the campaign is closed', 'not_closed');
-      // SEC-16: a result that no longer matches its seal (changed counters, receipts, or audit chain) is not published.
-      const seal = await verifySeal(tx, c.id);
-      if (seal.sealed && (!seal.chain_ok || seal.tallies_match === false || seal.receipts_match === false)) {
-        throw new HttpError(409, 'The result no longer matches what was sealed when the campaign closed. Run "Verify results integrity" and investigate before publishing.', 'integrity_failed');
-      }
-      // Below the quorum: allowed, but only knowingly. The flag stays on the result for everyone to see.
-      const q = quorumOf((await tx.query('SELECT quorum_percent FROM campaigns WHERE id = $1', [c.id])).rows[0].quorum_percent, await getTurnout(tx, c.id));
-      if (q && q.met === false && !b.acknowledge_below_quorum) {
-        throw new HttpError(409, `Only ${q.votes} of the ${q.needed} votes needed for the ${q.percent}% quorum were cast. Publish anyway only if you accept that the result is flagged as below quorum.`, 'below_quorum');
-      }
-      await tx.query('UPDATE campaigns SET results_published = true, published_at = now(), published_by = $2, publish_scheduled = false WHERE id = $1', [c.id, currentUser(req).oid]);
-      await audit(tx, currentUser(req).oid, 'results.publish', c.id, q && q.met === false ? { below_quorum: true } : {});
-    });
-    res.json({ results_published: true });
+  /**
+   * Announce winners (replaces "publish results"). Voters never see results; after the close the creator or a co-admin announces the WINNERS by
+   * name, once. GET gives the preview (the exact text, who would be named, and anything that blocks it); POST makes the announcement.
+   */
+  r.get('/:id/announcement', loadRunnable, async (_req, res) => {
+    res.set('Cache-Control', 'no-store').json(await previewAnnouncement(getPool(), camp(res)));
   });
 
-  /** Schedule (or clear) the automatic publication of a closed result. The person who schedules it is its "approved by". */
-  r.put('/:id/publish-schedule', loadRunnable, async (req, res) => {
+  r.post('/:id/announce-winners', loadRunnable, async (req, res) => {
     const c = camp(res); const u = currentUser(req);
-    const b = publishScheduleBody.parse(req.body);
-    await withTx(async (tx) => {
-      const cur = (await tx.query('SELECT results_published, clock_timestamp() AS now FROM campaigns WHERE id = $1 FOR UPDATE', [c.id])).rows[0];
-      if (cur.results_published) throw new HttpError(409, 'The results are already published', 'already_published');
-      if (b.publish_at && new Date(b.publish_at) <= cur.now) throw new HttpError(400, 'The publication time must be in the future', 'bad_time');
-      await tx.query('UPDATE campaigns SET publish_at = $2, publish_scheduled_by = $3 WHERE id = $1', [c.id, b.publish_at, b.publish_at ? u.oid : null]);
-      await audit(tx, u.oid, b.publish_at ? 'results.publish_scheduled' : 'results.publish_unscheduled', c.id, { publish_at: b.publish_at });
+    const b = announceBody.parse(req.body ?? {});
+    const announcement = await withTx(async (tx) => {
+      const cur = (await tx.query('SELECT status FROM campaigns WHERE id = $1 FOR UPDATE', [c.id])).rows[0];
+      const pv = await previewAnnouncement(tx, { id: c.id, title: c.title, status: cur.status });
+      // The blocks are the safety rules: not closed, already announced, a TIED position (needs a run-off first), a result that no longer matches its seal.
+      if (pv.blocks.length) throw new HttpError(409, pv.blocks[0].message, pv.blocks[0].code);
+      if (pv.below_quorum && !b.acknowledge_below_quorum) {
+        throw new HttpError(409, `Only ${pv.below_quorum.votes} of the ${pv.below_quorum.needed} votes needed for the ${pv.below_quorum.percent}% quorum were cast. Announce anyway only if you accept that.`, 'below_quorum');
+      }
+      const out: Announcement = { text: pv.text, positions: pv.positions.map((p) => ({ title: p.title, winners: p.winners })) };
+      // The one-time claim: only the request that finds winners_announced_at empty gets to announce.
+      const claim = await tx.query(
+        'UPDATE campaigns SET winners_announced_at = now(), winners_announced_by = $2, winners_announcement = $3 WHERE id = $1 AND winners_announced_at IS NULL RETURNING id',
+        [c.id, u.oid, JSON.stringify(out)]);
+      if (!claim.rowCount) throw new HttpError(409, 'The winners have already been announced', 'already_announced');
+      // Counts only: how many positions and winners, and a fingerprint of the text. No names.
+      await audit(tx, u.oid, 'results.announce', c.id, { positions: out.positions.length, winners: out.positions.reduce((n, p) => n + p.winners.length, 0), text_sha256: sha256(out.text), ...(pv.below_quorum ? { below_quorum: true } : {}) });
+      return out;
     });
-    res.json({ publish_at: b.publish_at });
+    res.status(201).json({ announced: true, announcement });
   });
 
   r.get('/:id/qr.png', loadRunnable, async (req, res) => {

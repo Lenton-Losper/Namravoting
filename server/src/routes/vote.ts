@@ -8,7 +8,7 @@ import { currentUser, getCurrentUser, requireUser, type AuthUser } from '../auth
 import { clientIp } from '../auth/limits.js';
 import { voterState } from '../domain/status.js';
 import { positionVoteBody, tokenParams, uuid, voteBody } from '../domain/validation.js';
-import { getNotices, getResetHistory, getResults, refreshStatus, type CampaignRow } from '../services/campaigns.js';
+import { getNotices, noticesForVoters, refreshStatus, type CampaignRow } from '../services/campaigns.js';
 import { castVote, notMemberMessage } from '../services/voting.js';
 import { isSnapshotMemberSql, liveMemberKey, logNotMember, umojaStanding } from '../services/umoja.js';
 
@@ -87,23 +87,29 @@ export function voteRouter(): Router {
   r.get('/', async (req, res) => {
     const u = currentUser(req);
     const myKeys = [`oid:${u.oid}`, ...(await liveMemberKey(getPool(), u.oid).then((k) => (k ? [k] : [])))];
-    const stale = await getPool().query("SELECT id FROM campaigns WHERE (status = 'open' AND closes_at IS NOT NULL AND closes_at <= now()) OR (status = 'closed' AND NOT results_published AND publish_at IS NOT NULL AND publish_at <= now())");
+    const stale = await getPool().query("SELECT id FROM campaigns WHERE status = 'open' AND closes_at IS NOT NULL AND closes_at <= now()");
     for (const row of stale.rows) await refreshStatus(row.id);
     const { rows } = await getPool().query(
-      `SELECT c.share_token, c.title, c.description, c.status, c.opens_at, c.closes_at, c.results_published, clock_timestamp() AS db_now,
+      `SELECT c.share_token, c.title, c.description, c.status, c.opens_at, c.closes_at, clock_timestamp() AS db_now,
               (SELECT count(DISTINCT v.position_id)::int FROM vote_receipts v WHERE v.campaign_id = c.id AND (v.voter_oid = $1 OR v.member_key = ANY($3::text[]))) AS positions_voted,
-              (SELECT count(*)::int FROM positions p WHERE p.campaign_id = c.id) AS positions_total
+              (SELECT count(*)::int FROM positions p WHERE p.campaign_id = c.id) AS positions_total,
+              (SELECT coalesce(json_agg(json_build_object('position', p.title, 'code', v.receipt_code) ORDER BY p.sort_order, p.created_at), '[]'::json)
+                 FROM vote_receipts v JOIN positions p ON p.id = v.position_id
+                WHERE v.campaign_id = c.id AND v.receipt_code IS NOT NULL AND (v.voter_oid = $1 OR v.member_key = ANY($3::text[]))) AS receipts
          FROM campaigns c
-        WHERE (c.status = 'open' OR (c.status = 'closed' AND c.results_published))
+        WHERE (c.status = 'open'
+               -- a closed campaign stays on My votes (as "Closed", with the voter's receipt codes) for people who voted in it, until it is archived
+               OR (c.status = 'closed' AND c.archived_at IS NULL
+                   AND EXISTS (SELECT 1 FROM vote_receipts v WHERE v.campaign_id = c.id AND (v.voter_oid = $1 OR v.member_key = ANY($3::text[])))))
           AND (c.eligibility = 'all' OR (c.eligibility = 'umoja' AND ${isSnapshotMemberSql('c.id', '$1')})
                OR (c.eligibility = 'list' AND EXISTS (SELECT 1 FROM eligible_voters e WHERE e.campaign_id = c.id AND e.voter_email = $2)))
         ORDER BY c.closes_at NULLS LAST, c.created_at DESC`, [u.oid, u.email.toLowerCase(), myKeys]);
     res.set('Cache-Control', 'no-store').json({
       campaigns: rows.map((c) => ({
         shareToken: c.share_token, title: c.title, description: c.description, opensAt: c.opens_at, closesAt: c.closes_at,
-        resultsPublished: c.results_published,
         voterState: voterState(c, c.db_now, { eligible: true, hasVoted: c.positions_total > 0 && c.positions_voted >= c.positions_total }),
         positions: { voted: c.positions_voted, total: c.positions_total },
+        receipts: c.status === 'closed' ? c.receipts : [],     // the caller's own codes only
       })),
     });
   });
@@ -124,11 +130,13 @@ export function voteRouter(): Router {
     const regions = showCandidates ? (await getPool().query('SELECT id, name FROM regions WHERE campaign_id = $1 ORDER BY sort_order, name', [c.id])).rows : [];
     res.set('Cache-Control', 'no-store').json({
       title: c.title, description: c.description, opensAt: c.opens_at, closesAt: c.closes_at,
-      resultsReleaseAt: c.results_release_at ?? null,          // display only: publishing stays manual
+      resultsReleaseAt: c.results_release_at ?? null,          // display only: "Winners will be announced on ..."
       groupByRegion: !!c.results_group_by_region,
-      resultsPublished: c.results_published && c.status === 'closed',
       voterState: s.state,
-      notices: await getNotices(getPool(), c.id, false),   // resets and early closes, with their reasons (SEC-01)
+      notices: noticesForVoters(await getNotices(getPool(), c.id, false)),   // resets and early closes, with their reasons and NEVER a count (SEC-01)
+      // The only result a voter ever gets: the winners the creator announced, and only if the caller has a receipt. Names, no counts.
+      announcement: c.status === 'closed' && c.winners_announced_at && s.votedPositions.size > 0
+        ? { at: c.winners_announced_at, text: c.winners_announcement?.text ?? '', positions: c.winners_announcement?.positions ?? [] } : null,
       candidates: cands.map(candidateOut),
       regions,
       progress: { voted: s.votedPositions.size, total: s.total },
@@ -199,16 +207,6 @@ export function voteRouter(): Router {
     const u = currentUser(req);
     const { receiptCode } = await castVote(u.oid, u.email, shareToken, (candidateIds ?? candidateId)!, pid.data);
     res.status(201).set('Cache-Control', 'no-store').json({ recorded: true, receiptCode });
-  });
-
-  r.get('/:shareToken/results', async (req, res) => {
-    const shareToken = parseToken(req);
-    const c = await loadByToken(shareToken);
-    const s = await standing(c, currentUser(req));
-    if (s.notMember) throw new HttpError(403, notMemberMessage, 'not_member');
-    if (!s.eligible) throw new HttpError(403, 'You are not eligible to view these results', 'not_eligible');
-    if (c.status !== 'closed' || !c.results_published) throw new HttpError(404, 'Results are not published');
-    res.set('Cache-Control', 'no-store').json({ title: c.title, ...(await getResults(getPool(), c.id)), resets: await getResetHistory(getPool(), c.id, false), notices: await getNotices(getPool(), c.id, false) });
   });
 
   return r;

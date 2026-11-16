@@ -94,8 +94,7 @@ export const profileBody = z.object({ name: line(120), bio: lines(500).optional(
 export const positionParams = z.object({ id: uuid, pid: uuid });
 export const regionParams = z.object({ id: uuid, rid: uuid });
 /** Schedule (or clear) the automatic publication of a closed result. */
-export const publishScheduleBody = z.object({ publish_at: z.string().datetime({ offset: true }).nullable() }).strict();
-export const publishBody = z.object({ acknowledge_below_quorum: z.boolean().optional() }).strict();
+export const announceBody = z.object({ acknowledge_below_quorum: z.boolean().optional() }).strict();
 
 /** A candidate withdraws after voting has started: a reason is required and is shown to voters. */
 export const withdrawBody = z.object({ reason: z.string().transform(cleanMultiline).pipe(z.string().trim().min(10, 'Give a reason of at least 10 characters').max(1000)) }).strict();

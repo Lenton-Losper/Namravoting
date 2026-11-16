@@ -44,13 +44,21 @@ export function notifyRouter(d: { loadRunnable: RequestHandler; camp: (res: Resp
     if (!a.mailable) throw new HttpError(409, 'A vote open to all staff has no list of people to write to. Share the link or the QR code instead, or use a listed vote.', 'not_mailable');
     const to = kind === 'open' ? a.all : a.pending;
     if (!to.length) throw new HttpError(409, kind === 'open' ? 'There is no one with a known email address to write to' : 'Everyone who can be reached has already voted', 'nobody_to_notify');
-    const recent = await getPool().query("SELECT 1 FROM audit_log WHERE campaign_id = $1 AND action = 'notify.sent' AND details->>'kind' = $2 AND at > now() - make_interval(mins => $3)", [c.id, kind, MIN_INTERVAL_MINUTES]);
-    if (recent.rowCount) throw new HttpError(409, `This notice was sent less than ${MIN_INTERVAL_MINUTES} minutes ago`, 'too_soon');
+    // The one-hour rule is taken as an ATOMIC claim before anything is sent (table notify_claims): two clicks, or two admins, cannot both pass it.
+    // The old check read the audit log first and wrote to it after sending, so two simultaneous requests both sent.
+    const claim = await getPool().query(
+      `INSERT INTO notify_claims (campaign_id, kind, claimed_at, claimed_by) VALUES ($1, $2, now(), $3)
+       ON CONFLICT (campaign_id, kind) DO UPDATE SET claimed_at = now(), claimed_by = $3
+         WHERE notify_claims.claimed_at <= now() - make_interval(mins => $4)
+       RETURNING 1`, [c.id, kind, u.oid, MIN_INTERVAL_MINUTES]);
+    if (!claim.rowCount) throw new HttpError(409, `This notice was sent less than ${MIN_INTERVAL_MINUTES} minutes ago`, 'too_soon');
     const msg = composeMessage(kind, { title: c.title, description: c.description, share_url: `${getConfig().publicBaseUrl}/v/${c.share_token}`, closes_at: c.closes_at }, new Date());
     let sent = 0;
     try {
       for (let i = 0; i < to.length; i += BATCH) { const batch = to.slice(i, i + BATCH); await mailer.send(batch, msg.subject, msg.text); sent += batch.length; }
     } catch (e) {
+      // Nothing went out: give the claim back so the admin can try again at once. If some batches went out the claim stays (no repeat for an hour).
+      if (sent === 0) await getPool().query('DELETE FROM notify_claims WHERE campaign_id = $1 AND kind = $2 AND claimed_by = $3', [c.id, kind, u.oid]).catch(() => undefined);
       await audit(getPool(), u.oid, 'notify.failed', c.id, { kind, recipients_before_failure: sent, error: (e as Error).message.slice(0, 200) });
       if (e instanceof MailRejected) throw new HttpError(502, e.message, e.permission ? 'mail_denied' : 'mail_failed');
       throw e;

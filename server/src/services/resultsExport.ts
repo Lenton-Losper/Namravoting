@@ -38,7 +38,7 @@ export function buildCsv(c: CampaignRow, results: ResultsPayload, seal: SealChec
   const lines = ['candidate,votes', ...results.candidates.filter((x) => !x.is_abstain).map((x) => `${csvCell(x.withdrawn ? `${x.name} (withdrew: votes void)` : x.name)},${x.votes}`),
     ...(abstain ? [`Abstentions (not a candidate),${abstain.votes}`] : []), `Total ballots,${results.turnout.votes}`,
     ...(q ? [`Quorum,${q.met === false ? `NOT MET: ${q.votes} of ${q.needed} votes needed (${q.percent}% of ${q.eligible})` : q.met ? `met: ${q.votes} of ${q.needed} votes needed (${q.percent}% of ${q.eligible})` : `${q.percent}% (eligible count unknown)`}`] : []),
-    ...(results.publication ? [`Published by,${csvCell(results.publication.by ?? 'unknown')} on ${results.publication.at.toISOString()}${results.publication.scheduled ? ' (scheduled)' : ''}`] : []),
+    ...(results.publication ? [`Winners announced by,${csvCell(results.publication.by ?? 'unknown')} on ${results.publication.at.toISOString()}${results.publication.scheduled ? ' (scheduled)' : ''}`] : []),
     ...(results.tie ? [`Tie,${csvCell('YES: tie for first place between ' + results.tie.names.join(' and '))}`] : []),
     ...(c.runoff_round ? [`Run-off round,${c.runoff_round}`] : []),
     ...(seal.sealed && seal.seal_hash ? [`Sealed at,${new Date(seal.sealed_at!).toISOString()}`, `Seal fingerprint,${seal.seal_hash}`] : [])];
@@ -68,7 +68,7 @@ function buildCsvMulti(c: CampaignRow, results: ResultsPayload, seal: SealCheck)
   lines.push('', `Members who voted in at least one position,${results.turnout.votes}`);
   if (results.turnout.eligible != null) lines.push(`Eligible voters,${results.turnout.eligible}`);
   if (q) lines.push(`Quorum,${q.met === false ? `NOT MET: ${q.votes} of ${q.needed} votes needed (${q.percent}% of ${q.eligible})` : q.met ? `met: ${q.votes} of ${q.needed} votes needed (${q.percent}% of ${q.eligible})` : `${q.percent}% (eligible count unknown)`}`);
-  if (results.publication) lines.push(`Published by,${csvCell(results.publication.by ?? 'unknown')} on ${results.publication.at.toISOString()}${results.publication.scheduled ? ' (scheduled)' : ''}`);
+  if (results.publication) lines.push(`Winners announced by,${csvCell(results.publication.by ?? 'unknown')} on ${results.publication.at.toISOString()}${results.publication.scheduled ? ' (scheduled)' : ''}`);
   if (results.group_by_region) lines.push('Results grouped by region,yes');
   if (seal.sealed && seal.seal_hash) lines.push(`Sealed at,${new Date(seal.sealed_at!).toISOString()}`, `Seal fingerprint,${seal.seal_hash}`);
   return lines.join('\r\n') + '\r\n';
@@ -186,7 +186,7 @@ export async function gatherExport(db: Queryable, c: CampaignRow, generatedBy: s
     candidates: sorted.map((x, i) => ({ rank: i + 1, name: x.name, votes: x.votes, pct: total > 0 ? x.votes / total : 0 })),
     abstentions: abstain ? abstain.votes : null, withdrawn,
     quorum: results.quorum ? quorumText(results.quorum) : '',
-    publication: results.publication ? `Published by ${results.publication.by ?? 'unknown'} on ${fmtWindhoek(results.publication.at)}${results.publication.scheduled ? ' (scheduled; approved by the person who scheduled it)' : ''}` : '',
+    publication: results.publication ? `Winners announced by ${results.publication.by ?? 'unknown'} on ${fmtWindhoek(results.publication.at)}${results.publication.scheduled ? ' (scheduled; approved by the person who scheduled it)' : ''}` : '',
     tie, tiedNames, leader: st.leader?.name ?? null,
     runoff: [c.runoff_round ? `This is run-off round ${c.runoff_round}${link.parent ? ` of "${link.parent}"` : ''}.` : '', link.child ? `A run-off was started: "${link.child}".` : ''].filter(Boolean).join(' '),
     history: fullHistory,
@@ -311,7 +311,7 @@ export async function buildPdf(d: ExportData, opts: { compress?: boolean } = {})
   else kv('Tie', tieText(d));
   if (d.runoff) kv('Run-off', d.runoff);
   if (d.quorum) kv('Quorum', d.quorum);
-  if (d.publication) kv('Publication', d.publication);
+  if (d.publication) kv('Announcement', d.publication);
 
   heading(d.multi ? 'Results by position' : 'Results');
   const cx = [L, L + 40, L + W - 150, L + W - 70];
