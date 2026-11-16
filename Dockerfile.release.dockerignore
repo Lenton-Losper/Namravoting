@@ -1,0 +1,25 @@
+# Ignore rules for Dockerfile.release (the prebuilt package): same as .dockerignore, but client/dist and server/dist MUST be sent.
+node_modules
+**/node_modules
+.env
+.env.*
+!.env.example
+.dev.vars
+.wrangler
+data
+uploads
+.git
+.gitignore
+.vscode
+.idea
+coverage
+**/*.tsbuildinfo
+**/tests
+**/*.test.ts
+worker
+docker
+docker-compose*.yml
+scripts
+README.md
+*.log
+*.dump
