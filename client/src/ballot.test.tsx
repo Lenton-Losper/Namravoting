@@ -208,11 +208,11 @@ describe('the statement and help sheets', () => {
   it('the help button sits in the white top bar when there is one (right side), and beside the back link when there is not', async () => {
     table[URL_INFO] = info(); table[`GET ${URL_POS}`] = ballot();
     const slot = document.createElement('div'); slot.id = 'topbar-help'; document.body.prepend(slot);
-    page();
-    const btn = await screen.findByRole('button', { name: 'Help: how voting works' });
-    expect(slot.contains(btn)).toBe(true);
-    expect(document.querySelector('.ballot-topline')?.contains(btn)).toBe(false);
-    cleanup(); slot.remove();
+    try {
+      page();
+      await waitFor(() => expect(within(slot).getByRole('button', { name: 'Help: how voting works' })).toBeTruthy());   // it moves into the bar after the first render
+      expect(document.querySelector('.ballot-topline')?.querySelector('.help-button')).toBeNull();
+    } finally { cleanup(); slot.remove(); }
     page();
     const inline = await screen.findByRole('button', { name: 'Help: how voting works' });
     expect(document.querySelector('.ballot-topline')?.contains(inline)).toBe(true);
