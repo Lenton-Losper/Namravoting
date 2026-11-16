@@ -331,6 +331,10 @@ describe('the stylesheet follows the card design', () => {
     expect(rule('.receipt-code')).toMatch(/font: 600 17px[^}]*letter-spacing: \.04em/);
     expect(rule('.receipt-label')).toMatch(/font-size: 13px/);
   });
+  it('the top bar is white with a 1px #E3E7ED bottom border and 16px 20px padding while a ballot is showing', () => {
+    expect(css).toMatch(/body:has\(\.ballot-screen\) \.topbar \{ background: #fff;[^}]*border-bottom: 1px solid var\(--b-hair\)/);
+    expect(css).toMatch(/body:has\(\.ballot-screen\) \.topbar-in \{[^}]*padding: 16px 20px/);
+  });
   it('the header block: 13px/600 uppercase step label, 24px/700 title, chips, 15px helper, footer', () => {
     expect(rule('.ballot-step')).toMatch(/font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: \.04em/);
     expect(rule('.ballot-title')).toMatch(/font-size: 24px; font-weight: 700; line-height: 1.25/);

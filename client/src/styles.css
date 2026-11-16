@@ -618,3 +618,23 @@ body:has(.admin-campaign) { background: var(--b-page); }
 .side-note { margin: 0; font-size: 13px; line-height: 1.45; color: var(--b-secondary); }
 .side-divider { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--b-hair); }
 .delete-draft { min-height: 44px; padding: 0 4px; background: none; border: 0; color: var(--bad-text); font: 600 14px var(--font); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+
+/* Ballot screens: the top bar is white with a 1px #E3E7ED bottom border, padding 16px 20px, the 32px logo and the app name 15px/600 (spec, "Screen 1"). */
+body:has(.ballot-screen) .topbar { background: #fff; color: var(--b-text); border-bottom: 1px solid var(--b-hair); }
+body:has(.ballot-screen) .topbar-in { height: auto; min-height: 64px; padding: 16px 20px; }
+body:has(.ballot-screen) .brand, body:has(.ballot-screen) .wordmark { color: var(--b-text); }
+body:has(.ballot-screen) .wordmark-logo { background: transparent; box-shadow: 0 0 0 1px var(--b-line); }
+body:has(.ballot-screen) .wordmark-sep { background: var(--b-line); }
+body:has(.ballot-screen) .topnav-link, body:has(.ballot-screen) .user-name { color: var(--b-text); }
+body:has(.ballot-screen) .topnav-link:hover { background: var(--b-page); }
+body:has(.ballot-screen) .avatar-round { background: var(--b-navy); color: #fff; }
+body:has(.ballot-screen) .signout-btn { color: var(--b-navy); border-color: var(--b-sheet-line); }
+body:has(.ballot-screen) .signout-btn:hover { background: var(--b-page); }
+body:has(.ballot-screen) .hamburger { color: var(--b-navy); border-color: var(--b-sheet-line); }
+@media (max-width: 767px) {
+  .container:has(.admin-campaign) { padding: 16px 16px 96px; }
+  .admin-campaign .card-pad { padding: 16px; }
+  .admin-campaign .head-card { padding: 20px; }
+  .prow-head { padding: 16px; }
+  .prow-body { padding: 16px; }
+}

@@ -218,7 +218,7 @@ function PositionDetail({ c, p, reload, editable, canEditPosition }: { c: Campai
             <li key={x.id} className="cand-row nomination-row">
               <Thumb url={x.photo_url} name={x.name} />
               <div className="grow">
-                <strong>{x.name}</strong> <span className={`chip ${x.status === 'approved' ? 'chip-open' : x.status === 'submitted' ? 'chip-outline' : 'chip-draft'}`}>{STATUS_LABEL[x.status]}</span>
+                <strong>{x.name}</strong> <span className={x.status === 'approved' ? 'chip-status chip-ready' : x.status === 'rejected' ? 'chip-status chip-problem' : `chip ${x.status === 'submitted' ? 'chip-outline' : 'chip-draft'}`}>{x.status === 'approved' && <span aria-hidden="true">✓ </span>}{STATUS_LABEL[x.status]}</span>
                 {withdrawnIds.has(x.id) && <span className="chip chip-outline">Withdrew from the vote</span>}
                 <div className="muted small">{x.region ?? 'No region'}{x.submitted_by ? ` · applied by ${x.submitted_by} (${x.submitted_by_email})` : ' · added by an administrator'}{x.submitted_at ? ` · ${fmtDate(x.submitted_at)}` : ''}</div>
                 {x.bio && <div className="muted small">{x.bio}</div>}

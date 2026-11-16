@@ -313,15 +313,15 @@ describe('several positions and the eligibility line', () => {
     expect((await s.get(`/api/nominate/${t0}`).expect(200)).body.position).toMatchObject({ title: 'Press Secretary', ruleText: 'Must be from the HR Department' });
     expect((await s.get(`/api/nominate/${t1}`).expect(200)).body.position.ruleText).toBeNull();
     // information only: a member who is not from HR is not stopped from submitting
-    await submit(s, t0, { name: 'Sam Staff', region_id: e.regions.Khomas }).expect(200);
+    await submit(s, t0, { name: 'Sam Staff', region_id: e.regions.Khomas }).expect(201);
   });
 
   it('the same person can stand in two positions: one profile per position, approved and counted separately', async () => {
     const { admin, e, invite } = await setup();
     const t0 = (await invite(0)).token, t1 = (await invite(1)).token;
     const s = await login(app, S1);
-    await submit(s, t0, { name: 'Sam Staff', region_id: e.regions.Khomas }).expect(200);
-    await submit(s, t1, { name: 'Sam Staff', region_id: e.regions.Khomas }).expect(200);
+    await submit(s, t0, { name: 'Sam Staff', region_id: e.regions.Khomas }).expect(201);
+    await submit(s, t1, { name: 'Sam Staff', region_id: e.regions.Khomas }).expect(201);
     const a = await rows(e.positions[0].id), b = await rows(e.positions[1].id);
     expect([a.length, b.length]).toEqual([1, 1]);
     expect(a[0].id).not.toBe(b[0].id);

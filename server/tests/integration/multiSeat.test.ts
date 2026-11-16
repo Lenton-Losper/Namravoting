@@ -221,3 +221,55 @@ describe('live turnout per position', () => {
     expect(text).not.toMatch(/"votes":\s*[1-9]\d*,"(name|id)"/);
   });
 });
+
+describe('a receipt cannot be linked to a choose-N vote either', () => {
+  const VOTERS = [S1, S2, S3, S4];
+  const pairs = (i: number): [number, number] => [[0, 1], [2, 3], [0, 4], [1, 3]][i % 4] as [number, number];
+
+  it('by row order: the same voters in the same order, choosing different pairs, leave the same receipt order and different counters', async () => {
+    const run = async (pick: (i: number) => [number, number]) => {
+      const e = await committee();
+      for (const [i, u] of VOTERS.entries()) await post(await login(app, u), e, MEMBERS, { candidateIds: ids(e, MEMBERS, ...pick(i)) }).expect(201);
+      const order = (await ownerDb().query('SELECT voter_oid FROM vote_receipts WHERE campaign_id = $1 ORDER BY ctid', [e.id])).rows.map((r) => r.voter_oid as string);
+      return { order, counters: await counters(e, MEMBERS) };
+    };
+    const same = await run(() => [0, 1]);
+    await resetDb();
+    const varied = await run(pairs);
+    expect(same.order).toEqual(varied.order);
+    expect(same.counters).not.toEqual(varied.counters);
+    expect(same.counters).toMatchObject({ Hanna: 4, Ivan: 4, Jo: 0 });
+    expect(varied.counters).toMatchObject({ Hanna: 2, Ivan: 2, Jo: 1, Kay: 2, Lee: 1 });
+  });
+
+  it('by timestamp and serial: the receipt and counter rows still have no time, serial or identity column (one receipt covers all picks)', async () => {
+    const e = await committee();
+    await post(await login(app, S1), e, MEMBERS, { candidateIds: ids(e, MEMBERS, 0, 1) }).expect(201);
+    for (const t of ['vote_receipts', 'tallies']) {
+      const cols = (await ownerDb().query("SELECT column_name, data_type FROM information_schema.columns WHERE table_schema = 'public' AND table_name = $1", [t])).rows;
+      for (const c of cols) { expect(c.data_type).not.toMatch(/timestamp|^date$|^time|interval/); expect(c.column_name).not.toMatch(/_at$|time|created|updated|seq|serial/); }
+    }
+    expect(await receipts(e, MEMBERS)).toBe(1);   // not one receipt per pick: nothing ties a receipt to a particular candidate
+  });
+
+  it('by xmin: the counters of every position share one voter-independent transaction id after choose-N votes, and no receipt shares it', async () => {
+    const e = await committee();
+    for (const [i, u] of VOTERS.entries()) await post(await login(app, u), e, MEMBERS, { candidateIds: ids(e, MEMBERS, ...pairs(i)) }).expect(201);
+    await post(await login(app, S1), e, 0, { candidateId: ids(e, 0, 1)[0] }).expect(201);
+    const t = await ownerDb().query('SELECT DISTINCT xmin::text AS x FROM tallies WHERE campaign_id = $1', [e.id]);
+    expect(t.rowCount).toBe(1);
+    const r = (await ownerDb().query('SELECT xmin::text AS x FROM vote_receipts WHERE campaign_id = $1', [e.id])).rows.map((x) => x.x);
+    expect(r).toHaveLength(5);
+    expect(r).not.toContain(t.rows[0].x);
+  });
+
+  it('by the code: it is stored on exactly one receipt row, not in the audit log, and is not derived from the picks', async () => {
+    const e = await committee();
+    const code = (await post(await login(app, S1), e, MEMBERS, { candidateIds: ids(e, MEMBERS, 0, 1) }).expect(201)).body.receiptCode as string;
+    const tables = (await ownerDb().query("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE'")).rows.map((r) => r.table_name as string);
+    const where: string[] = [];
+    for (const t of tables) { const hits = (await ownerDb().query(`SELECT * FROM "${t}"`)).rows.filter((r) => JSON.stringify(r).includes(code)).length; if (hits) where.push(`${t}:${hits}`); }
+    expect(where).toEqual(['vote_receipts:1']);
+    for (const id of ids(e, MEMBERS, 0, 1)) expect(code.replace(/-/g, '')).not.toContain(id.replace(/-/g, '').slice(0, 8).toUpperCase());
+  });
+});
