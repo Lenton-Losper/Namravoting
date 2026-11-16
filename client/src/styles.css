@@ -18,7 +18,7 @@
   --b-navy: #12355B; --b-text: #0F1B2D; --b-secondary: #4A5565; --b-body: #1F2A3A;
   --b-line: #D9DEE5; --b-border: #8A94A3; --b-hair: #E3E7ED; --b-sheet-line: #C9D0DA; --b-ring: #6B7585;
   --b-page: #F5F7FA; --b-selected: #EEF3F9; --b-tint: #DCE6F1; --b-disabled: #5B6575;
-  --glow: 0 0 0 3px rgba(18, 53, 91, .18);   /* the halo of a selected card */
+  --glow: 0 0 0 3px rgba(18, 53, 91, .18); --ok-bg: #E6F2EB; --ok-text: #1E6B43; --bad-bg: #FDECEA; --bad-text: #B42318;   /* the halo of a selected card */
 
   --radius: 6px;
   --radius-sm: 4px;
@@ -551,3 +551,70 @@ body:has(.ballot-screen-receipt) { background: #fff; }
 .ballot-screen-receipt .ballot-state-actions { position: sticky; bottom: 0; z-index: 10; width: calc(100% + 56px); max-width: none; margin: 16px -28px 0; padding: 12px 20px 20px; background: #fff; border-top: 1px solid var(--b-hair); align-items: center; }
 @media (max-width: 767px) { .ballot-screen-receipt .ballot-state-actions { width: calc(100% + 96px); margin: 16px -48px 0; } }   /* a phone: edge to edge, past the 20px page gutter */
 .ballot-screen-receipt .ballot-state-actions .ballot-btn { max-width: 360px; }
+
+/* ---- Admin campaign page: docs/ballot-screen-redesign.md, "Admin — campaign positions screen" ---------------------------------------- */
+body:has(.admin-campaign) { background: var(--b-page); }
+.container:has(.admin-campaign) { max-width: 1240px; padding: 24px 24px 96px; }
+.admin-campaign .card { border: 1px solid var(--b-hair); border-radius: 16px; box-shadow: none; }
+.admin-campaign .head-card, .admin-campaign .head-card.card-accent { padding: 24px; border-top: 1px solid var(--b-hair); }
+.admin-campaign .initials-box { width: 64px; height: 64px; background: var(--b-selected); color: var(--b-navy); border-radius: 14px; }
+.admin-campaign .head-desc { font-size: 15px; color: var(--b-secondary); }
+/* Main column and Actions panel; the panel wraps below on a phone. */
+.admin-campaign .cols { display: flex; flex-wrap: wrap; gap: 24px; align-items: flex-start; }
+.admin-campaign .main-col { flex: 999 1 560px; min-width: 0; }
+.admin-campaign .side-card { flex: 1 1 300px; min-width: 0; }
+.admin-campaign .tab[aria-selected="true"] { color: var(--b-navy); font-weight: 600; border-bottom: 3px solid var(--b-navy); }
+.admin-campaign .btn-primary:disabled { opacity: 1; background: var(--b-hair); color: var(--b-disabled); border-color: var(--b-hair); }
+.btn-44 { min-height: 44px; }
+.btn-48 { min-height: 48px; font-size: 15px; }
+.btn-52 { min-height: 52px; font-size: 16px; }
+
+/* A position is a full-width row: title, status, summary and progress on the left, one button and a menu on the right. */
+.prow-list { list-style: none; margin: 16px 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+.prow { background: #fff; border: 1px solid var(--b-line); border-radius: 14px; }
+.prow-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px 16px; padding: 18px 20px; border-radius: 14px; }
+.prow.is-open .prow-head { background: #F8FAFC; border-bottom: 1px solid var(--b-hair); border-radius: 14px 14px 0 0; }   /* the open row is NOT given the voter's navy selected border */
+.prow-main { flex: 1 1 280px; min-width: 0; }
+.prow-title-line { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.prow-title { margin: 0; font-size: 17px; font-weight: 700; color: var(--b-text); }
+.chip-status { display: inline-flex; align-items: center; gap: 4px; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+.chip-ready { background: var(--ok-bg); color: var(--ok-text); }
+.chip-problem { background: var(--bad-bg); color: var(--bad-text); }
+.chip-neutral { display: inline-block; padding: 2px 10px; border-radius: 999px; background: var(--b-hair); color: var(--b-secondary); font-size: 12px; font-weight: 500; }
+.prow-summary { margin: 6px 0 0; font-size: 14px; color: var(--b-secondary); }
+.prow-bar { margin-top: 10px; height: 6px; max-width: 320px; border-radius: 999px; background: var(--b-hair); overflow: hidden; }
+.prow-bar span { display: block; height: 100%; background: var(--ok-text); }
+.prow-actions { display: flex; align-items: center; gap: 8px; }
+.icon-btn { width: 44px; height: 44px; display: inline-flex; align-items: center; justify-content: center; background: #fff; border: 1px solid var(--b-sheet-line); border-radius: 12px; color: var(--b-navy); font-size: 20px; line-height: 1; cursor: pointer; }
+.icon-btn:hover { background: var(--b-page); }
+.row-menu-wrap { position: relative; }
+.row-menu { position: absolute; right: 0; top: calc(100% + 4px); z-index: 20; width: 200px; padding: 6px; background: #fff; border: 1px solid var(--b-line); border-radius: 12px; box-shadow: 0 8px 24px rgba(15, 27, 45, .16); }
+.row-menu-item { display: block; width: 100%; min-height: 44px; padding: 0 12px; text-align: left; background: none; border: 0; border-radius: 8px; font: 500 14px var(--font); color: var(--b-text); cursor: pointer; }
+.row-menu-item:hover, .row-menu-item:focus-visible { background: var(--b-selected); }
+.row-menu-item.is-danger { color: var(--bad-text); font-weight: 600; }
+.row-menu-divider { height: 1px; margin: 4px 0; background: var(--b-hair); }
+
+/* The open position: inside the same bordered container, directly under its own row. */
+.prow-body { padding: 20px; }
+.prow-body .position-detail { display: flex; flex-direction: column; gap: 20px; margin: 0; padding: 0; border: 0; }
+.prow-body .section-title { margin: 0; }
+.prow-desc { margin: 0; font-size: 15px; color: var(--b-secondary); }
+.prow-body .invite-panel { margin: 0; padding: 0; background: none; border: 0; }
+.invite-label { display: block; margin-bottom: 8px; font-size: 14px; font-weight: 600; color: var(--b-text); }
+.invite-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: stretch; }
+.invite-row input { flex: 1 1 240px; min-width: 0; min-height: 44px; }
+.invite-more { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 8px; }
+.empty-box { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 20px; text-align: center; border: 1px dashed var(--b-sheet-line); border-radius: 12px; }
+.empty-box p { margin: 0; max-width: 46ch; font-size: 14px; color: var(--b-secondary); }
+.position-summary-line { margin: 0; padding: 10px 12px; background: var(--b-selected); border-radius: 10px; font-size: 14px; color: var(--b-text); }
+
+/* The Actions panel. */
+.side-heading { margin: 0 0 12px; font-size: 18px; font-weight: 700; color: var(--b-text); }
+.checklist { list-style: none; margin: 0 0 16px; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.checklist li { display: flex; align-items: flex-start; gap: 10px; font-size: 14px; line-height: 1.4; color: var(--b-text); }
+.check-dot { flex: none; width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; border-radius: 50%; font-size: 12px; font-weight: 700; }
+.checklist .is-ok .check-dot { background: var(--ok-bg); color: var(--ok-text); }
+.checklist .is-bad .check-dot { background: var(--bad-bg); color: var(--bad-text); }
+.side-note { margin: 0; font-size: 13px; line-height: 1.45; color: var(--b-secondary); }
+.side-divider { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--b-hair); }
+.delete-draft { min-height: 44px; padding: 0 4px; background: none; border: 0; color: var(--bad-text); font: 600 14px var(--font); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }

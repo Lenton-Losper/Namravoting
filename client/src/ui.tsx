@@ -69,7 +69,7 @@ export function Tabs<T extends string>({ tabs, value, onChange, label, children,
         {tabs.map((t) => (
           <button key={t.id} id={`${base}-${t.id}`} role="tab" aria-selected={value === t.id} aria-controls={`${base}-panel`}
             tabIndex={value === t.id ? 0 : -1} className="tab" onClick={() => onChange(t.id)}>
-            {t.label}{t.count !== undefined && <span className="tab-count">{t.count}</span>}
+            {t.label}{t.count !== undefined && <span className="tab-count">({t.count})</span>}
           </button>
         ))}
       </div>

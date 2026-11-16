@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { api, fmtDate, fromLocalInput, toLocalInput, type CampaignDetail, type Nomination, type Position, type Region } from '../../api';
 import { Icon } from '../../icons';
 import { Dialog, ErrorBox, SectionTitle, Spinner, Thumb } from '../../ui';
@@ -17,6 +17,10 @@ const STATUS_LABEL: Record<NonNullable<Nomination['status']>, string> = {
 };
 
 export const needsMore = (p: Position) => p.counts.approved < p.required;
+export const winnersLabel = (n: number) => `${n} winner${n === 1 ? '' : 's'}`;
+/** "2 winners, 3–13 candidates, voters pick 2." (no maximum: "3 or more candidates") */
+export const positionRuleSummary = (seats: number, min: number, max: number | null) =>
+  `${winnersLabel(seats)}, ${max ? `${min}–${max}` : `${min} or more`} candidates, voters pick ${seats}.`;
 
 /** Why the campaign cannot start yet, or null. Every position needs enough APPROVED candidates (at least 2, or its own minimum). */
 export function startBlocker(positions: Position[]): string | null {
@@ -33,14 +37,14 @@ function PositionDialog({ c, existing, live, onDone, onCancel }: { c: CampaignDe
   const [description, setDescription] = useState(existing?.description ?? '');
   const [seats, setSeats] = useState(String(existing?.seats ?? 1));
   const [ruleText, setRuleText] = useState(existing?.rule_text ?? '');
-  const [min, setMin] = useState(existing?.min_candidates ? String(existing.min_candidates) : '');
+  const [min, setMin] = useState(existing?.min_candidates ? String(existing.min_candidates) : '2');
   const [max, setMax] = useState(existing?.max_candidates ? String(existing.max_candidates) : '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   async function save() {
     setBusy(true); setError(null);
     const body = live ? { title, description: description || null, rule_text: ruleText.trim() || null }
-      : { title, description: description || null, rule_text: ruleText.trim() || null, seats: Number(seats) || 1, min_candidates: min ? Number(min) : null, max_candidates: max ? Number(max) : null };
+      : { title, description: description || null, rule_text: ruleText.trim() || null, seats: Number(seats) || 1, min_candidates: min && Number(min) !== 2 ? Number(min) : null, max_candidates: max ? Number(max) : null };
     try {
       if (existing) await api('PATCH', `/api/campaigns/${c.id}/positions/${existing.id}`, body);
       else await api('POST', `/api/campaigns/${c.id}/positions`, body);
@@ -54,11 +58,14 @@ function PositionDialog({ c, existing, live, onDone, onCancel }: { c: CampaignDe
         <label>Description<span className="field-helper">Optional.</span><textarea rows={2} value={description} onChange={(e) => setDescription(e.target.value)} maxLength={2000} /></label>
         <label>Who can stand<span className="field-helper">Optional, up to 200 characters, for example “Must be from the HR Department”. Voters see it under the title. It is information only: it does not stop anyone from voting; you apply it when you accept nominations.</span><input value={ruleText} onChange={(e) => setRuleText(e.target.value)} maxLength={200} /></label>
         {!live && (
-          <div className="field-grid">
-            <label>Seats<span className="field-helper">How many candidates each voter must pick (1 for a single winner). A voter picks exactly this many, and the candidates with the most votes win the seats.</span><input type="number" min={1} max={50} value={seats} onChange={(e) => setSeats(e.target.value)} /></label>
-            <label>Fewest candidates<span className="field-helper">Optional. Default 2.</span><input type="number" min={1} max={500} value={min} onChange={(e) => setMin(e.target.value)} /></label>
-            <label>Most candidates<span className="field-helper">Optional.</span><input type="number" min={1} max={500} value={max} onChange={(e) => setMax(e.target.value)} /></label>
-          </div>
+          <>
+            <div className="field-grid">
+              <label>Number of winners<span className="field-helper">How many seats this position fills. Each voter picks exactly this many candidates.</span><input type="number" min={1} max={50} value={seats} onChange={(e) => setSeats(e.target.value)} /></label>
+              <label>Minimum candidates to start<span className="field-helper">Default 2. Approved candidates only.</span><input type="number" min={1} max={500} value={min} onChange={(e) => setMin(e.target.value)} /></label>
+              <label>Maximum candidates<span className="field-helper">Optional.</span><input type="number" min={1} max={500} value={max} onChange={(e) => setMax(e.target.value)} /></label>
+            </div>
+            <p className="position-summary-line" role="status">{positionRuleSummary(Number(seats) || 1, Number(min) || 2, max ? Number(max) : null)}</p>
+          </>
         )}
         {live && <p className="field-helper">Voting is open: only the title, description and eligibility text can change. The change is recorded and shown to voters.</p>}
         <ErrorBox message={error} />
@@ -141,29 +148,26 @@ function InvitePanel({ c, p, reload }: { c: CampaignDetail; p: Position; reload:
   const qr = `/api/campaigns/${c.id}/positions/${p.id}/invite.png`;
   return (
     <div className="invite-panel">
-      <h4>Candidate nominations</h4>
       {!p.invite_url
         ? (
           <>
             <p className="field-helper">Candidates apply themselves: they open a link, sign in with Microsoft and fill in their own profile. You then approve or reject each one. The link stops working when voting starts{c.nominations_close_at ? ` (or ${fmtDate(c.nominations_close_at)})` : ''}.</p>
-            <button className="btn btn-primary btn-sm" disabled={busy} onClick={() => void run(() => api('POST', `/api/campaigns/${c.id}/positions/${p.id}/invite`))}>Invite candidates</button>
+            <button className="btn btn-primary btn-44" disabled={busy} onClick={() => void run(() => api('POST', `/api/campaigns/${c.id}/positions/${p.id}/invite`))}>Invite candidates</button>
           </>
         )
         : (
           <>
+            <label htmlFor={`invite-${p.id}`} className="invite-label">Share this nomination link</label>
             <div className="invite-row">
-              <label className="grow">Nomination link for {p.title}<input readOnly value={p.invite_url} onFocus={(e) => e.currentTarget.select()} /></label>
-              <button className="btn btn-secondary btn-sm" onClick={() => void copy()}>{copied ? 'Copied' : 'Copy link'}</button>
+              <input id={`invite-${p.id}`} readOnly value={p.invite_url} onFocus={(e) => e.currentTarget.select()} />
+              <button className="btn btn-primary btn-44" onClick={() => void copy()}>{copied ? 'Copied' : 'Copy link'}</button>
+              <a className="btn btn-secondary btn-44" href={`${qr}?download=1`} download aria-label={`Download QR code for the ${p.title} nomination link`}><Icon name="download" /> Download QR</a>
             </div>
-            <div className="invite-qr">
-              <img src={qr} alt={`QR code for the ${p.title} nomination link`} width={160} height={160} />
-              <div className="stack">
-                <a className="btn btn-secondary btn-sm" href={`${qr}?download=1`} download><Icon name="download" /> Download QR code</a>
-                <button className="btn btn-secondary btn-sm" disabled={busy} onClick={() => void run(() => api('PATCH', `/api/campaigns/${c.id}/positions/${p.id}`, { status: p.status === 'open' ? 'closed' : 'open' }))}>
-                  {p.status === 'open' ? 'Close nominations' : 'Reopen nominations'}
-                </button>
-                <button className="btn btn-secondary btn-sm" disabled={busy} onClick={() => void run(() => api('DELETE', `/api/campaigns/${c.id}/positions/${p.id}/invite`))}>Turn the link off</button>
-              </div>
+            <div className="invite-more">
+              <button className="btn-text" disabled={busy} onClick={() => void run(() => api('PATCH', `/api/campaigns/${c.id}/positions/${p.id}`, { status: p.status === 'open' ? 'closed' : 'open' }))}>
+                {p.status === 'open' ? 'Close nominations' : 'Reopen nominations'}
+              </button>
+              <button className="btn-text" disabled={busy} onClick={() => void run(() => api('DELETE', `/api/campaigns/${c.id}/positions/${p.id}/invite`))}>Turn the link off</button>
             </div>
           </>
         )}
@@ -193,16 +197,21 @@ function PositionDetail({ c, p, reload, editable, canEditPosition }: { c: Campai
 
   return (
     <section className="position-detail" aria-label={`${p.title} details`}>
-      <h3>{p.title}</h3>
-      {p.description && <p className="muted">{p.description}</p>}
-      <p className="muted small">{p.counts.approved} approved{p.required > 2 || p.min_candidates ? ` (needs at least ${p.required})` : ' (needs at least 2)'}{p.max_candidates ? ` · at most ${p.max_candidates}` : ''} · {p.seats} seat{p.seats === 1 ? '' : 's'}</p>
+      {p.description && <p className="prow-desc">{p.description}</p>}
+      {p.rule_text && <p className="rule-text"><Icon name="info" size={16} /> <span>{p.rule_text}</span></p>}
       <InvitePanel c={c} p={p} reload={refresh} />
       <ErrorBox message={error} />
       <div className="section-title"><h4>Candidates</h4>
-        {editable && !editing && <div className="section-actions"><button className="btn btn-secondary btn-sm" onClick={() => setEditing('new')}>+ Add a candidate myself</button></div>}
+        {editable && !editing && list && list.length > 0 && <div className="section-actions"><button className="btn btn-secondary btn-44" onClick={() => setEditing('new')}>+ Add candidate</button></div>}
       </div>
       {!list && !error && <Spinner />}
-      {list && list.length === 0 && <p className="muted">No candidates yet. Send the nomination link, or add one yourself.</p>}
+      {list && list.length === 0 && (
+        <div className="empty-box">
+          <strong>No nominations yet</strong>
+          <p>Share the link above, or add a candidate yourself. You need at least {p.required} approved to start the vote.</p>
+          {editable && !editing && <button className="btn btn-secondary btn-44" onClick={() => setEditing('new')}>+ Add candidate</button>}
+        </div>
+      )}
       {list && list.length > 0 && (
         <ul className="cand-list">
           {list.map((x) => (
@@ -229,7 +238,6 @@ function PositionDetail({ c, p, reload, editable, canEditPosition }: { c: Campai
         </ul>
       )}
       {editing && editable && <CandidateForm key={editing === 'new' ? 'new' : editing.id} c={c} position={p} existing={editing === 'new' ? undefined : editing} onDone={() => { setEditing(null); void refresh(); }} onCancel={() => setEditing(null)} />}
-      {canEditPosition && <p className="field-helper">Pending or rejected profiles never appear on the ballot, and do not count towards the candidates needed to start.</p>}
 
       {rejecting && (
         <Dialog title={`Reject ${rejecting.name}?`} confirmLabel="Reject profile" danger busy={busy} confirmDisabled={why.trim().length < 5}
@@ -249,11 +257,53 @@ function PositionDetail({ c, p, reload, editable, canEditPosition }: { c: Campai
   );
 }
 
-// ---- the grid ---------------------------------------------------------------------------------------------------------------------
+// ---- the rows ---------------------------------------------------------------------------------------------------------------------
+
+/** The "⋯" menu of a position row: Edit, Move up / down (hidden at the ends), and Remove (red, confirmed in a dialog). */
+function RowMenu({ title, items }: { title: string; items: { key: string; label: string; danger?: boolean; onSelect: () => void }[] }) {
+  const [open, setOpen] = useState(false);
+  const btn = useRef<HTMLButtonElement>(null);
+  const menu = useRef<HTMLDivElement>(null);
+  const id = useId();
+  useEffect(() => {
+    if (!open) return;
+    (menu.current?.querySelector('[role="menuitem"]') as HTMLElement | null)?.focus();
+    const away = (e: MouseEvent) => { if (!menu.current?.contains(e.target as Node) && !btn.current?.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener('mousedown', away);
+    return () => document.removeEventListener('mousedown', away);
+  }, [open]);
+  const close = () => { setOpen(false); btn.current?.focus(); };
+  function onKey(e: React.KeyboardEvent) {
+    const els = [...(menu.current?.querySelectorAll('[role="menuitem"]') ?? [])] as HTMLElement[];
+    const i = els.indexOf(document.activeElement as HTMLElement);
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); }
+    else if (e.key === 'ArrowDown') { e.preventDefault(); els[(i + 1) % els.length]?.focus(); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); els[(i - 1 + els.length) % els.length]?.focus(); }
+    else if (e.key === 'Tab') setOpen(false);
+  }
+  if (items.length === 0) return null;
+  return (
+    <div className="row-menu-wrap">
+      <button ref={btn} type="button" className="icon-btn" aria-label={`More actions for ${title}`} aria-haspopup="menu" aria-expanded={open} aria-controls={open ? id : undefined} onClick={() => setOpen(!open)}>
+        <span aria-hidden="true">⋯</span>
+      </button>
+      {open && (
+        <div ref={menu} id={id} role="menu" aria-label={`Actions for ${title}`} className="row-menu" onKeyDown={onKey}>
+          {items.map((it, i) => (
+            <div key={it.key} role="none">
+              {it.danger && i > 0 && <div className="row-menu-divider" role="separator" />}
+              <button type="button" role="menuitem" className={`row-menu-item${it.danger ? ' is-danger' : ''}`} onClick={() => { setOpen(false); it.onSelect(); }}>{it.label}</button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function PositionsTab({ c, reload }: { c: CampaignDetail; reload: () => Promise<void> }) {
   const positions = c.positions ?? [];
-  const [selected, setSelected] = useState<string | null>(null);
+  const [openId, setOpenId] = useState<string | null>(null);
   const [dialog, setDialog] = useState<'add' | Position | null>(null);
   const [removing, setRemoving] = useState<Position | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -261,7 +311,6 @@ export function PositionsTab({ c, reload }: { c: CampaignDetail; reload: () => P
   const draft = c.status === 'draft';
   const live = c.status === 'open' && !!c.allow_edits_after_start;
   const candidatesEditable = draft || (live && c.turnout === 0);
-  const sel = positions.find((p) => p.id === selected) ?? null;
 
   async function move(p: Position, dir: -1 | 1) {
     const i = positions.findIndex((x) => x.id === p.id);
@@ -273,47 +322,60 @@ export function PositionsTab({ c, reload }: { c: CampaignDetail; reload: () => P
   async function remove() {
     if (!removing) return;
     setBusy(true); setError(null);
-    try { await api('DELETE', `/api/campaigns/${c.id}/positions/${removing.id}`); if (selected === removing.id) setSelected(null); setRemoving(null); await reload(); }
+    try { await api('DELETE', `/api/campaigns/${c.id}/positions/${removing.id}`); if (openId === removing.id) setOpenId(null); setRemoving(null); await reload(); }
     catch (e) { setError((e as Error).message); setRemoving(null); } finally { setBusy(false); }
   }
-  const blocker = draft ? startBlocker(positions) : null;
 
   return (
     <>
-      <SectionTitle icon="users" actions={draft ? <button className="btn btn-secondary btn-sm" onClick={() => setDialog('add')}>+ Add a position</button> : undefined}>Positions</SectionTitle>
-      {c.allow_abstain && <p className="muted small">Every position ends with an “Abstain (none of the above)” option. It is not a candidate and never counts towards the 2 needed.</p>}
-      {draft && <p className="field-helper">Voters see one block per position. To start, every position needs at least 2 approved candidates (or its own minimum).</p>}
+      <SectionTitle icon="users" actions={draft ? <button className="btn btn-secondary btn-44" onClick={() => setDialog('add')}>+ Add a position</button> : undefined}>Positions</SectionTitle>
+      <p className="field-helper">Voters see one block per position, in this order.</p>
+      {c.allow_abstain && <p className="muted small">Every position ends with an “Abstain (none of the above)” option. It is not a candidate and never counts towards the minimum.</p>}
       <ErrorBox message={error} />
       {positions.length === 0 && <p className="muted">No positions yet. Add the first one, for example “Press Secretary”.</p>}
-      <ul className="position-grid admin-position-grid" aria-label="Positions">
-        {positions.map((p, i) => (
-          <li key={p.id}>
-            <article className={`position-card${selected === p.id ? ' position-selected' : ''}${draft && needsMore(p) ? ' position-short' : ''}`} aria-label={p.title}>
-              <h3 className="position-title" id={`pos-h-${p.id}`}>{p.title}</h3>
-              <div className="position-chips">
-                <span className={`chip ${needsMore(p) && draft ? 'chip-draft' : 'chip-open'}`}>{p.counts.approved} approved</span>
-                {p.counts.submitted > 0 && <span className="chip chip-outline">{p.counts.submitted} to review</span>}
-                <span className="chip chip-outline">{NOMINATION_LABEL[p.nomination_state]}</span>
-              </div>
-              {draft && needsMore(p) && <p className="small position-need">Needs at least {p.required} approved</p>}
-              {p.result && (
-                <p className="small position-outcome">{p.result.turnout} voted · {p.result.tie ? <>Tie: {p.result.tie.join(' and ')}</> : p.result.winners.length ? <>Winner: <strong>{p.result.winners.join(', ')}</strong></> : 'No winner'}</p>
-              )}
-              <div className="position-actions">
-                <button className="btn btn-secondary btn-sm" aria-pressed={selected === p.id} aria-describedby={`pos-h-${p.id}`} onClick={() => setSelected(selected === p.id ? null : p.id)}>{selected === p.id ? 'Hide' : draft ? 'Manage' : 'View'}</button>
-                {(draft || live) && <button className="btn-text" onClick={() => setDialog(p)} aria-label={`Edit ${p.title}`}>Edit</button>}
-                {/* "Move up" / "Move down" as the tooltip and the accessible name; the card's heading is the description, so a screen reader
-                    hears "Move up, Press Secretary". */}
-                {draft && <button className="btn-text" disabled={busy || i === 0} onClick={() => void move(p, -1)} title="Move up" aria-label="Move up" aria-describedby={`pos-h-${p.id}`}>↑</button>}
-                {draft && <button className="btn-text" disabled={busy || i === positions.length - 1} onClick={() => void move(p, 1)} title="Move down" aria-label="Move down" aria-describedby={`pos-h-${p.id}`}>↓</button>}
-                {draft && <button className="btn-text btn-text-danger" onClick={() => setRemoving(p)} aria-label={`Remove ${p.title}`}>Remove</button>}
-              </div>
-            </article>
-          </li>
-        ))}
+      <ul className="prow-list" aria-label="Positions">
+        {positions.map((p, i) => {
+          const open = openId === p.id;
+          const short = Math.max(0, p.required - p.counts.approved);
+          const pct = Math.min(100, Math.round((p.counts.approved / Math.max(1, p.required)) * 100));
+          const menuItems = [
+            ...((draft || live) ? [{ key: 'edit', label: 'Edit position', onSelect: () => setDialog(p) }] : []),
+            ...(draft && i > 0 ? [{ key: 'up', label: 'Move up', onSelect: () => void move(p, -1) }] : []),
+            ...(draft && i < positions.length - 1 ? [{ key: 'down', label: 'Move down', onSelect: () => void move(p, 1) }] : []),
+            ...(draft ? [{ key: 'remove', label: 'Remove position…', danger: true, onSelect: () => setRemoving(p) }] : []),
+          ];
+          return (
+            <li key={p.id}>
+              <article className={`prow${open ? ' is-open' : ''}`} aria-label={p.title}>
+                <div className="prow-head">
+                  <div className="prow-main">
+                    <div className="prow-title-line">
+                      <h3 className="prow-title" id={`pos-h-${p.id}`}>{p.title}</h3>
+                      {draft && (short === 0
+                        ? <span className="chip-status chip-ready"><span aria-hidden="true">✓</span> Ready</span>
+                        : <span className="chip-status chip-problem"><Icon name="alert" size={14} /> Needs {short} more</span>)}
+                      <span className="chip-neutral">{NOMINATION_LABEL[p.nomination_state]}</span>
+                      {p.counts.submitted > 0 && <span className="chip-neutral">{p.counts.submitted} to review</span>}
+                    </div>
+                    <p className="prow-summary">{p.counts.approved} of {p.required} approved{p.max_candidates ? ` · max ${p.max_candidates}` : ''} · {winnersLabel(p.seats)}</p>
+                    <div className="prow-bar" role="progressbar" aria-label={`${p.title}: ${p.counts.approved} of ${p.required} approved`} aria-valuemin={0} aria-valuemax={p.required} aria-valuenow={Math.min(p.counts.approved, p.required)}><span style={{ width: `${pct}%` }} /></div>
+                    {p.result && (
+                      <p className="small position-outcome">{p.result.turnout} voted · {p.result.tie ? <>Tie: {p.result.tie.join(' and ')}</> : p.result.winners.length ? <>{p.seats > 1 ? 'Winners' : 'Winner'}: <strong>{p.result.winners.join(', ')}</strong></> : 'No winner'}</p>
+                    )}
+                  </div>
+                  <div className="prow-actions">
+                    <button type="button" className="btn btn-secondary btn-44" aria-expanded={open} aria-controls={`pos-body-${p.id}`} aria-describedby={`pos-h-${p.id}`} onClick={() => setOpenId(open ? null : p.id)}>
+                      {open ? <>Close <span aria-hidden="true">˄</span></> : draft ? 'Manage candidates' : 'View candidates'}
+                    </button>
+                    <RowMenu title={p.title} items={menuItems} />
+                  </div>
+                </div>
+                {open && <div className="prow-body" id={`pos-body-${p.id}`}><PositionDetail key={p.id} c={c} p={p} reload={reload} editable={candidatesEditable} canEditPosition={draft} /></div>}
+              </article>
+            </li>
+          );
+        })}
       </ul>
-      {blocker && positions.length > 0 && <p className="field-helper" role="note">{blocker}</p>}
-      {sel && <PositionDetail key={sel.id} c={c} p={sel} reload={reload} editable={candidatesEditable} canEditPosition={draft} />}
 
       {dialog && <PositionDialog c={c} existing={dialog === 'add' ? undefined : dialog} live={live && !draft} onDone={() => { setDialog(null); void reload(); }} onCancel={() => setDialog(null)} />}
       {removing && (
@@ -322,6 +384,25 @@ export function PositionsTab({ c, reload }: { c: CampaignDetail; reload: () => P
         </Dialog>
       )}
     </>
+  );
+}
+
+/** "Ready to start?": one line per position, green when it has enough approved candidates, red when not. The only place the blocker is spelled out. */
+export function StartChecklist({ positions }: { positions: Position[] }) {
+  if (positions.length === 0) return <ul className="checklist"><li className="is-bad"><span className="check-dot" aria-hidden="true">✕</span><span>Add at least one position</span></li></ul>;
+  return (
+    <ul className="checklist" aria-label="Positions ready to start">
+      {positions.map((p) => {
+        const ok = !needsMore(p);
+        const n = p.counts.approved;
+        return (
+          <li key={p.id} className={ok ? 'is-ok' : 'is-bad'}>
+            <span className="check-dot" aria-hidden="true">{ok ? '✓' : '✕'}</span>
+            <span><strong>{p.title}</strong> {ok ? `${n} candidate${n === 1 ? '' : 's'} approved` : `needs ${p.required - n} more approved`}</span>
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 

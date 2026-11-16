@@ -294,20 +294,30 @@ const nominations = [
 const adminPage = () => { session(ADMIN); return app(`/admin/c/${ID}`); };
 
 describe('the admin\'s position blocks', () => {
-  it('shows a block per position with approved counts, review counts and the nomination status, and says what blocks the start', async () => {
+  it('shows a row per position with a Ready / Needs N more chip, the summary line, the review count and the nomination status; the Actions panel says what blocks the start, once', async () => {
     table[`GET /api/campaigns/${ID}`] = adminCampaign();
     adminPage();
     const grid = await screen.findByRole('list', { name: 'Positions' });
     const press = within(grid).getByRole('article', { name: 'Press Secretary' });
-    expect(within(press).getByText('2 approved')).toBeTruthy();
+    expect(within(press).getByText('Ready')).toBeTruthy();
+    expect(within(press).getByText('2 of 2 approved · 1 winner')).toBeTruthy();
     expect(within(press).getByText('1 to review')).toBeTruthy();
     expect(within(press).getByText('Nominations open')).toBeTruthy();
     const fin = within(grid).getByRole('article', { name: 'Finance Officer' });
-    expect(within(fin).getByText('1 approved')).toBeTruthy();
+    expect(within(fin).getByText('Needs 1 more')).toBeTruthy();
+    expect(within(fin).getByText('1 of 2 approved · 1 winner')).toBeTruthy();
     expect(within(fin).getByText('No nomination link yet')).toBeTruthy();
-    expect(within(fin).getByText('Needs at least 2 approved')).toBeTruthy();
-    expect(screen.getAllByText(/Still short: Finance Officer/).length).toBeGreaterThan(0);
+    expect(within(fin).getByRole('progressbar').getAttribute('aria-valuenow')).toBe('1');
+    expect((within(fin).getByRole('progressbar').firstElementChild as HTMLElement).style.width).toBe('50%');
+    // "Ready to start?" is the one place the blocker is spelled out: a line per position
+    const panel = screen.getByRole('complementary');
+    expect(within(panel).getByRole('heading', { name: 'Ready to start?' })).toBeTruthy();
+    expect(within(panel).getByText(/Press Secretary/).closest('li')?.textContent).toContain('2 candidates approved');
+    expect(within(panel).getByText(/Finance Officer/).closest('li')?.textContent).toContain('needs 1 more approved');
+    expect(screen.queryByText(/Still short/)).toBeNull();                                               // the three repeated warnings are gone
+    expect(screen.queryByText('Needs at least 2 approved')).toBeNull();
     expect((screen.getByRole('button', { name: 'Start voting' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText("Starting locks the campaign: details, positions, candidates and voters can't be changed after.")).toBeTruthy();
   });
 
   it('lets the start through once every position has enough approved candidates', async () => {
@@ -328,18 +338,22 @@ describe('the admin\'s position blocks', () => {
     await user.click(within(dlg).getByRole('button', { name: 'Add position' }));
     await waitFor(() => expect(calls.find((c) => c.method === 'POST' && c.url === `/api/campaigns/${ID}/positions`)?.body).toMatchObject({ title: 'Treasurer', seats: 1, min_candidates: null, max_candidates: null }));
 
-    const pressCard = within(screen.getByRole('list', { name: 'Positions' })).getByRole('article', { name: 'Press Secretary' });
-    await user.click(within(pressCard).getByRole('button', { name: 'Move down' }));
+    // Press Secretary is first: its menu has no "Move up"; Finance Officer is last: no "Move down"
+    await user.click(screen.getByRole('button', { name: 'More actions for Press Secretary' }));
+    expect(screen.queryByRole('menuitem', { name: 'Move up' })).toBeNull();
+    await user.click(screen.getByRole('menuitem', { name: 'Move down' }));
     await waitFor(() => expect(calls.find((c) => c.url.endsWith('/positions/reorder'))?.body).toEqual({ ids: [PID[1], PID[0]] }));
-    expect((within(pressCard).getByRole('button', { name: 'Move up' }) as HTMLButtonElement).disabled).toBe(true);
-
-    await user.click(screen.getByRole('button', { name: 'Edit Finance Officer' }));
+    await user.click(screen.getByRole('button', { name: 'More actions for Finance Officer' }));
+    expect(screen.queryByRole('menuitem', { name: 'Move down' })).toBeNull();
+    expect(screen.getByRole('menuitem', { name: 'Move up' })).toBeTruthy();
+    await user.click(screen.getByRole('menuitem', { name: 'Edit position' }));
     const edit = await screen.findByRole('dialog');
     await user.clear(within(edit).getByLabelText(/^Title/)); await user.type(within(edit).getByLabelText(/^Title/), 'Finance Lead');
     await user.click(within(edit).getByRole('button', { name: 'Save position' }));
     await waitFor(() => expect(calls.find((c) => c.method === 'PATCH' && c.url === `/api/campaigns/${ID}/positions/${PID[1]}`)?.body).toMatchObject({ title: 'Finance Lead' }));
 
-    await user.click(screen.getByRole('button', { name: 'Remove Finance Officer' }));
+    await user.click(screen.getByRole('button', { name: 'More actions for Finance Officer' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Remove position…' }));
     await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Remove position' }));
     await waitFor(() => expect(calls.some((c) => c.method === 'DELETE' && c.url === `/api/campaigns/${ID}/positions/${PID[1]}`)).toBe(true));
   });
@@ -349,7 +363,7 @@ describe('the admin\'s position blocks', () => {
     table[`GET /api/campaigns/${ID}/positions/p1/nominations`] = { nominations };
     const user = userEvent.setup();
     adminPage();
-    await user.click((await screen.findAllByRole('button', { name: 'Manage' }))[0]);
+    await user.click((await screen.findAllByRole('button', { name: 'Manage candidates' }))[0]);
     const detail = await screen.findByRole('region', { name: 'Press Secretary details' });
     expect(await within(detail).findByText(/applied by Bob B \(bob@x\.test\)/)).toBeTruthy();
     expect(within(detail).getByText('Waiting for review')).toBeTruthy();
@@ -371,18 +385,20 @@ describe('the admin\'s position blocks', () => {
     table[`GET /api/campaigns/${ID}/positions/p2/nominations`] = { nominations: [] };
     const user = userEvent.setup();
     adminPage();
-    const buttons = await screen.findAllByRole('button', { name: 'Manage' });
+    const buttons = await screen.findAllByRole('button', { name: 'Manage candidates' });
     await user.click(buttons[1]);
     await user.click(await screen.findByRole('button', { name: 'Invite candidates' }));
     await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.url === `/api/campaigns/${ID}/positions/p2/invite`)).toBe(true));
-    // the first position already has a link: its panel shows the link and the QR image
+    // the first position already has a link: its panel shows the link, Copy link and Download QR
     cleanup();
     adminPage();
-    await user.click((await screen.findAllByRole('button', { name: 'Manage' }))[0]);
+    await user.click((await screen.findAllByRole('button', { name: 'Manage candidates' }))[0]);
     table[`GET /api/campaigns/${ID}/positions/p1/nominations`] = { nominations };
-    const link = (await screen.findByLabelText(/Nomination link for Press Secretary/)) as HTMLInputElement;
+    const link = (await screen.findByLabelText('Share this nomination link')) as HTMLInputElement;
     expect(link.value).toBe(`http://localhost/n/${NTOKEN}`);
-    expect((screen.getByAltText('QR code for the Press Secretary nomination link') as HTMLImageElement).getAttribute('src')).toBe(`/api/campaigns/${ID}/positions/p1/invite.png`);
+    expect(link.readOnly).toBe(true);
+    expect(screen.getByRole('button', { name: 'Copy link' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: /Download QR/ }).getAttribute('href')).toBe(`/api/campaigns/${ID}/positions/p1/invite.png?download=1`);
     await user.click(screen.getByRole('button', { name: 'Turn the link off' }));
     await waitFor(() => expect(calls.some((c) => c.method === 'DELETE' && c.url === `/api/campaigns/${ID}/positions/p1/invite`)).toBe(true));
   });
@@ -473,7 +489,7 @@ describe('the new screens have no axe violations (WCAG 2.1 A and AA, plus best p
     table[`GET /api/campaigns/${ID}/positions/p1/nominations`] = { nominations };
     const { container } = adminPage();
     const user = userEvent.setup();
-    await user.click((await screen.findAllByRole('button', { name: 'Manage' }))[0]);
+    await user.click((await screen.findAllByRole('button', { name: 'Manage candidates' }))[0]);
     await screen.findByText(/applied by Bob B/);
     expect(await audit(container)).toEqual([]);
     await user.click(screen.getByRole('button', { name: '+ Add a position' }));
@@ -490,6 +506,176 @@ describe('the new screens have no axe violations (WCAG 2.1 A and AA, plus best p
       turnout: { votes: 6, eligible: 20 }, group_by_region: true,
       positions: [{ id: 'p1', title: 'Press Secretary', turnout: { votes: 6 }, tie: null, winners: [{ id: 'a', name: 'Alice', votes: 4 }], candidates: [{ id: 'a', name: 'Alice', votes: 4, region: 'Khomas' }, { id: 'b', name: 'Bob', votes: 2, region: 'Erongo' }] }],
     }} />);
+    expect(await audit(container)).toEqual([]);
+  });
+});
+
+
+// ---- the admin positions screen (docs/ballot-screen-redesign.md, "Admin — campaign positions screen") --------------------------------------------------
+describe('the admin positions screen', () => {
+  it('a row has one "Manage candidates" button and a "⋯" menu (role=menu) that opens with Edit, Move up / down and a red Remove; Escape closes it and returns focus', async () => {
+    table[`GET /api/campaigns/${ID}`] = adminCampaign({ positions: [adminPos(0, 'Press Secretary'), adminPos(1, 'Finance Officer'), adminPos(2, 'Treasurer')] });
+    const user = userEvent.setup();
+    adminPage();
+    await screen.findByRole('list', { name: 'Positions' });
+    const more = screen.getByRole('button', { name: 'More actions for Finance Officer' });
+    expect(more.getAttribute('aria-haspopup')).toBe('menu'); expect(more.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByRole('menu')).toBeNull();
+    await user.click(more);
+    const menu = screen.getByRole('menu');
+    expect(more.getAttribute('aria-expanded')).toBe('true');
+    expect(within(menu).getAllByRole('menuitem').map((x) => x.textContent)).toEqual(['Edit position', 'Move up', 'Move down', 'Remove position…']);   // a middle row: both moves
+    expect(within(menu).getByRole('menuitem', { name: 'Remove position…' }).className).toContain('is-danger');
+    expect(document.activeElement).toBe(within(menu).getByRole('menuitem', { name: 'Edit position' }));   // focus moves into the menu
+    await user.keyboard('{ArrowDown}');
+    expect(document.activeElement).toBe(within(menu).getByRole('menuitem', { name: 'Move up' }));
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(document.activeElement).toBe(more);
+    // the first row has no Move up, the last no Move down
+    await user.click(screen.getByRole('button', { name: 'More actions for Press Secretary' }));
+    expect(within(screen.getByRole('menu')).getAllByRole('menuitem').map((x) => x.textContent)).toEqual(['Edit position', 'Move down', 'Remove position…']);
+    await user.keyboard('{Escape}');
+    await user.click(screen.getByRole('button', { name: 'More actions for Treasurer' }));
+    expect(within(screen.getByRole('menu')).getAllByRole('menuitem').map((x) => x.textContent)).toEqual(['Edit position', 'Move up', 'Remove position…']);
+    // clicking elsewhere closes it too
+    await user.click(document.body);
+    expect(screen.queryByRole('menu')).toBeNull();
+  });
+
+  it('"Remove position…" asks first and removes nothing until it is confirmed; Cancel keeps the position', async () => {
+    table[`GET /api/campaigns/${ID}`] = adminCampaign();
+    const user = userEvent.setup();
+    adminPage();
+    await user.click(await screen.findByRole('button', { name: 'More actions for Finance Officer' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Remove position…' }));
+    const dlg = await screen.findByRole('dialog', { name: 'Remove Finance Officer?' });
+    expect(calls.some((c) => c.method === 'DELETE')).toBe(false);
+    await user.click(within(dlg).getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(calls.some((c) => c.method === 'DELETE')).toBe(false);
+  });
+
+  it('the open position expands under its own row: the button reads "Close ˄" with aria-expanded, the row gets the grey header and never the voter\'s navy selected border', async () => {
+    table[`GET /api/campaigns/${ID}`] = adminCampaign();
+    table[`GET /api/campaigns/${ID}/positions/p1/nominations`] = { nominations };
+    const user = userEvent.setup();
+    adminPage();
+    const press = (await screen.findByRole('article', { name: 'Press Secretary' }));
+    const btn = within(press).getByRole('button', { name: /Manage candidates/ });
+    expect(btn.getAttribute('aria-expanded')).toBe('false');
+    expect(press.querySelector('.prow-body')).toBeNull();
+    await user.click(btn);
+    const close = within(press).getByRole('button', { name: 'Close' });
+    expect(close.textContent).toBe('Close ˄');
+    expect(close.getAttribute('aria-expanded')).toBe('true');
+    expect(close.getAttribute('aria-controls')).toBe(press.querySelector('.prow-body')?.id);
+    expect(press.classList.contains('is-open')).toBe(true);
+    expect(press.classList.contains('position-selected')).toBe(false);                                  // not the candidate "selected" look
+    const body = press.querySelector('.prow-body') as HTMLElement;                                      // inside the SAME article, under its row
+    expect(press.contains(body)).toBe(true);
+    expect(within(body).getByLabelText('Share this nomination link')).toBeTruthy();
+    expect(await within(body).findByText('Alice')).toBeTruthy();                                        // the candidates
+    // the other row is untouched
+    expect(within(screen.getByRole('article', { name: 'Finance Officer' })).queryByRole('button', { name: 'Close' })).toBeNull();
+    await user.click(close);
+    expect(press.querySelector('.prow-body')).toBeNull();
+    expect(within(press).getByRole('button', { name: 'Manage candidates' }).getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('an open position with no nominations shows the empty state with the minimum and an "+ Add candidate" button', async () => {
+    table[`GET /api/campaigns/${ID}`] = adminCampaign();
+    table[`GET /api/campaigns/${ID}/positions/p2/nominations`] = { nominations: [] };
+    const user = userEvent.setup();
+    adminPage();
+    await user.click((await screen.findAllByRole('button', { name: 'Manage candidates' }))[1]);
+    expect(await screen.findByText('No nominations yet')).toBeTruthy();
+    expect(screen.getByText('Share the link above, or add a candidate yourself. You need at least 2 approved to start the vote.')).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: '+ Add candidate' }));
+    expect(await screen.findByRole('form', { name: 'Add a candidate for Finance Officer' })).toBeTruthy();
+  });
+
+  it('the Actions panel: every position is a line (green tick / red cross); "Start voting" waits for all of them; "Delete draft…" is a small red text button with a confirm dialog', async () => {
+    table[`GET /api/campaigns/${ID}`] = adminCampaign();
+    const user = userEvent.setup();
+    adminPage();
+    const panel = await screen.findByRole('complementary');
+    const lines = within(panel).getAllByRole('listitem');
+    expect(lines.map((l) => l.className)).toEqual(['is-ok', 'is-bad']);
+    expect(within(panel).getByRole('link', { name: 'Edit campaign' })).toBeTruthy();
+    const del = within(panel).getByRole('button', { name: 'Delete draft…' });
+    expect(del.className).toBe('delete-draft');                                                           // not a bordered "Edit campaign"-weight button
+    await user.click(del);
+    const dlg = await screen.findByRole('dialog', { name: 'Delete this draft?' });
+    expect(calls.some((c) => c.method === 'DELETE')).toBe(false);
+    await user.click(within(dlg).getByRole('button', { name: 'Cancel' }));
+    expect(calls.some((c) => c.method === 'DELETE')).toBe(false);
+  });
+
+  it('once every position is ready the checklist is all green and Start voting opens', async () => {
+    table[`GET /api/campaigns/${ID}`] = adminCampaign({ positions: [adminPos(0, 'Press Secretary'), adminPos(1, 'Finance Officer', { counts: { approved: 3, submitted: 0, rejected: 0, withdrawn: 0, invited: 0 }, seats: 2, max_candidates: 4 })] });
+    adminPage();
+    const panel = await screen.findByRole('complementary');
+    expect(within(panel).getAllByRole('listitem').map((l) => l.className)).toEqual(['is-ok', 'is-ok']);
+    expect((within(panel).getByRole('button', { name: 'Start voting' }) as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.getByText('3 of 2 approved · max 4 · 2 winners')).toBeTruthy();
+    expect((screen.getByRole('article', { name: 'Finance Officer' }).querySelector('.prow-bar span') as HTMLElement).style.width).toBe('100%');   // capped at 100%
+  });
+
+  it('Add / Edit position: "Number of winners", "Minimum candidates to start" (default 2) and "Maximum candidates", a live summary line, and the eligibility text', async () => {
+    table[`GET /api/campaigns/${ID}`] = adminCampaign();
+    const user = userEvent.setup();
+    adminPage();
+    await user.click(await screen.findByRole('button', { name: '+ Add a position' }));
+    const dlg = await screen.findByRole('dialog');
+    expect((within(dlg).getByLabelText(/^Minimum candidates to start/) as HTMLInputElement).value).toBe('2');
+    expect(within(dlg).queryByLabelText(/^Seats/)).toBeNull(); expect(within(dlg).queryByLabelText(/^Fewest candidates/)).toBeNull(); expect(within(dlg).queryByLabelText(/^Most candidates/)).toBeNull();
+    expect(within(dlg).getByRole('status').textContent).toBe('1 winner, 2 or more candidates, voters pick 1.');
+    await user.type(within(dlg).getByLabelText(/^Title/), 'Additional Members');
+    await user.type(within(dlg).getByLabelText(/^Who can stand/), 'Must be from the HR Department');
+    const winners = within(dlg).getByLabelText(/^Number of winners/);
+    await user.clear(winners); await user.type(winners, '2');
+    const min = within(dlg).getByLabelText(/^Minimum candidates to start/);
+    await user.clear(min); await user.type(min, '3');
+    await user.type(within(dlg).getByLabelText(/^Maximum candidates/), '13');
+    expect(within(dlg).getByRole('status').textContent).toBe('2 winners, 3–13 candidates, voters pick 2.');
+    await user.click(within(dlg).getByRole('button', { name: 'Add position' }));
+    await waitFor(() => expect(calls.find((c) => c.method === 'POST' && c.url === `/api/campaigns/${ID}/positions`)?.body).toEqual({
+      title: 'Additional Members', description: null, rule_text: 'Must be from the HR Department', seats: 2, min_candidates: 3, max_candidates: 13 }));
+  });
+
+  it('the tabs say "Positions (n)" and the active tab is navy with a thicker underline', async () => {
+    table[`GET /api/campaigns/${ID}`] = adminCampaign();
+    adminPage();
+    expect(await screen.findByRole('tab', { name: /^Positions\s*\(?2\)?$/ })).toBeTruthy();
+  });
+});
+
+describe('the admin positions screen has no axe violations', () => {
+  it('collapsed, with a menu open, expanded (with candidates), the empty state, and the dialogs', async () => {
+    table[`GET /api/campaigns/${ID}`] = adminCampaign();
+    table[`GET /api/campaigns/${ID}/positions/p1/nominations`] = { nominations };
+    table[`GET /api/campaigns/${ID}/positions/p2/nominations`] = { nominations: [] };
+    const user = userEvent.setup();
+    const { container } = adminPage();
+    await screen.findByRole('list', { name: 'Positions' });
+    expect(await audit(container)).toEqual([]);
+    await user.click(screen.getByRole('button', { name: 'More actions for Press Secretary' }));
+    expect(await audit(container)).toEqual([]);
+    await user.keyboard('{Escape}');
+    await user.click(screen.getAllByRole('button', { name: 'Manage candidates' })[0]);
+    await screen.findByText('Alice');
+    expect(await audit(container)).toEqual([]);
+    await user.click(screen.getAllByRole('button', { name: 'Manage candidates' })[0]);
+    await screen.findByText('No nominations yet');
+    expect(await audit(container)).toEqual([]);
+    await user.click(screen.getByRole('button', { name: 'More actions for Finance Officer' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Remove position…' }));
+    await screen.findByRole('dialog');
+    expect(await audit(container)).toEqual([]);
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    await user.click(screen.getByRole('button', { name: 'Delete draft…' }));
+    await screen.findByRole('dialog', { name: 'Delete this draft?' });
     expect(await audit(container)).toEqual([]);
   });
 });

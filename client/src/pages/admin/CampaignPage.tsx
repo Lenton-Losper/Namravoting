@@ -6,7 +6,7 @@ import { SharePanel } from '../../share';
 import { TeamTab } from './TeamTab';
 import { NotifyPanel } from './NotifyPanel';
 import { LateVoters } from './LateVoters';
-import { PositionsTab, SettingsTab, startBlocker } from './PositionsTab';
+import { PositionsTab, SettingsTab, StartChecklist, startBlocker } from './PositionsTab';
 import { BackLink, Dialog, ErrorBox, Field, NoticeList, quorumLine, PositionResults, ResultsChart, SectionTitle, Spinner, StatusBadge, Tabs, Thumb, TurnoutBar, initials } from '../../ui';
 
 type Tab = 'candidates' | 'eligibility' | 'settings' | 'results' | 'team';
@@ -264,16 +264,19 @@ function SideCard({ c, reload }: { c: CampaignDetail; reload: () => Promise<void
     <aside className="card card-pad side-card">
       {c.status === 'draft' ? (
         <>
-          <SectionTitle icon="flag">Actions</SectionTitle>
-          <p className="field-helper">{c.allow_edits_after_start
-            ? 'Starting opens the vote. Who can vote locks; the title, description and closing time stay editable, and candidates until the first vote is cast.'
-            : 'Starting opens the vote and locks the campaign. Details, positions, candidates, nominations and voters can no longer be changed.'}</p>
-          <div className="stack">
-            <button className="btn btn-primary" disabled={!!blockedReason} onClick={() => open('start')}>Start voting</button>
-            {blockedReason && <p className="field-helper" role="note">{blockedReason}</p>}
-            <Link className="btn btn-secondary" to={`/admin/c/${c.id}/edit`}>Edit campaign</Link>
-            {owner && <button className="btn btn-danger" onClick={() => open('deleteDraft')}>Delete draft</button>}
+          <h2 className="side-heading">Ready to start?</h2>
+          {c.positions
+            ? <StartChecklist positions={c.positions} />
+            : blockedReason && <p className="field-helper" role="note">{blockedReason}</p>}
+          {c.positions && blockedReason && !startBlocker(c.positions) && <p className="field-helper" role="note">{blockedReason}</p>}
+          <div className="stack side-start">
+            <button className="btn btn-primary btn-52" disabled={!!blockedReason} onClick={() => open('start')}>Start voting</button>
+            <p className="side-note">{c.allow_edits_after_start
+              ? 'Starting opens the vote. Who can vote locks; the title, description and closing time stay editable, and candidates until the first vote is cast.'
+              : "Starting locks the campaign: details, positions, candidates and voters can't be changed after."}</p>
+            <Link className="btn btn-secondary btn-48" to={`/admin/c/${c.id}/edit`}>Edit campaign</Link>
           </div>
+          {owner && <div className="side-divider"><button type="button" className="delete-draft" onClick={() => open('deleteDraft')}>Delete draft…</button></div>}
         </>
       ) : (
         <>
@@ -375,7 +378,7 @@ export function CampaignPage() {
   if (!c) return <Spinner />;
 
   return (
-    <>
+    <div className="admin-campaign">
       <BackLink to="/admin">Back to campaigns</BackLink>
       <section className="card card-accent head-card">
         <div className="head-inner">
@@ -419,6 +422,6 @@ export function CampaignPage() {
         </div>
         <SideCard c={c} reload={reload} />
       </div>
-    </>
+    </div>
   );
 }
