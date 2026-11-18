@@ -46,7 +46,9 @@ describe('writing matches (owner role, one transaction)', () => {
     expect(cols).toEqual(['active', 'email', 'employee_code', 'entra_oid', 'imported_at']);
     await setMembers([['NAM0001', true]]);
     await expect(ownerDb().query("UPDATE umoja_members SET entra_oid = $1, email = 'MIXED@namra.org.na'", [S1.oid])).rejects.toThrow(/umoja_members_email_lower/);
-    await expect(ownerDb().query("UPDATE umoja_members SET email = 'a@namra.org.na'")).rejects.toThrow(/umoja_members_email_needs_oid/);
+    // since migration 025 a member's address may be loaded before an account is matched (the member import); it is still unique
+    await ownerDb().query("UPDATE umoja_members SET email = 'a@namra.org.na'");
+    await setMembers([['NAM0001', true]]);   // setMembers() leaves the address empty again
   });
 
   it('is all-or-nothing: a failure rolls back every update and the audit entry', async () => {

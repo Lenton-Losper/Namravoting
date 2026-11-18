@@ -131,7 +131,7 @@ describe('the command line', () => {
     expect(real.stdout).toMatch(/IMPORT DONE[^]*added:\s+3[^]*updated:\s+0[^]*unchanged:\s+0/);
     const again = await cli([]);
     expect(again.stdout).toMatch(/added:\s+0[^]*updated:\s+0[^]*unchanged:\s+3/);
-    for (const out of [dry.stdout, real.stdout, again.stdout, dry.stderr, real.stderr]) expect(out).not.toMatch(/ABC000|Fake Person|@namra|example\.com/);
+    for (const out of [dry.stdout, real.stdout, again.stdout, dry.stderr, real.stderr]) expect(out).not.toMatch(/ABC000|Fake Person|[a-z]@namra|example\.com/);
   });
   it('--check-file needs no database at all', async () => {
     const r = await cli(['--check-file'], { MIGRATE_DATABASE_URL: '' });

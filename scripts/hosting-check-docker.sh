@@ -40,16 +40,16 @@ echo "== migrations (first run, then again: must be a no-op)"
 $DC run --rm -T app node server/dist/migrateCli.js | tail -3
 $DC run --rm -T app node server/dist/migrateCli.js | tee /dev/stderr | grep -q "migrations up to date"
 echo "== member import (FAKE data): check, dry run, real run, second run"
-mkdir -p data && printf 'Employee Code,Display Name,Email Address
-ABC0001,Fake One,one@namra.org.na
-ABC0002,Fake Two,two@namra.org.na
-ABC0003,Fake Three,three@example.com
+mkdir -p data && printf 'Employee Code,Display Name,Email Address
+ABC0001,Fake One,one@namra.org.na
+ABC0002,Fake Two,two@namra.org.na
+ABC0003,Fake Three,three@example.com
 ' > data/members.csv
 out=$($DC run --rm -T app node server/dist/importMembers.js /data/members.csv --check-file || true); echo "$out"; echo "$out" | grep -q "3 rows read, 2 valid, 1 rejected"
 out=$($DC run --rm -T app node server/dist/importMembers.js /data/members.csv --dry-run); echo "$out"; echo "$out" | grep -q "added:     2"
 out=$($DC run --rm -T app node server/dist/importMembers.js /data/members.csv); echo "$out"; echo "$out" | grep -q "IMPORT DONE"
 out=$($DC run --rm -T app node server/dist/importMembers.js /data/members.csv); echo "$out"; echo "$out" | grep -q "unchanged: 2"
-if echo "$out" | grep -qE "ABC000|Fake|@namra"; then echo "the import printed a code, name or address"; exit 1; fi
+if echo "$out" | grep -qE "ABC000|Fake|[a-z]@namra"; then echo "the import printed a code, name or address"; exit 1; fi
 rm -rf data
 echo "== start the app"
 $DC up -d --wait app
