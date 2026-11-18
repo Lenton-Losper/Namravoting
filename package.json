@@ -18,6 +18,7 @@
     "umoja:match": "npm run umoja:match -w server --",
     "retention": "npm run retention -w server --",
     "restore:check": "npm run restore:check -w server --",
-    "backup:sealed": "npm run backup:sealed -w server --"
+    "backup:sealed": "npm run backup:sealed -w server --",
+    "members:import": "node server/dist/importMembers.js"
   }
 }

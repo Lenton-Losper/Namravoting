@@ -31,6 +31,7 @@ services:
       - "127.0.0.1:${APP_PORT:-8080}:8080"
     volumes:
       - uploads:/data/uploads          # candidate photos: back this volume up with the database
+      - ./data:/data                   # the member list for `node server/dist/importMembers.js /data/umoja-emails.xlsx` (HOSTING.md 6a). Never commit that folder's contents
     depends_on:
       db:
         condition: service_healthy

@@ -8,6 +8,9 @@ node_modules/
 
 # HR source files: union membership is sensitive, NEVER commit the member list
 data/
+data/*.xlsx
+data/*.csv
+*.xlsx
 *.umoja*.txt
 *umoja*.csv
 *umoja*.txt

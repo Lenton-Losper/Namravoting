@@ -15,7 +15,8 @@
     "retention": "tsx scripts/retention.ts",
     "restore:check": "tsx scripts/restore-check.ts",
     "backup:sealed": "tsx scripts/backup-sealed.ts",
-    "demo:db": "tsx scripts/demo-setup.ts"
+    "demo:db": "tsx scripts/demo-setup.ts",
+    "members:import": "tsx src/importMembers.ts"
   },
   "dependencies": {
     "exceljs": "^4.4.0",

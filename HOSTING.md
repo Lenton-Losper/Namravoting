@@ -291,6 +291,48 @@ Test and reload: `sudo nginx -t && sudo systemctl reload nginx`. Keep `TRUST_PRO
 - Changing the path later (for example from `/voting-app` to `/vote`) means **a rebuild**: a new package built with the new path (or, from source: change both places in `docker-compose.yml` and `docker compose build`, or `env BASE_PATH=/vote npm run build`), plus `BASE_PATH`, the proxy rule and the Entra redirect URI. The server refuses to start if the built client and `BASE_PATH` disagree.
 - Backups, restores and retention: `docs/disaster-recovery.md`, `docs/retention.md`. Day-to-day settings: `docs/operations.md`.
 
+## 6a. Load Umoja members
+
+Umoja votes are open to the members on the list NamRA HR gives you. Load it once after the first start, and again whenever HR sends an updated list. The command reads the file and writes to the database with the **owner** connection (`MIGRATE_DATABASE_URL` in `.env`, the same one the migrations use).
+
+**The file** is an Excel (`.xlsx`) or `.csv` file with a header row and these columns, in any order (other columns are ignored):
+
+| Employee Code | Display Name | Email Address |
+|---|---|---|
+| ABC0001 | (a name) | first.last@namra.org.na |
+
+- Employee codes are three letters and four digits (case does not matter). Email addresses are trimmed and lower-cased and must end in `@namra.org.na`.
+- A row with an invalid code, an invalid address or an address outside `@namra.org.na` is **rejected** (not loaded) and reported by its **row number**, the number your spreadsheet shows. Nothing else is stopped.
+- The **display name is only read to recognise the file; it is never stored**, printed or logged.
+- **The file is sensitive personal data. Never put it in git, an email or the release zip.** Keep it in the `data/` folder next to `docker-compose.yml` (the repository ignores `data/*.xlsx` and `data/*.csv`) and delete it when you are done.
+
+**What the command does.** For each Employee Code: a new one is **added** (as an active member), one that exists with a different address is **updated** (the address only), one that exists with the same address is **unchanged**. It **never deletes** a member, never changes an existing member's active flag or Microsoft match, and an address that already belongs to another member rejects that row. It is safe to run twice. It prints counts (added, updated, unchanged, rejected) and row numbers, **never names, addresses or codes**, and writes one audit-log entry with the counts and the **SHA-256 of the file**.
+
+**Docker** (the file is `data/umoja-emails.xlsx` on the VM, which the app container sees as `/data/umoja-emails.xlsx`):
+
+```bash
+# 1. Check the file itself (no database is touched): row counts and rejected row numbers
+docker compose run --rm app node server/dist/importMembers.js /data/umoja-emails.xlsx --check-file
+
+# 2. Dry run: the same work against the database, then undone. Prints the counts a real run would give; changes nothing
+docker compose run --rm app node server/dist/importMembers.js /data/umoja-emails.xlsx --dry-run
+
+# 3. The real run
+docker compose run --rm app node server/dist/importMembers.js /data/umoja-emails.xlsx
+```
+
+**Plain Node** (section 4), from the folder that holds `server/` and `.env`:
+
+```bash
+node server/dist/importMembers.js /path/to/umoja-emails.xlsx --dry-run
+node server/dist/importMembers.js /path/to/umoja-emails.xlsx
+# or: npm run members:import -- /path/to/umoja-emails.xlsx --dry-run
+```
+
+**When HR sends an updated list:** replace the file (same name or a new one), then repeat steps 1 to 3. People already loaded show as *unchanged*, new people as *added*, changed addresses as *updated*. **Members who are no longer on the new list are NOT removed**: tell the developers if someone must stop being a member.
+
+Exit codes: `0` done, `1` it could not run (nothing changed; the message says why), `2` (only with `--check-file`) the file was read but some rows are rejected. A public cloud database (for example the Cloudflare demo's) is refused unless you add `--allow-remote`: the real member list belongs only on the NamRA VM.
+
 ## 7. If something is wrong
 
 | Symptom | Likely cause |

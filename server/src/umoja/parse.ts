@@ -35,7 +35,7 @@ const separatedBlanks = (lines: string[]) => lines.length > 2 && lines[1] === ''
 const OTHER_KEYS = new Set(['employeename', 'datejoined', 'activemonths', 'gender', 'position', 'businessunit']);
 
 /** Minimal RFC-4180 reader (quoted fields, doubled quotes, newlines inside quotes). */
-function readDelimited(text: string, delim: string): string[][] {
+export function readDelimited(text: string, delim: string): string[][] {
   const rows: string[][] = [];
   let row: string[] = [];
   let cur = '';
