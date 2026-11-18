@@ -1,6 +1,8 @@
 // Multi-position campaigns in the browser: the voter's position blocks and region-filtered ballot, the candidate's nomination page, and
 // the admin's position blocks (approve / reject / invite / regions), plus WCAG checks (axe) on each new screen.
 import axe from 'axe-core';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -222,23 +224,28 @@ describe('the nomination page', () => {
     const fd = put.body as FormData;
     expect([fd.get('name'), fd.get('region_id'), fd.get('bio')]).toEqual(['Samuel Staff', 'r2', 'Ten years in customs.']);
     expect((fd.get('photo') as File).name).toBe('me.png');
-    expect(await screen.findByText(/Submitted: waiting for the administrator/)).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Save changes' })).toBeTruthy();                       // can still be edited
+    // the form is replaced by the confirmation page
+    expect(await screen.findByRole('heading', { name: 'Nomination submitted' })).toBeTruthy();
+    expect(screen.getByText('Thanks, Samuel. The administrator will review your profile before it appears on the ballot.')).toBeTruthy();
+    expect(screen.queryByLabelText(/^Name/)).toBeNull();
+    expect(screen.getByRole('button', { name: 'Edit profile' })).toBeTruthy();                       // can still be edited
   });
 
   it('shows a rejection with its reason and lets the candidate submit again', async () => {
     table[`GET /api/nominate/${NTOKEN}`] = nominateInfo({ profile: { id: 'k1', name: 'Sam', bio: null, regionId: 'r1', status: 'rejected', reviewReason: 'The bio is not suitable.', photoUrl: null } });
     nominate();
-    expect(await screen.findByText('Not approved')).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: 'Nomination not approved' })).toBeTruthy();
     expect(screen.getByText(/The bio is not suitable\./)).toBeTruthy();
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Edit profile' }));
     expect(screen.getByRole('button', { name: 'Submit again' })).toBeTruthy();
   });
 
   it('is read-only once approved (no form), and says nominations are closed once voting has started', async () => {
     table[`GET /api/nominate/${NTOKEN}`] = nominateInfo({ canEdit: false, profile: { id: 'k1', name: 'Sam Staff', bio: 'Hi', regionId: 'r1', status: 'approved', reviewReason: null, photoUrl: null } });
     nominate();
-    expect(await screen.findByText('Approved: you are on the ballot')).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: 'Nomination approved' })).toBeTruthy();
     expect(screen.queryByLabelText(/^Name/)).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Edit profile' })).toBeNull();                       // approved: no longer editable
     cleanup();
     table[`GET /api/nominate/${NTOKEN}`] = nominateInfo({ canEdit: false, state: 'ended' });
     nominate();
@@ -251,9 +258,88 @@ describe('the nomination page', () => {
     table[`GET /api/nominate/${NTOKEN}`] = nominateInfo({ profile: { id: 'k1', name: 'Sam', bio: null, regionId: 'r1', status: 'submitted', reviewReason: null, photoUrl: null } });
     const user = userEvent.setup();
     nominate();
-    await user.click(await screen.findByRole('button', { name: 'Withdraw' }));
+    await user.click(await screen.findByRole('button', { name: 'Withdraw my nomination' }));
     await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Withdraw' }));
     await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.url === `/api/nominate/${NTOKEN}/withdraw`)).toBe(true));
+  });
+
+  describe('the confirmation page', () => {
+    const mine = (over: Record<string, unknown> = {}) => ({ id: 'k1', name: 'Samuel Staff', bio: 'A long bio voters do not see on the ballot card.', pledge: 'A stronger voice for every region', regionId: 'r2', status: 'submitted', reviewReason: null, photoUrl: null, submittedAt: '2026-03-01T10:15:00Z', ...over });
+    const page = async (over: Record<string, unknown> = {}, info: Record<string, unknown> = {}) => { table[`GET /api/nominate/${NTOKEN}`] = nominateInfo({ profile: mine(over), ...info }); const user = userEvent.setup(); nominate(); await screen.findByTestId('voter-preview'); return user; };
+
+    it('shows the tick, "Nomination submitted", the thank-you line and a Pending review status', async () => {
+      await page();
+      expect(screen.getByRole('heading', { name: 'Nomination submitted' })).toBeTruthy();
+      expect(document.querySelector('.confirm-tick')).toBeTruthy();
+      expect(screen.getByText('Thanks, Samuel. The administrator will review your profile before it appears on the ballot.')).toBeTruthy();
+      expect(screen.getByText('Pending review')).toBeTruthy();
+    });
+
+    it('previews exactly what voters see: initials without a photo, the name, region and position, and the pledge (not the bio)', async () => {
+      await page();
+      const card = screen.getByTestId('voter-preview');
+      expect(card.textContent).toContain('Samuel Staff');
+      expect(card.textContent).toContain('Khomas · Press Secretary');
+      expect(card.textContent).toContain('A stronger voice for every region');
+      expect(card.textContent).not.toContain('A long bio');
+      expect(card.querySelector('.thumb-empty')?.textContent).toBe('SS');
+      cleanup();
+      await page({ photoUrl: '/api/photos/k1' });
+      expect((screen.getByTestId('voter-preview').querySelector('img') as HTMLImageElement).getAttribute('src')).toBe('/api/photos/k1');
+    });
+
+    it('lists what happens next, with the time it was submitted, and notes that it can be edited until approved', async () => {
+      await page();
+      const steps = [...document.querySelectorAll('.next-step')];
+      expect(steps.map((l) => l.className.replace('next-step ', ''))).toEqual(['is-done', 'is-current', 'is-todo']);
+      expect(steps[0].textContent).toMatch(/^Submitted on /);
+      expect(steps[1].textContent).toContain('The administrator reviews your profile');
+      expect(steps[2].textContent).toContain('It appears on the ballot once approved');
+      expect(screen.getByText('You can edit your profile until it is approved.')).toBeTruthy();
+    });
+
+    it('"Edit profile" opens the form with everything filled in; Cancel comes back; "Done" goes to My votes', async () => {
+      const user = await page();
+      expect((screen.getByRole('link', { name: 'Done' }) as HTMLAnchorElement).getAttribute('href')).toBe('/votes');
+      await user.click(screen.getByRole('button', { name: 'Edit profile' }));
+      expect((screen.getByLabelText(/^Name/) as HTMLInputElement).value).toBe('Samuel Staff');
+      expect((screen.getByLabelText(/^Region/) as HTMLSelectElement).value).toBe('r2');
+      expect((screen.getByLabelText(/^Pledge/) as HTMLInputElement).value).toBe('A stronger voice for every region');
+      expect(screen.queryByTestId('voter-preview')).toBeNull();
+      await user.click(screen.getByRole('button', { name: 'Cancel' }));
+      expect(screen.getByTestId('voter-preview')).toBeTruthy();
+    });
+
+    it('reopening the link shows the current status: approved (no edit), not approved with the reason (edit again)', async () => {
+      await page({ status: 'approved' });
+      expect(screen.getByRole('heading', { name: 'Nomination approved' })).toBeTruthy();
+      expect(screen.getByText('Approved: on the ballot')).toBeTruthy();
+      expect([...document.querySelectorAll('.next-step')].map((l) => l.className.replace('next-step ', ''))).toEqual(['is-done', 'is-done', 'is-done']);
+      expect(screen.queryByRole('button', { name: 'Edit profile' })).toBeNull(); expect(screen.queryByText(/edit your profile/)).toBeNull();
+      cleanup();
+      await page({ status: 'rejected', reviewReason: 'Please use your own photo.' });
+      expect(screen.getByRole('heading', { name: 'Nomination not approved' })).toBeTruthy();
+      expect(screen.getByText(/Please use your own photo\./)).toBeTruthy();
+      expect(screen.getByRole('button', { name: 'Edit profile' })).toBeTruthy();
+    });
+
+    it('once nominations have closed the page still shows the status but offers no edit and no withdraw', async () => {
+      await page({}, { canEdit: false, state: 'ended' });
+      expect(screen.getByRole('heading', { name: 'Nomination submitted' })).toBeTruthy();
+      expect(screen.queryByRole('button', { name: 'Edit profile' })).toBeNull(); expect(screen.queryByRole('button', { name: 'Withdraw my nomination' })).toBeNull();
+    });
+
+    it('is built for a phone: the card and steps never exceed the screen, long names wrap, buttons are 44px tall, in the Umoja colours', () => {
+      const css = readFileSync(path.resolve(__dirname, 'styles.css'), 'utf8');
+      const rule = (sel: string) => new RegExp(`${sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} \\{[^}]*\\}`).exec(css)?.[0] ?? '';
+      expect(rule('.voter-preview')).toMatch(/width: 100%; max-width: 420px/);
+      expect(rule('.voter-preview-text')).toMatch(/min-width: 0/); expect(rule('.voter-preview-text')).toMatch(/overflow-wrap: anywhere/);
+      expect(rule('.next-steps')).toMatch(/max-width: 420px/);
+      expect(rule('.confirm-actions .btn')).toMatch(/flex: 1 1 140px/);
+      expect(css).toMatch(/\.btn-44 \{[^}]*min-height: 44px/);
+      expect(rule('.voter-preview')).toMatch(/var\(--orange\)/);                       // the orange accent edge, blue text
+      expect(rule('.confirm-title')).toMatch(/var\(--navy-text\)/);
+    });
   });
 
   it('answers an unknown link and an ineligible account with a clear card', async () => {
@@ -479,7 +565,7 @@ describe('the new screens have no axe violations (WCAG 2.1 A and AA, plus best p
     cleanup();
     table[`GET /api/nominate/${NTOKEN}`] = nominateInfo({ profile: { id: 'k1', name: 'Sam', bio: null, regionId: 'r1', status: 'rejected', reviewReason: 'Please fix the bio.', photoUrl: null } });
     const again = app(`/n/${NTOKEN}`);
-    await screen.findByText('Not approved');
+    await screen.findByRole('heading', { name: 'Nomination not approved' });
     expect(await audit(again.container)).toEqual([]);
   });
 

@@ -4,6 +4,8 @@ import { api, ApiError, fmtDate } from '../api';
 import { Icon } from '../icons';
 import { Dialog, ErrorBox, Spinner, Thumb } from '../ui';
 
+type Profile = NonNullable<Info['profile']>;
+
 /**
  * The candidate's own page, opened from the nomination link or QR code of one position. Signing in is required (the router sends a visitor
  * to Microsoft first and brings them back here). They fill in their profile and submit it; they can change it until the administrator
@@ -14,7 +16,7 @@ type State = 'not_invited' | 'open' | 'closed' | 'expired' | 'ended';
 interface Info {
   campaign: { title: string }; position: { id: string; title: string; description: string | null; ruleText?: string | null; regionRuleText?: string | null };
   state: State; closesAt: string | null; regions: { id: string; name: string }[]; defaultName: string; canEdit: boolean;
-  profile: { id: string; name: string; bio: string | null; pledge?: string | null; regionId: string | null; status: 'invited' | 'submitted' | 'approved' | 'rejected' | 'withdrawn'; reviewReason: string | null; photoUrl: string | null } | null;
+  profile: { id: string; name: string; bio: string | null; pledge?: string | null; regionId: string | null; status: 'invited' | 'submitted' | 'approved' | 'rejected' | 'withdrawn'; reviewReason: string | null; photoUrl: string | null; submittedAt?: string | null } | null;
 }
 
 function StateCard({ icon, title, children }: { icon: string; title: string; children?: ReactNode }) {
@@ -23,6 +25,63 @@ function StateCard({ icon, title, children }: { icon: string; title: string; chi
       <span className="state-icon"><Icon name={icon} size={22} /></span>
       <h2>{title}</h2>
       {children}
+    </section>
+  );
+}
+
+/** One step of "What happens next": done (ticked), the current one, or still to come. */
+function Step({ state, children }: { state: 'done' | 'current' | 'todo'; children: ReactNode }) {
+  return (
+    <li className={`next-step is-${state}`}>
+      <span className="next-mark" aria-hidden="true">{state === 'done' ? <Icon name="check" size={14} /> : null}</span>
+      <span>{children}<span className="sr-only">{state === 'done' ? ' (done)' : state === 'current' ? ' (now)' : ' (later)'}</span></span>
+    </li>
+  );
+}
+
+/**
+ * Shown instead of the form once a profile has been submitted, and whenever the link is reopened: what was sent, exactly what voters will see,
+ * what happens next, and the current status (pending / approved / not approved with the reason).
+ */
+function Confirmation({ info, p, regionName, canEdit, busy, onEdit, onWithdraw }: { info: Info; p: Profile; regionName: string | null; canEdit: boolean; busy: boolean; onEdit: () => void; onWithdraw: () => void }) {
+  const pending = p.status === 'submitted', approved = p.status === 'approved', rejected = p.status === 'rejected';
+  const first = p.name.trim().split(/\s+/)[0] ?? p.name;
+  const title = approved ? 'Nomination approved' : rejected ? 'Nomination not approved' : 'Nomination submitted';
+  return (
+    <section className="card card-pad nominate-confirm" aria-labelledby="nom-confirm-title">
+      <span className={`confirm-tick${rejected ? ' is-bad' : ''}`} aria-hidden="true"><Icon name={rejected ? 'alert' : 'check'} size={28} /></span>
+      <h1 id="nom-confirm-title" className="confirm-title">{title}</h1>
+      <p className={`status-chip status-${p.status}`} role="status">{pending ? 'Pending review' : approved ? 'Approved: on the ballot' : 'Not approved'}</p>
+      <p className="confirm-lead">
+        {pending && <>Thanks, {first}. The administrator will review your profile before it appears on the ballot.</>}
+        {approved && <>Thanks, {first}. Your profile is approved and will be on the ballot.</>}
+        {rejected && <>Thanks, {first}. The administrator did not approve this profile.</>}
+      </p>
+      {rejected && p.reviewReason && <p className="confirm-reason"><strong>Reason:</strong> {p.reviewReason}</p>}
+
+      <h2 className="confirm-h">What voters will see</h2>
+      <div className="voter-preview" data-testid="voter-preview">
+        <Thumb url={p.photoUrl} name={p.name} size="lg" />
+        <div className="voter-preview-text">
+          <strong className="voter-preview-name">{p.name}</strong>
+          <span className="voter-preview-meta">{[regionName, info.position.title].filter(Boolean).join(' · ')}</span>
+          {p.pledge && <span className="voter-preview-pledge">{p.pledge}</span>}
+        </div>
+      </div>
+
+      <h2 className="confirm-h">What happens next</h2>
+      <ol className="next-steps">
+        <Step state="done">Submitted{p.submittedAt ? <> on {fmtDate(p.submittedAt)}</> : null}</Step>
+        <Step state={pending ? 'current' : 'done'}>{pending ? 'The administrator reviews your profile' : rejected ? 'The administrator reviewed your profile' : 'The administrator reviewed and approved it'}</Step>
+        <Step state={approved ? 'done' : 'todo'}>{approved ? 'You are on the ballot' : rejected ? 'Edit and submit again to be considered' : 'It appears on the ballot once approved'}</Step>
+      </ol>
+
+      {canEdit && !approved && <p className="field-helper confirm-note">You can edit your profile until it is approved.</p>}
+      <div className="form-actions confirm-actions">
+        {canEdit && !approved && <button type="button" className="btn btn-secondary btn-44" onClick={onEdit}>Edit profile</button>}
+        <Link className="btn btn-primary btn-44" to="/votes">Done</Link>
+      </div>
+      {canEdit && <button type="button" className="btn-text btn-text-danger confirm-withdraw" onClick={onWithdraw} disabled={busy}>Withdraw my nomination</button>}
     </section>
   );
 }
@@ -51,6 +110,7 @@ export function NominatePage() {
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState<string | null>(null);
   const [confirmWithdraw, setConfirmWithdraw] = useState(false);
+  const [editing, setEditing] = useState(false);   // the form instead of the confirmation page
   const fileInput = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
@@ -87,7 +147,7 @@ export function NominatePage() {
     if (removePhoto) fd.append('removePhoto', 'true');
     try {
       await api('PUT', `/api/nominate/${token}`, fd);
-      setSaved(info?.profile ? 'Saved. The administrator will review your updated profile.' : 'Submitted. The administrator will review your profile.');
+      setEditing(false);   // back to the confirmation page, which shows what was just sent
       await load();
     } catch (err) { setError((err as Error).message); if (err instanceof ApiError && err.status === 409) await load(); } finally { setBusy(false); }
   }
@@ -114,6 +174,8 @@ export function NominatePage() {
     not_invited: 'Nominations are not open for this position.',
   };
   const shown = preview ?? (removePhoto ? null : p?.photoUrl ?? null);
+  const showConfirm = !!p && ['submitted', 'approved', 'rejected'].includes(p.status) && !editing;
+  const editable = info.state === 'open' && info.canEdit;
 
   return (
     <div className="nominate-page">
@@ -130,18 +192,19 @@ export function NominatePage() {
         </div>
       </section>
 
-      {p && (
+      {showConfirm && p && <Confirmation info={info} p={p} regionName={info.regions.find((r) => r.id === p.regionId)?.name ?? null} canEdit={editable} busy={busy} onEdit={() => { setSaved(null); setEditing(true); }} onWithdraw={() => setConfirmWithdraw(true)} />}
+      {!showConfirm && p && (
         <section className={`card card-pad nomination-status nomination-${p.status}`} role="status" aria-live="polite">
           <h2>{STATUS_TEXT[p.status].title}</h2>
           <p className="muted">{STATUS_TEXT[p.status].body}</p>
           {p.status === 'rejected' && p.reviewReason && <p><strong>Reason:</strong> {p.reviewReason}</p>}
         </section>
       )}
-      {info.state !== 'open' && <StateCard icon="lock" title="Nominations are closed"><p className="muted">{closed[info.state]}</p></StateCard>}
+      {info.state !== 'open' && !showConfirm && <StateCard icon="lock" title="Nominations are closed"><p className="muted">{closed[info.state]}</p></StateCard>}
       {saved && <p className="ok" role="status">{saved}</p>}
       <ErrorBox message={error} />
 
-      {info.state === 'open' && info.canEdit && (
+      {info.state === 'open' && info.canEdit && !showConfirm && (
         <form className="card card-pad stack nominate-form" onSubmit={(e) => void submit(e)}>
           <h2>{p ? 'Your profile' : 'Create your profile'}</h2>
           <p className="field-helper">This is what voters will see on the ballot once the administrator approves it. Fields marked * are required.</p>
@@ -183,17 +246,11 @@ export function NominatePage() {
             <p id="nom-bio-count" className="field-helper char-count" aria-live="polite">{bio.length}/500 characters</p>
           </div>
           <div className="form-actions">
+            {editing && <button type="button" className="btn btn-secondary" onClick={() => setEditing(false)} disabled={busy}>Cancel</button>}
             {p && p.status !== 'withdrawn' && <button type="button" className="btn btn-secondary" onClick={() => setConfirmWithdraw(true)} disabled={busy}>Withdraw</button>}
             <button className="btn btn-primary" disabled={busy || !name.trim() || !region}>{p ? (p.status === 'rejected' ? 'Submit again' : p.status === 'withdrawn' ? 'Submit my profile' : 'Save changes') : 'Submit my profile'}</button>
           </div>
         </form>
-      )}
-      {info.state === 'open' && p?.status === 'approved' && (
-        <section className="card card-pad">
-          <h2>Your profile</h2>
-          <div className="row-top"><Thumb url={p.photoUrl} name={p.name} size="lg" /><div><strong>{p.name}</strong>{p.bio && <p className="muted">{p.bio}</p>}</div></div>
-          <div className="form-actions"><button className="btn btn-secondary" onClick={() => setConfirmWithdraw(true)} disabled={busy}>Withdraw</button></div>
-        </section>
       )}
       {confirmWithdraw && (
         <Dialog title="Withdraw your nomination?" confirmLabel="Withdraw" danger busy={busy} onConfirm={() => void withdraw()} onCancel={() => setConfirmWithdraw(false)}>

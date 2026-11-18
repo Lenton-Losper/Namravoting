@@ -670,5 +670,33 @@ body:has(.ballot-screen) .hamburger { color: var(--b-navy); border-color: var(--
 .announce-email { margin: 0; color: var(--b-disabled); }
 .announce-preview { margin: 12px 0 0; padding: 12px; background: var(--b-page); border: 1px solid var(--b-hair); border-radius: 10px; font: 14px/1.5 var(--font); white-space: pre-wrap; }
 .nowrap { white-space: nowrap; }
+/* nomination confirmation (Umoja colours: blue text and borders, orange only as an accent) */
+.nominate-confirm { text-align: center; display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.confirm-tick { width: 56px; height: 56px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; background: var(--ok-bg); color: var(--ok-text); border: 2px solid var(--ok-text); }
+.confirm-tick.is-bad { background: var(--bad-bg); color: var(--bad-text); border-color: var(--bad-text); }
+.confirm-title { margin: 4px 0 0; font-size: 24px; color: var(--navy-text); }
+.status-chip { margin: 0; padding: 4px 12px; border-radius: 999px; font-size: 13px; font-weight: 600; border: 1px solid var(--navy); color: var(--navy); background: #fff; }
+.status-chip.status-submitted { background: var(--orange-50); color: var(--orange-text); border-color: var(--orange); }
+.status-chip.status-approved { background: var(--ok-bg); color: var(--ok-text); border-color: var(--ok-text); }
+.status-chip.status-rejected { background: var(--bad-bg); color: var(--bad-text); border-color: var(--bad-text); }
+.confirm-lead { margin: 4px 0 0; max-width: 34em; font-size: 16px; color: var(--navy-text); }
+.confirm-reason { margin: 0; max-width: 34em; padding: 10px 12px; border-radius: 10px; background: var(--bad-bg); color: var(--bad-text); text-align: left; }
+.confirm-h { margin: 16px 0 0; font-size: 14px; text-transform: uppercase; letter-spacing: .04em; color: var(--navy); }
+.voter-preview { width: 100%; max-width: 420px; display: flex; align-items: center; gap: 14px; padding: 14px; text-align: left; background: #fff; border: 2px solid var(--b-border); border-radius: 16px; box-shadow: 0 1px 2px rgba(0, 45, 77, .08); border-left: 6px solid var(--orange); }
+.voter-preview-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
+.voter-preview-name { font-size: 17px; color: var(--navy-text); }
+.voter-preview-meta { font-size: 14px; color: var(--b-secondary); }
+.voter-preview-pledge { font-size: 14px; color: var(--b-body); font-style: italic; }
+.next-steps { list-style: none; margin: 0; padding: 0; width: 100%; max-width: 420px; text-align: left; display: flex; flex-direction: column; gap: 10px; }
+.next-step { display: flex; gap: 10px; align-items: flex-start; font-size: 15px; color: var(--navy-text); }
+.next-mark { flex: none; width: 22px; height: 22px; margin-top: 1px; border-radius: 50%; border: 2px solid var(--b-ring); display: inline-flex; align-items: center; justify-content: center; background: #fff; }
+.next-step.is-done .next-mark { background: var(--navy); border-color: var(--navy); color: #fff; }
+.next-step.is-current .next-mark { border-color: var(--orange); box-shadow: 0 0 0 3px var(--orange-50); }
+.next-step.is-current { font-weight: 600; }
+.next-step.is-todo { color: var(--b-secondary); }
+.confirm-note { margin: 8px 0 0; }
+.confirm-actions { width: 100%; max-width: 420px; justify-content: center; }
+.confirm-actions .btn { flex: 1 1 140px; justify-content: center; }
+.confirm-withdraw { margin-top: 4px; }
 .rule-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .rule-row select { min-width: 0; max-width: 100%; }
