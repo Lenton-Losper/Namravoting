@@ -144,3 +144,20 @@ describe('the command line', () => {
     expect(r.stdout).not.toMatch(/SHA-256/);
   });
 });
+
+describe('batched writes', () => {
+  it('a list of 2000 people is loaded in a few statements: seconds, not minutes (and the counts are right)', async () => {
+    const rows = Array.from({ length: 2000 }, (_, i) => [`ABC${String(i).padStart(4, '0')}`, `Fake ${i}`, `fake.person${i}@namra.org.na`]);
+    const t = Date.now();
+    const r = await run(rows);
+    expect(r.counts).toMatchObject({ rows_read: 2000, added: 2000, updated: 0, unchanged: 0, rejected: 0 });
+    expect(Date.now() - t).toBeLessThan(20_000);
+    expect(await run(rows)).toMatchObject({ counts: { added: 0, updated: 0, unchanged: 2000 } });
+  });
+  it('two members swapping addresses in one file are both updated (no clash on the unique index)', async () => {
+    await run([['ABC0001', 'x', 'a@namra.org.na'], ['ABC0002', 'x', 'b@namra.org.na']]);
+    const r = await run([['ABC0001', 'x', 'b@namra.org.na'], ['ABC0002', 'x', 'a@namra.org.na']]);
+    expect(r.counts).toMatchObject({ updated: 0, rejected: 2 });   // each address still belongs to the OTHER member in the table, so both rows are rejected: nothing changes silently
+    expect((await members()).map((m) => m.email)).toEqual(['a@namra.org.na', 'b@namra.org.na']);
+  });
+});

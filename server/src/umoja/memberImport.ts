@@ -35,16 +35,23 @@ export async function importMembers(client: pg.Client | pg.PoolClient, file: Mem
     const codes = file.members.map((m) => m.code);
     const existing = new Map<string, string | null>((await client.query('SELECT employee_code, email FROM umoja_members WHERE employee_code = ANY($1::text[])', [codes])).rows.map((r) => [r.employee_code as string, r.email as string | null]));
     const owners = new Map<string, string>((await client.query('SELECT email, employee_code FROM umoja_members WHERE email = ANY($1::text[])', [file.members.map((m) => m.email)])).rows.map((r) => [r.email as string, r.employee_code as string]));
-    let added = 0, updated = 0, unchanged = 0;
+    // Decide in memory, then write in TWO statements (multi-row, via unnest): a list of a thousand people takes a moment, not minutes.
+    const toAdd: { code: string; email: string }[] = [], toUpdate: { code: string; email: string }[] = [];
+    let unchanged = 0;
     for (const m of file.members) {
       const owner = owners.get(m.email);
       if (owner && owner !== m.code) { rejectedRows.push({ row: m.row, reason: 'email address already belongs to another member' }); continue; }
-      if (!existing.has(m.code)) {
-        await client.query('INSERT INTO umoja_members (employee_code, active, email) VALUES ($1, true, $2)', [m.code, m.email]); added++;
-      } else if (existing.get(m.code) !== m.email) {
-        await client.query('UPDATE umoja_members SET email = $2, imported_at = now() WHERE employee_code = $1', [m.code, m.email]); updated++;
-      } else unchanged++;
+      if (!existing.has(m.code)) toAdd.push(m);
+      else if (existing.get(m.code) !== m.email) toUpdate.push(m);
+      else unchanged++;
     }
+    if (toAdd.length) await client.query('INSERT INTO umoja_members (employee_code, active, email) SELECT c, true, e FROM unnest($1::text[], $2::text[]) AS t(c, e)', [toAdd.map((m) => m.code), toAdd.map((m) => m.email)]);
+    if (toUpdate.length) {
+      // two members swapping addresses in one file would clash on the unique index row by row: clear, then set (still one transaction)
+      await client.query('UPDATE umoja_members SET email = NULL WHERE employee_code = ANY($1::text[]) AND entra_oid IS NULL', [toUpdate.map((m) => m.code)]);
+      await client.query('UPDATE umoja_members m SET email = t.e, imported_at = now() FROM unnest($1::text[], $2::text[]) AS t(c, e) WHERE m.employee_code = t.c', [toUpdate.map((m) => m.code), toUpdate.map((m) => m.email)]);
+    }
+    const added = toAdd.length, updated = toUpdate.length;
     rejectedRows.sort((a, b) => a.row - b.row);
     const counts: MemberImportCounts = { rows_read: file.rowsRead, added, updated, unchanged, rejected: rejectedRows.length, duplicates: file.duplicates };
     if (opts.dryRun) { await client.query('ROLLBACK'); return { counts, rejectedRows }; }
