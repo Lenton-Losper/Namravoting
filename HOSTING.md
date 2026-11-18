@@ -33,6 +33,38 @@ Two ways to run it. Pick one: **A. Docker (preferred)** or **B. plain Node 22 + 
 
 ---
 
+## Upgrading an existing install (the first zip is already running)
+
+Read this section first if the previous `voting-app-release.zip` is already installed. Everything below is for **`https://apps.namra.org.na/voting-app`**, Microsoft Entra sign-in, PostgreSQL 16. Plan a few minutes of downtime and do it when no vote is open.
+
+**What is new in this release:** database migrations 023 to 026 (voter-list protection, voting rules, member emails), the Umoja member import (`importMembers.js`), voting rules per position (pick range, region rule, a region for every candidate), the Umoja branding, and Microsoft-account binding of Umoja members by email. Photos, campaigns and votes are kept.
+
+### Steps (Docker; for the plain Node install see the note after the list)
+
+1. **Back up the database** (a restore point, before anything changes):
+   ```bash
+   pg_dump -h DB_HOST -U namra_owner -Fc namra > namra-before-upgrade-$(date +%F).dump
+   ```
+   and back up the photos volume (`docker run --rm -v <project>_uploads:/d -v "$PWD":/b alpine tar czf /b/uploads-$(date +%F).tgz -C /d .`).
+2. **Stop the app:** `docker compose down` (the database is not touched).
+3. **Replace the files.** Unzip the new release into the same folder, **overwriting** the old files. **Keep your `.env`** (the zip has none, so it is not overwritten) and keep the `uploads` volume.
+4. **Update `.env`** (section 2 lists every setting). In short:
+   - **Remove** the line `ENTRA_REDIRECT_URI=...` if there is one. The address is now built from `PUBLIC_BASE_URL` + `BASE_PATH`. (If you leave it, it must be exactly `https://apps.namra.org.na/voting-app/auth/callback`, otherwise the app refuses to start and says so.)
+   - **Add** `ENTRA_SECRET_EXPIRES_AT=YYYY-MM-DD` (the client secret's expiry date from the Entra app registration). It is what makes the app warn the admins 30 days before sign-in would stop.
+   - **Check** `AUTH_MODE=entra`, `PUBLIC_BASE_URL=https://apps.namra.org.na`, `TRUST_PROXY=1`, and the admin settings (below).
+   - `BASE_PATH` is set by `docker-compose.yml` (`/voting-app`); do not put anything else.
+5. **Create the data folder** for the member list (the new `docker-compose.yml` mounts it): `mkdir -p data`. The release zip already contains `data/umoja-emails.xlsx` (section 6a).
+6. **Run the migrations:** `docker compose run --rm app node server/dist/migrateCli.js`. It prints `applied 023_...` to `applied 026_...` and then `migrations up to date`. Run it again: it must say `migrations up to date` and change nothing.
+7. **Start:** `docker compose up -d`.
+8. **Health check:** `docker compose ps` shows `(healthy)`; `curl -fsS http://127.0.0.1:8080/voting-app/api/health` answers `{"ok":true}`; `docker compose logs --tail 30 app` shows `[config] Microsoft redirect URI: https://apps.namra.org.na/voting-app/auth/callback`; then open `https://apps.namra.org.na/voting-app/` and sign in with Microsoft.
+9. **Load the members:** section 6a (`--dry-run` first).
+
+**If something goes wrong** after step 6: `docker compose down`, restore the dump (`pg_restore -c -d namra namra-before-upgrade-....dump`, or the Neon/PostgreSQL restore your team uses) and start the previous release again. Migrations 023 to 026 are not reversible by hand, so the dump from step 1 is the way back.
+
+**Plain Node install (section 4):** the same order. Stop the service (`systemctl stop voting-app`), take the dump, unzip over the old folder keeping `.env`, `npm ci --omit=dev`, `node server/dist/migrateCli.js`, `systemctl start voting-app`, health check.
+
+---
+
 ## 1. Create the database (PostgreSQL 16+)
 
 The app uses two roles. The **owner** (`namra_owner`) runs the migrations and is never used by the running app. **`namra_app`** is what the running app logs in as; it can only do what the ballot rules allow.
@@ -68,12 +100,50 @@ SESSION_SECRET=<48+ random characters>
 MIGRATE_DATABASE_URL=postgres://namra_owner:OWNER_PASSWORD@DB_HOST:5432/namra
 DATABASE_URL=postgres://namra_app:APP_PASSWORD@DB_HOST:5432/namra
 APP_DB_PASSWORD=APP_PASSWORD                     # same as in DATABASE_URL
-ENTRA_TENANT_ID=...
-ENTRA_CLIENT_ID=...
-ENTRA_CLIENT_SECRET=...
-ENTRA_SECRET_EXPIRES_AT=2027-05-30               # the client secret's expiry date: admins are warned 30 days before
-ADMIN_OIDS=<object id>,<object id>               # who can create campaigns
+ENTRA_TENANT_ID=fe7b029e-7e19-4525-bdf4-57462a59d299
+ENTRA_CLIENT_ID=281ab38e-9ff5-4f17-88ea-18bdc3e65457
+ENTRA_CLIENT_SECRET=<the secret VALUE, sent to you separately: never in the zip, git or an email>
+ENTRA_SECRET_EXPIRES_AT=YYYY-MM-DD               # the client secret's expiry date: admins are warned 30 days before
+ADMIN_EMAILS=lenton.losper@namra.org.na          # who can create campaigns, until ADMIN_OIDS replaces it (see "Admins")
+ADMIN_EMAILS_FALLBACK=true
 ```
+
+`BASE_PATH=/voting-app` is set for you by Docker (`docker-compose.yml`); for the plain Node install put it in the env file too.
+
+### What each new or changed setting does
+
+| Setting | Value | Notes |
+|---|---|---|
+| `AUTH_MODE` | `entra` | Microsoft sign-in. The only mode for the VM. |
+| `PUBLIC_BASE_URL` | `https://apps.namra.org.na` | The origin only; the app adds `BASE_PATH` itself. |
+| `BASE_PATH` | `/voting-app` | Set by `docker-compose.yml`. |
+| `ENTRA_TENANT_ID`, `ENTRA_CLIENT_ID` | as above | Not secret. |
+| `ENTRA_CLIENT_SECRET` | the secret **Value** | Sent to the DBA separately. If sign-in shows `AADSTS7000215` the Secret ID was copied instead of the Value; `AADSTS7000222` means the secret has expired. |
+| `ENTRA_SECRET_EXPIRES_AT` | `YYYY-MM-DD` | New. Admins see a warning 30 days before; the log warns daily. |
+| `TRUST_PROXY` | `1` | Required behind nginx or IIS (`2` for two proxies). |
+| `ENTRA_REDIRECT_URI` | **do not set** | Built from `PUBLIC_BASE_URL` + `BASE_PATH`. If you still have it from the first install, delete it (or it must equal the address below). |
+
+### Admins
+
+Nobody has the administrator's Entra object id yet, so start with the email address:
+
+```
+ADMIN_EMAILS=lenton.losper@namra.org.na
+ADMIN_EMAILS_FALLBACK=true
+```
+
+With these, the account that signs in with that exact (lower-cased) address is a campaign administrator. The app logs a start-up warning that admins are matched by email; that is expected for now.
+
+**Switching to object ids later (recommended once the first sign-in has happened).** An email address can be renamed or reused; an object id cannot:
+
+1. Sign in once with Microsoft, then open `https://apps.namra.org.na/voting-app/api/session` in the same browser. The answer starts `{"user":{"oid":"xxxxxxxx-xxxx-...","email":...`: **`oid` is the Entra object id**. (Alternatives: Entra admin centre -> Users -> the person -> *Object ID*, or `SELECT entra_oid FROM users WHERE email = 'lenton.losper@namra.org.na';` as the owner role.)
+2. In `.env` set `ADMIN_OIDS=<that oid>` (comma-separated for several people) and **remove** `ADMIN_EMAILS` and `ADMIN_EMAILS_FALLBACK`.
+3. Restart (`docker compose up -d --force-recreate app`). Sign in again: the admin banner about email matching is gone.
+
+### No demo data, and the demo sign-in cannot be switched on by accident
+
+- **No fake or demo data is ever loaded in production.** The migrations create tables only (no members, users, campaigns or candidates). The seed and demo scripts (`npm run seed`, `demo-setup`) are developer tools: `seed` refuses to run when `NODE_ENV=production` (which the production settings set), and nothing starts them. The fake `TST...` Umoja members, the demo users and the demo campaigns exist only in the developers' and the Cloudflare test databases, never in your database. After loading the member list (section 6a) the database holds exactly the people in HR's file.
+- **`AUTH_MODE=email-demo`** (sign in by typing an address, no proof of identity) and `dev` are in the code but are locked: `dev` is refused whenever `NODE_ENV=production`; `email-demo` is refused in production unless **`DEMO=true`** is also set, and the example settings contain neither. Never add `DEMO`, `DEMO_USERS` or `DEMO_MEMBER_EMAILS` to the VM's `.env` (the app refuses `DEMO_MEMBER_EMAILS` without `DEMO=true` as well). A login page that shows a box to type an email address means the settings are wrong: stop and check `AUTH_MODE`.
 
 Generate `SESSION_SECRET`: `node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"` (or `openssl rand -base64 48`).
 
@@ -85,7 +155,7 @@ Generate `SESSION_SECRET`: `node -e "console.log(require('crypto').randomBytes(4
   ```
 
   In the Entra admin centre: App registrations -> **NamRA Voting** (application/client id `281ab38e-9ff5-4f17-88ea-18bdc3e65457`) -> Authentication -> Add a platform / Add URI -> **Web** -> paste that address, character for character (https, no trailing slash, `/voting-app/` included). It is added next to the existing redirect URI, so the live site keeps working until the move. If `PUBLIC_BASE_URL` is a different host, register that host's address instead: `<PUBLIC_BASE_URL>/voting-app/auth/callback`. The app prints the address it uses in its start-up log line `[config] Microsoft redirect URI: ...`. (An old `ENTRA_REDIRECT_URI` line, if you have one, is only accepted when it is identical to this address; remove it.)
-- `AUTH_MODE=email-demo` and `dev` sign people in without proof of identity. Never use them for a real election. In production the app refuses `dev`.
+- `AUTH_MODE=email-demo` and `dev` sign people in without proof of identity and are locked in production (see "No demo data" above). Never use them for a real election.
 - With Docker Compose, avoid the `$` character in values (Compose treats it as a variable).
 - Everything else has safe defaults. The full list is in `.env.example` and `docs/operations.md`.
 
@@ -148,7 +218,7 @@ Back it up: `docker compose --profile localdb exec db pg_dump -U namra_owner -Fc
 
 ### 3.5 Upgrade
 
-Unzip the new release over the old folder (keep `.env`), then `docker compose build`, run the migration command (3.2), `docker compose up -d`. The photos (`uploads`) and database are kept.
+See **Upgrading an existing install** at the top of this guide (back up, stop, unzip over the old folder keeping `.env`, migrate, start, health check). The photos (`uploads`) and database are kept.
 
 ## 4. Option B: plain Node 22 on the VM
 
@@ -288,7 +358,7 @@ Test and reload: `sudo nginx -t && sudo systemctl reload nginx`. Keep `TRUST_PRO
 
 ## 6. After it is running
 
-- Sign in at `https://apps.namra.org.na/voting-app/` with a NamRA account listed in `ADMIN_OIDS`, create a test campaign, open its share link on a phone.
+- Sign in at `https://apps.namra.org.na/voting-app/` with the administrator account (section 2, "Admins"), create a test campaign, open its share link on a phone.
 - Changing the path later (for example from `/voting-app` to `/vote`) means **a rebuild**: a new package built with the new path (or, from source: change both places in `docker-compose.yml` and `docker compose build`, or `env BASE_PATH=/vote npm run build`), plus `BASE_PATH`, the proxy rule and the Entra redirect URI. The server refuses to start if the built client and `BASE_PATH` disagree.
 - Backups, restores and retention: `docs/disaster-recovery.md`, `docs/retention.md`. Day-to-day settings: `docs/operations.md`.
 
@@ -308,6 +378,18 @@ Umoja votes are open to the members on the list NamRA HR gives you. Load it once
 - **The file is sensitive personal data. Never put it in git, an email or the release zip.** Keep it in the `data/` folder next to `docker-compose.yml` (the repository ignores `data/*.xlsx` and `data/*.csv`) and delete it when you are done.
 
 **What the command does.** For each Employee Code: a new one is **added** (as an active member), one that exists with a different address is **updated** (the address only), one that exists with the same address is **unchanged**. It **never deletes** a member, never changes an existing member's active flag or Microsoft match, and an address that already belongs to another member rejects that row. It is safe to run twice. It prints counts (added, updated, unchanged, rejected) and row numbers, **never names, addresses or codes**, and writes one audit-log entry with the counts and the **SHA-256 of the file**.
+
+**This release ships the HR list as `data/umoja-emails.xlsx`** (1,066 members; columns Employee Code, Display Name, Email Address). It is the only data file in the zip. **It is personal data: after the real run succeeds, delete it from the VM** (`rm data/umoja-emails.xlsx`), keep no copy in email or chat, and never put it in git.
+
+**Expected result on the new, empty database** (no members yet; this is what a correct file gives):
+
+| Run | added | updated | unchanged | rejected |
+|---|---|---|---|---|
+| `--dry-run` (changes nothing) | **1066** | 0 | 0 | 0 |
+| real run | **1066** | 0 | 0 | 0 |
+| a second real run (safe, nothing changes) | 0 | 0 | **1066** | 0 |
+
+The file's SHA-256 is printed on the first line (`File: SHA-256 ...`) and recorded in the audit log. If the counts differ (for example `rejected` above 0, or `added` far from 1066), **stop and tell the developers before the real run**.
 
 **Docker** (the file is `data/umoja-emails.xlsx` next to `docker-compose.yml`, which the app container sees as `/data/umoja-emails.xlsx`; create the folder yourself with `mkdir -p data` **before the first `docker compose` command**, or Docker creates it owned by root):
 
