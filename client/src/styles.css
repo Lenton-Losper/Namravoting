@@ -670,3 +670,5 @@ body:has(.ballot-screen) .hamburger { color: var(--b-navy); border-color: var(--
 .announce-email { margin: 0; color: var(--b-disabled); }
 .announce-preview { margin: 12px 0 0; padding: 12px; background: var(--b-page); border: 1px solid var(--b-hair); border-radius: 10px; font: 14px/1.5 var(--font); white-space: pre-wrap; }
 .nowrap { white-space: nowrap; }
+.rule-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.rule-row select { min-width: 0; max-width: 100%; }

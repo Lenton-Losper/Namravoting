@@ -299,7 +299,7 @@ describe('the admin\'s position blocks', () => {
     const grid = await screen.findByRole('list', { name: 'Positions' });
     const press = within(grid).getByRole('article', { name: 'Press Secretary' });
     expect(within(press).getByText('Ready')).toBeTruthy();
-    expect(within(press).getByText('2 of 2 approved · 1 winner')).toBeTruthy();
+    expect(within(press).getByText('2 approved (min 2) · 1 winner')).toBeTruthy();
     expect(within(press).getByText('1 to review')).toBeTruthy();
     expect(within(press).getByText('Nominations open')).toBeTruthy();
     const fin = within(grid).getByRole('article', { name: 'Finance Officer' });
@@ -617,7 +617,7 @@ describe('the admin positions screen', () => {
     const panel = await screen.findByRole('complementary');
     expect(within(panel).getAllByRole('listitem').map((l) => l.className)).toEqual(['is-ok', 'is-ok']);
     expect((within(panel).getByRole('button', { name: 'Start voting' }) as HTMLButtonElement).disabled).toBe(false);
-    expect(screen.getByText('3 of 2 approved · max 4 · 2 winners')).toBeTruthy();
+    expect(screen.getByText('3 approved (min 2) · max 4 · 2 winners')).toBeTruthy();
     expect((screen.getByRole('article', { name: 'Finance Officer' }).querySelector('.prow-bar span') as HTMLElement).style.width).toBe('100%');   // capped at 100%
   });
 
@@ -629,7 +629,7 @@ describe('the admin positions screen', () => {
     const dlg = await screen.findByRole('dialog');
     expect((within(dlg).getByLabelText(/^Minimum candidates to start/) as HTMLInputElement).value).toBe('2');
     expect(within(dlg).queryByLabelText(/^Seats/)).toBeNull(); expect(within(dlg).queryByLabelText(/^Fewest candidates/)).toBeNull(); expect(within(dlg).queryByLabelText(/^Most candidates/)).toBeNull();
-    expect(within(dlg).getByRole('status').textContent).toBe('1 winner, 2 or more candidates, voters pick 1.');
+    expect(within(dlg).getByRole('status').textContent).toBe('1 winner, voters pick 1.');
     await user.type(within(dlg).getByLabelText(/^Title/), 'Additional Members');
     await user.type(within(dlg).getByLabelText(/^Who can stand/), 'Must be from the HR Department');
     const winners = within(dlg).getByLabelText(/^Number of winners/);
@@ -637,10 +637,110 @@ describe('the admin positions screen', () => {
     const min = within(dlg).getByLabelText(/^Minimum candidates to start/);
     await user.clear(min); await user.type(min, '3');
     await user.type(within(dlg).getByLabelText(/^Maximum candidates/), '13');
-    expect(within(dlg).getByRole('status').textContent).toBe('2 winners, 3–13 candidates, voters pick 2.');
+    expect(within(dlg).getByRole('status').textContent).toBe('2 winners, voters pick 2.');
     await user.click(within(dlg).getByRole('button', { name: 'Add position' }));
     await waitFor(() => expect(calls.find((c) => c.method === 'POST' && c.url === `/api/campaigns/${ID}/positions`)?.body).toEqual({
-      title: 'Additional Members', description: null, rule_text: 'Must be from the HR Department', seats: 2, min_candidates: 3, max_candidates: 13, region_rule: null }));
+      title: 'Additional Members', description: null, rule_text: 'Must be from the HR Department', seats: 2, min_candidates: 3, max_candidates: 13, min_picks: 2, max_picks: 2, region_rule: null }));
+  });
+
+  describe('the position dialog: voting rules', () => {
+    const cand = (id: string, region: string, regionId: string) => ({ id, name: id, bio: null, photo_url: null, position_id: PID[0], status: 'approved', region_id: regionId, region });
+    const open = async (over: Record<string, unknown> = {}, edit = false) => {
+      table[`GET /api/campaigns/${ID}`] = adminCampaign(over);
+      const user = userEvent.setup(); adminPage();
+      if (edit) { await user.click(await screen.findByRole('button', { name: /^More actions for/ })); await user.click(screen.getByRole('menuitem', { name: 'Edit position' })); } else await user.click(await screen.findByRole('button', { name: '+ Add a position' }));
+      return { user, dlg: await screen.findByRole('dialog') };
+    };
+    const lastBody = () => [...calls].reverse().find((c) => c.method === 'POST' || c.method === 'PATCH')?.body as Record<string, unknown>;
+    const summary = (dlg: HTMLElement) => dlg.querySelector('.position-summary-line')?.textContent;
+
+    it('"Number of winners" says it is about the result, and "Voters pick" is its own group with an Exactly shortcut', async () => {
+      const { user, dlg } = await open();
+      expect(within(dlg).getByLabelText(/^Number of winners/).closest('label')?.textContent).toMatch(/how many candidates win.*does not set how many a voter picks/i);
+      expect(within(dlg).getByRole('group', { name: 'Voters pick' })).toBeTruthy();
+      const exactly = within(dlg).getByLabelText(/^Exactly this many/) as HTMLInputElement;
+      expect(exactly.checked).toBe(true);
+      expect(within(dlg).getByLabelText(/^Number of picks/)).toBeTruthy(); expect(within(dlg).queryByLabelText(/^At most/)).toBeNull();
+      await user.click(exactly);
+      expect(within(dlg).getByLabelText(/^At least/)).toBeTruthy(); expect(within(dlg).getByLabelText(/^At most/)).toBeTruthy();
+    });
+
+    it('winners and picks are separate: 4 winners, voters pick up to 4; the summary and the saved body say so', async () => {
+      const { user, dlg } = await open();
+      await user.type(within(dlg).getByLabelText(/^Title/), 'Additional Members');
+      const winners = within(dlg).getByLabelText(/^Number of winners/); await user.clear(winners); await user.type(winners, '4');
+      expect(summary(dlg)).toBe('4 winners, voters pick 4.');
+      await user.click(within(dlg).getByLabelText(/^Exactly this many/));
+      const most = within(dlg).getByLabelText(/^At most/); await user.clear(most); await user.type(most, '4');
+      expect(summary(dlg)).toBe('4 winners, voters pick up to 4.');
+      await user.click(within(dlg).getByRole('button', { name: 'Add position' }));
+      await waitFor(() => expect(lastBody()).toMatchObject({ seats: 4, min_picks: 1, max_picks: 4, region_rule: null }));
+    });
+
+    it('a minimum above the maximum is explained and cannot be saved', async () => {
+      const { user, dlg } = await open();
+      await user.type(within(dlg).getByLabelText(/^Title/), 'P');
+      await user.click(within(dlg).getByLabelText(/^Exactly this many/));
+      const least = within(dlg).getByLabelText(/^At least/); await user.clear(least); await user.type(least, '5');
+      const most = within(dlg).getByLabelText(/^At most/); await user.clear(most); await user.type(most, '3');
+      expect(within(dlg).getByRole('alert').textContent).toMatch(/“At least” \(5\) cannot be more than “at most” \(3\)/);
+      expect((within(dlg).getByRole('button', { name: 'Add position' }) as HTMLButtonElement).disabled).toBe(true);
+    });
+
+    it('the region rule is optional: add it with a number and a region, see the sentence voters see, send it as data', async () => {
+      const { user, dlg } = await open();
+      await user.type(within(dlg).getByLabelText(/^Title/), 'Additional Members');
+      const winners = within(dlg).getByLabelText(/^Number of winners/); await user.clear(winners); await user.type(winners, '4');
+      expect(within(dlg).getByRole('group', { name: 'Region rule (optional)' }).textContent).toMatch(/never changes who wins/);
+      await user.click(within(dlg).getByRole('button', { name: 'Add a region rule' }));
+      await user.selectOptions(within(dlg).getByLabelText('Region'), 'Khomas');
+      expect(within(dlg).getByText('Voters and candidates see: “At least 2 picks from outside Khomas”.')).toBeTruthy();
+      expect(summary(dlg)).toBe('4 winners, voters pick 4, at least 2 from outside Khomas.');
+      await user.click(within(dlg).getByRole('button', { name: 'Add position' }));
+      await waitFor(() => expect(lastBody()).toMatchObject({ seats: 4, min_picks: 4, max_picks: 4, region_rule: { min_outside: 2, region_id: 'r2' } }));
+    });
+
+    it('"Remove the region rule" clears it: the body carries region_rule null', async () => {
+      const withRule = adminPos(0, 'Additional Members', { seats: 4, min_picks: 4, max_picks: 4, choose_label: 'Choose 4', region_rule: { min_outside: 2, region_id: 'r2', region: 'Khomas', text: 'At least 2 picks from outside Khomas' } });
+      const { user, dlg } = await open({ positions: [withRule] }, true);
+      expect((within(dlg).getByLabelText('Region') as HTMLSelectElement).value).toBe('r2');
+      await user.click(within(dlg).getByRole('button', { name: 'Remove the region rule' }));
+      expect(within(dlg).getByRole('button', { name: 'Add a region rule' })).toBeTruthy();
+      expect(summary(dlg)).toBe('4 winners, voters pick 4.');
+      await user.click(within(dlg).getByRole('button', { name: 'Save position' }));
+      await waitFor(() => expect(lastBody()).toMatchObject({ region_rule: null }));
+    });
+
+    it('N above the most a voter picks is explained and cannot be saved', async () => {
+      const { user, dlg } = await open();
+      await user.type(within(dlg).getByLabelText(/^Title/), 'P');
+      const picks = within(dlg).getByLabelText(/^Number of picks/); await user.type(picks, '2');
+      await user.click(within(dlg).getByRole('button', { name: 'Add a region rule' }));
+      await user.selectOptions(within(dlg).getByLabelText('Region'), 'Khomas');
+      await user.selectOptions(within(dlg).getByLabelText('Number of picks from outside the region'), '2');
+      await user.clear(picks); await user.type(picks, '1');
+      expect(within(dlg).getByRole('alert').textContent).toMatch(/A voter picks at most 1, so the rule cannot ask for 2 from outside Khomas/);
+      expect((within(dlg).getByRole('button', { name: 'Add position' }) as HTMLButtonElement).disabled).toBe(true);
+    });
+
+    it('too few approved candidates outside the region is explained (a notice, not a block: candidates can still be added)', async () => {
+      const campaign = { positions: [adminPos(0, 'Additional Members', { seats: 4, min_picks: 4, max_picks: 4, choose_label: 'Choose 4', region_rule: { min_outside: 2, region_id: 'r2', region: 'Khomas', text: 'At least 2 picks from outside Khomas' } })],
+        candidates: [cand('a', 'Khomas', 'r2'), cand('b', 'Khomas', 'r2'), cand('c', 'Khomas', 'r2'), cand('d', 'Erongo', 'r1')] };
+      const { dlg } = await open(campaign, true);
+      expect(within(dlg).getByText(/Only 1 approved candidate is from outside Khomas; at least 2 are needed, so the campaign cannot start until you add or approve 1 more\./)).toBeTruthy();
+      expect((within(dlg).getByRole('button', { name: 'Save position' }) as HTMLButtonElement).disabled).toBe(false);
+    });
+  });
+
+  it('the position card says "3 approved (min 2)" (never "3 of 2") and shows the rule', async () => {
+    const rule = { min_outside: 2, region_id: 'r2', region: 'Khomas', text: 'At least 2 picks from outside Khomas' };
+    table[`GET /api/campaigns/${ID}`] = adminCampaign({ positions: [adminPos(0, 'Additional Members', { seats: 4, min_picks: 4, max_picks: 4, choose_label: 'Choose 4', region_rule: rule, counts: { approved: 3, submitted: 0, rejected: 0, withdrawn: 0, invited: 0 } })] });
+    const user = userEvent.setup(); adminPage();
+    const card = await screen.findByRole('article', { name: 'Additional Members' });
+    expect(within(card).getByText('3 approved (min 2) · 4 winners')).toBeTruthy();
+    expect(card.textContent).not.toMatch(/3 of 2/);
+    await user.click(within(card).getByRole('button', { name: /Manage|View|details/i }));
+    expect(await screen.findByText('Choose 4 · At least 2 picks from outside Khomas')).toBeTruthy();
   });
 
   it('the tabs say "Positions (n)" and the active tab is navy with a thicker underline', async () => {
