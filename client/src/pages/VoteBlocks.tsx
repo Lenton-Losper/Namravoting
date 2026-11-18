@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
 import { api, ApiError, fmtDate, type Notice } from '../api';
 import { Icon } from '../icons';
-import { BackLink, ErrorBox, NoticeBanner, Spinner, initials } from '../ui';
+import { BackLink, ErrorBox, NoticeBanner, Spinner, initials, useModal, useOverflows } from '../ui';
 
 /**
  * The voter's side of a campaign with positions (e.g. "Umoja Committee 2026": Press Secretary, Finance Officer ...).
@@ -113,30 +113,21 @@ function Avatar({ url, name, size }: { url: string | null; name: string; size: '
  * A bottom sheet (a centred dialog on a wide screen). Focus moves into it, Tab stays inside it, Escape closes it (unless `busy`), and
  * focus goes back to what opened it.
  */
-function Sheet({ label, onClose, busy, children, className }: { label: string; onClose: () => void; busy?: boolean; children: ReactNode; className?: string }) {
+function Sheet({ label, onClose, busy, children, footer, className }: { label: string; onClose: () => void; busy?: boolean; children: ReactNode; footer?: ReactNode; className?: string }) {
   const ref = useRef<HTMLDivElement>(null);
-  const closeRef = useRef(onClose); useEffect(() => { closeRef.current = onClose; });
+  const bodyRef = useRef<HTMLDivElement>(null);
   const busyRef = useRef(busy); useEffect(() => { busyRef.current = busy; });
-  useEffect(() => {
-    const before = document.activeElement as HTMLElement | null;
-    ref.current?.focus();
-    return () => { before?.focus?.(); };
-  }, []);
-  const onKey = (e: KeyboardEvent<HTMLDivElement>) => {
-    if (e.key === 'Escape' && !busyRef.current) { e.stopPropagation(); closeRef.current(); return; }
-    if (e.key !== 'Tab' || !ref.current) return;
-    const f = [...ref.current.querySelectorAll<HTMLElement>('button:not([disabled]), a[href], select, input, textarea, [tabindex]:not([tabindex="-1"])')];
-    if (!f.length) { e.preventDefault(); return; }
-    const first = f[0]; const last = f[f.length - 1];
-    if (e.shiftKey && (document.activeElement === first || document.activeElement === ref.current)) { e.preventDefault(); last.focus(); }
-    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
-  };
+  const closeRef = useRef(onClose); useEffect(() => { closeRef.current = onClose; });
+  // focus, scroll lock, Tab trap and Escape are shared with Dialog (ui.tsx); the content scrolls between the handle and the pinned footer buttons
+  const onKeyDown = useModal(ref, onClose, !busy);
+  const scrolls = useOverflows(bodyRef);
   return (
     <div className="sheet-backdrop" onClick={() => { if (!busyRef.current) closeRef.current(); }}>
       <div className={`ballot-sheet${className ? ` ${className}` : ''}`} role="dialog" aria-modal="true" aria-label={label} tabIndex={-1} ref={ref}
-        onKeyDown={onKey} onClick={(e) => e.stopPropagation()}>
+        onKeyDown={onKeyDown} onClick={(e) => e.stopPropagation()}>
         <span className="sheet-handle" aria-hidden="true" />
-        {children}
+        <div className="ballot-sheet-body" ref={bodyRef} tabIndex={scrolls ? 0 : undefined} role={scrolls ? 'region' : undefined} aria-label={scrolls ? `${label}: scrollable content` : undefined}>{children}</div>
+        {footer && <div className="ballot-sheet-foot">{footer}</div>}
       </div>
     </div>
   );
@@ -144,7 +135,7 @@ function Sheet({ label, onClose, busy, children, className }: { label: string; o
 
 function HelpSheet({ onClose }: { onClose: () => void }) {
   return (
-    <Sheet label="How voting works" onClose={onClose}>
+    <Sheet label="How voting works" onClose={onClose} footer={<button type="button" className="ballot-btn ballot-btn-secondary" onClick={onClose}>Close</button>}>
       <h2 className="sheet-title">How voting works</h2>
       <ol className="help-steps">
         <li><strong>Choose</strong> one candidate. Tap a card to select it; tap "Read full statement" to read more first.</li>
@@ -156,7 +147,6 @@ function HelpSheet({ onClose }: { onClose: () => void }) {
         <li><Icon name="check" size={16} /> You can vote once in each position, and a vote can't be changed after you submit it.</li>
         <li><Icon name="info" size={16} /> Need help? Contact {HELP_CONTACT}.</li>
       </ul>
-      <button type="button" className="ballot-btn ballot-btn-secondary" onClick={onClose}>Close</button>
     </Sheet>
   );
 }
@@ -164,7 +154,10 @@ function HelpSheet({ onClose }: { onClose: () => void }) {
 function StatementSheet({ c, onChoose, onClose }: { c: BallotCandidate; onChoose: () => void; onClose: () => void }) {
   const id = useId();
   return (
-    <Sheet label={`Statement of ${c.name}`} onClose={onClose} className="statement-sheet">
+    <Sheet label={`Statement of ${c.name}`} onClose={onClose} className="statement-sheet" footer={<>
+      {!c.withdrawn && <button type="button" className="ballot-btn ballot-btn-primary" onClick={onChoose}>Choose {firstName(c.name)}</button>}
+      <button type="button" className="ballot-btn ballot-btn-secondary" onClick={onClose}>Close</button>
+    </>}>
       <div className="statement-head">
         <Avatar url={c.photoUrl} name={c.name} size="xl" />
         <h2 className="sheet-title" id={id}>{c.name}</h2>
@@ -172,8 +165,6 @@ function StatementSheet({ c, onChoose, onClose }: { c: BallotCandidate; onChoose
       </div>
       {c.pledge && <p className="statement-pledge">“{c.pledge}”</p>}
       {c.bio ? <p className="statement-bio">{c.bio}</p> : <p className="statement-bio muted">This candidate has not written a statement.</p>}
-      {!c.withdrawn && <button type="button" className="ballot-btn ballot-btn-primary" onClick={onChoose}>Choose {firstName(c.name)}</button>}
-      <button type="button" className="ballot-btn ballot-btn-secondary" onClick={onClose}>Close</button>
     </Sheet>
   );
 }
@@ -455,7 +446,10 @@ export function PositionBallot({ token, position, campaign, single, onBack, onDo
       )}
 
       {step === 'confirm' && ready && (
-        <Sheet label="Confirm your vote" onClose={() => setStep('choose')} busy={busy}>
+        <Sheet label="Confirm your vote" onClose={() => setStep('choose')} busy={busy} footer={<>
+          <button type="button" className="ballot-btn ballot-btn-primary ballot-btn-submit" disabled={busy} onClick={() => void submit()}>{busy ? 'Submitting…' : 'Submit my vote'}</button>
+          <button type="button" className="ballot-btn ballot-btn-secondary" disabled={busy} onClick={() => setStep('choose')}>Change my choice</button>
+        </>}>
           <p className="ballot-step">Step 2 of 2 · Confirm</p>
           <h2 className="sheet-title">Confirm your vote</h2>
           <div className="confirm-choices">
@@ -468,8 +462,6 @@ export function PositionBallot({ token, position, campaign, single, onBack, onDo
             ))}
           </div>
           <p className="confirm-warning"><Icon name="alert" size={20} /> <span>Once you submit, your vote can't be changed.</span></p>
-          <button type="button" className="ballot-btn ballot-btn-primary ballot-btn-submit" disabled={busy} onClick={() => void submit()}>{busy ? 'Submitting…' : 'Submit my vote'}</button>
-          <button type="button" className="ballot-btn ballot-btn-secondary" disabled={busy} onClick={() => setStep('choose')}>Change my choice</button>
         </Sheet>
       )}
       {statement && <StatementSheet c={statement} onClose={() => setStatement(null)} onChoose={() => { if (!picked.includes(statement.id)) toggle(statement); setRegion((r) => (r && statement.regionId !== r ? '' : r)); setStatement(null); }} />}

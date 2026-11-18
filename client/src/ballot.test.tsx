@@ -324,7 +324,9 @@ describe('the stylesheet follows the card design', () => {
     expect(rule('.ballot-card.is-compact .ballot-card-line')).toMatch(/line-clamp: 2/);
   });
   it('the sheet: 20px top radius, 12px 20px 24px padding, 16px gap, 55% scrim, 40x4 handle, 22px heading, 52px and 48px buttons', () => {
-    expect(rule('.ballot-sheet')).toMatch(/gap: 16px; padding: 12px 20px 24px; background: #fff; border-radius: 20px 20px 0 0/);
+    expect(rule('.ballot-sheet')).toMatch(/background: #fff; border-radius: 20px 20px 0 0/);
+    expect(rule('.ballot-sheet-body')).toMatch(/gap: 16px; padding: 12px 20px 16px/);
+    expect(rule('.ballot-sheet-foot')).toMatch(/padding: 12px 20px calc\(20px \+ env\(safe-area-inset-bottom\)\)/);
     expect(rule('.sheet-backdrop')).toMatch(/rgba\(15, 27, 45, \.55\)/);
     expect(rule('.sheet-handle')).toMatch(/width: 40px; height: 4px/);
     expect(css).toMatch(/--b-sheet-line: #C9D0DA/);

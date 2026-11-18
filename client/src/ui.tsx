@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, type KeyboardEvent, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { fmtDate, type EditChange, type Notice, type PositionResult, type Results } from './api';
 import { Icon } from './icons';
@@ -78,30 +78,91 @@ export function Tabs<T extends string>({ tabs, value, onChange, label, children,
   );
 }
 
-/** Accessible modal / bottom sheet. Closes on Escape and backdrop click. */
+// ---- what every modal (Dialog here, the ballot's Sheet) shares ---------------------------------------------------------------------------
+
+let scrollLocks = 0;
+let savedBody: { overflow: string; paddingRight: string } | null = null;
+/**
+ * Stops the page behind a modal from scrolling, and puts everything back when the LAST open modal closes (a count, so two modals at once are
+ * safe). The width of the vanished scrollbar is added as padding so the page does not jump sideways.
+ */
+export function lockBodyScroll(): () => void {
+  if (scrollLocks++ === 0) {
+    const b = document.body;
+    const bar = window.innerWidth - document.documentElement.clientWidth;
+    savedBody = { overflow: b.style.overflow, paddingRight: b.style.paddingRight };
+    b.style.overflow = 'hidden';
+    if (bar > 0) b.style.paddingRight = `${bar}px`;
+  }
+  let released = false;
+  return () => {
+    if (released) return; released = true;
+    if (--scrollLocks === 0 && savedBody) { document.body.style.overflow = savedBody.overflow; document.body.style.paddingRight = savedBody.paddingRight; savedBody = null; }
+  };
+}
+
+const FOCUSABLE = 'button:not([disabled]), a[href], select:not([disabled]), input:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+/**
+ * Modal behaviour in one place: focus moves into the modal and goes back to what opened it, the page behind cannot scroll, Escape closes
+ * (unless `escapeEnabled` is false, e.g. while saving), and Tab / Shift+Tab stay inside. Returns the keydown handler for the modal's element.
+ * The Escape handler is kept in a ref so callers may pass a fresh arrow function on every render without re-running the effect (which
+ * would pull focus back to the box after every keystroke typed in a field).
+ */
+export function useModal(ref: { current: HTMLElement | null }, onEscape: () => void, escapeEnabled = true) {
+  const escRef = useRef(onEscape); const enabled = useRef(escapeEnabled);
+  useEffect(() => { escRef.current = onEscape; enabled.current = escapeEnabled; });
+  useEffect(() => {
+    const before = document.activeElement as HTMLElement | null;
+    ref.current?.focus();
+    const unlock = lockBodyScroll();
+    const onKey = (e: globalThis.KeyboardEvent) => { if (e.key === 'Escape' && enabled.current) escRef.current(); };
+    window.addEventListener('keydown', onKey);
+    return () => { window.removeEventListener('keydown', onKey); unlock(); before?.focus?.(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return (e: KeyboardEvent<HTMLElement>) => {
+    if (e.key !== 'Tab' || !ref.current) return;
+    const f = [...ref.current.querySelectorAll<HTMLElement>(FOCUSABLE)];
+    if (!f.length) { e.preventDefault(); return; }
+    const first = f[0], last = f[f.length - 1], at = document.activeElement;
+    if (e.shiftKey && (at === first || at === ref.current || !ref.current.contains(at))) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && (at === last || !ref.current.contains(at))) { e.preventDefault(); first.focus(); }
+  };
+}
+
+/** True while `el` has more content than fits (so its scrolling area can be reached from the keyboard). */
+export function useOverflows(el: { current: HTMLElement | null }): boolean {
+  const [over, setOver] = useState(false);
+  useEffect(() => {
+    const node = el.current; if (!node) return;
+    const check = () => setOver(node.scrollHeight > node.clientHeight + 1);
+    check();
+    const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(check) : null;
+    ro?.observe(node); window.addEventListener('resize', check);
+    return () => { ro?.disconnect(); window.removeEventListener('resize', check); };
+  }, [el]);
+  return over;
+}
+
+/**
+ * Accessible modal / bottom sheet. The title bar and the Save / Cancel footer stay in view; only the body between them scrolls (max height
+ * 90% of the screen, all of it on a phone), the page behind is locked, focus stays inside, Escape and a click on the backdrop close it.
+ */
 export function Dialog(props: {
   title: string; children: ReactNode; confirmLabel: string; cancelLabel?: string; busy?: boolean; danger?: boolean;
   hideConfirm?: boolean; confirmDisabled?: boolean; className?: string; onConfirm: () => void; onCancel: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
-  // Callers pass a fresh arrow function (`() => setDialog(null)`) on every render. If the effect below depended on it, it would re-run on
-  // every keystroke typed into a field in the dialog and pull focus back to the dialog box, so the field lost focus after each character.
-  // The latest handler is kept in a ref instead, and the effect (focus + Escape) runs once, when the dialog opens.
-  const cancelRef = useRef(props.onCancel);
-  useEffect(() => { cancelRef.current = props.onCancel; });
-  useEffect(() => {
-    const before = document.activeElement as HTMLElement | null;
-    ref.current?.focus();
-    const onKey = (e: globalThis.KeyboardEvent) => { if (e.key === 'Escape') cancelRef.current(); };
-    window.addEventListener('keydown', onKey);
-    return () => { window.removeEventListener('keydown', onKey); before?.focus?.(); };   // hand focus back to what opened the dialog
-  }, []);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const onKeyDown = useModal(ref, props.onCancel);
+  const scrolls = useOverflows(bodyRef);
   return (
     <div className="backdrop" onClick={props.onCancel}>
-      <div className={`sheet${props.className ? ` ${props.className}` : ''}`} role="dialog" aria-modal="true" aria-label={props.title} tabIndex={-1} ref={ref} onClick={(e) => e.stopPropagation()}>
-        <h2>{props.title}</h2>
-        <div className="sheet-body">{props.children}</div>
-        <div className="row">
+      <div className={`sheet${props.className ? ` ${props.className}` : ''}`} role="dialog" aria-modal="true" aria-label={props.title} tabIndex={-1} ref={ref} onKeyDown={onKeyDown} onClick={(e) => e.stopPropagation()}>
+        <div className="sheet-head"><h2>{props.title}</h2></div>
+        <div className="sheet-body" ref={bodyRef} tabIndex={scrolls ? 0 : undefined} aria-label={scrolls ? `${props.title}: scrollable content` : undefined} role={scrolls ? 'region' : undefined}>{props.children}</div>
+        <div className="row sheet-foot">
           <button className="btn btn-secondary" onClick={props.onCancel} disabled={props.busy}>{props.cancelLabel ?? 'Cancel'}</button>
           {!props.hideConfirm && (
             <button className={`btn ${props.danger ? 'btn-danger' : 'btn-primary'}`} onClick={props.onConfirm} disabled={props.busy || props.confirmDisabled}>

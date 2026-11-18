@@ -297,11 +297,19 @@ progress::-moz-progress-bar { background: var(--navy); border-radius: 3px; }
 .qr { align-self: center; padding: 8px; background: #fff; border: 1px solid var(--border); border-radius: var(--radius); }
 
 /* ---------- Dialog ---------- */
-.backdrop { position: fixed; inset: 0; background: rgba(22, 50, 79, .45); display: flex; align-items: flex-end; justify-content: center; z-index: 100; }
-.sheet { background: #fff; width: 100%; max-width: 440px; border-radius: 12px 12px 0 0; padding: 24px 24px calc(24px + env(safe-area-inset-bottom)); outline: none; }
-.sheet h2 { font-size: 18px; margin-bottom: 8px; }
-.sheet .row { flex-wrap: nowrap; }
+.backdrop { position: fixed; inset: 0; background: rgba(0, 45, 77, .45); display: flex; align-items: flex-end; justify-content: center; z-index: 100; overscroll-behavior: contain; }
+/* A dialog never runs off the screen: the title bar and the button footer stay put, the body between them scrolls (90% of the screen; all of it on a phone). */
+.sheet { background: #fff; width: 100%; max-width: 440px; max-height: 90vh; max-height: 90dvh; display: flex; flex-direction: column; overflow: hidden; border-radius: 12px 12px 0 0; padding: 0; outline: none; }
+.sheet-head { flex: none; padding: 20px 24px 12px; border-bottom: 1px solid var(--border); }
+.sheet h2 { font-size: 18px; margin: 0; }
+.sheet-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; padding: 16px 24px; margin: 0; scrollbar-width: auto; scrollbar-color: var(--muted) var(--surface-muted); }
+.sheet-body::-webkit-scrollbar, .ballot-sheet-body::-webkit-scrollbar { width: 12px; }
+.sheet-body::-webkit-scrollbar-track, .ballot-sheet-body::-webkit-scrollbar-track { background: var(--surface-muted); }
+.sheet-body::-webkit-scrollbar-thumb, .ballot-sheet-body::-webkit-scrollbar-thumb { background: var(--muted); border-radius: 6px; border: 3px solid var(--surface-muted); }
+.sheet-body:focus-visible, .ballot-sheet-body:focus-visible { outline-offset: -3px; }
+.sheet .row.sheet-foot { flex: none; flex-wrap: nowrap; margin: 0; padding: 12px 24px calc(16px + env(safe-area-inset-bottom)); border-top: 1px solid var(--border); background: #fff; }
 .sheet .btn { flex: 1; padding: 0 8px; }
+@media (max-width: 559px) { .sheet { max-height: 100vh; max-height: 100dvh; } }
 @media (min-width: 560px) { .backdrop { align-items: center; } .sheet { border-radius: var(--radius); border: 1px solid var(--border); } }
 
 /* ---------- Voter ---------- */
@@ -343,10 +351,9 @@ progress::-moz-progress-bar { background: var(--navy); border-radius: 3px; }
 .share-row { display: flex; flex-wrap: wrap; gap: 8px; }
 .share-row-center { justify-content: center; }
 .qr-large { align-self: center; }
-.sheet-wide { max-width: 520px; max-height: 92vh; overflow-y: auto; }
+.sheet-wide { max-width: 520px; }
 .side-close { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
 .row-actions { display: flex; align-items: center; gap: 12px; justify-content: flex-end; flex-wrap: wrap; }
-.sheet-body { margin-bottom: 4px; }
 
 
 /* SEC-01: voter-visible notice for a reset or an early close */
@@ -522,7 +529,11 @@ body:has(.ballot-screen-receipt) { background: #fff; }
 
 /* Sheets: scrim rgba(15,27,45,.55); white, top radius 20, padding 12px 20px 24px, gap 16 (a centred dialog on a wide screen) */
 .sheet-backdrop { position: fixed; inset: 0; z-index: 100; display: flex; align-items: flex-end; justify-content: center; background: rgba(15, 27, 45, .55); }
-.ballot-sheet { width: 100%; max-width: 520px; max-height: 92vh; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; padding: 12px 20px 24px; background: #fff; border-radius: 20px 20px 0 0; outline: none; }
+.ballot-sheet { width: 100%; max-width: 520px; max-height: 90vh; max-height: 90dvh; overflow: hidden; display: flex; flex-direction: column; gap: 0; padding: 12px 0 0; background: #fff; border-radius: 20px 20px 0 0; outline: none; }
+.ballot-sheet-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; display: flex; flex-direction: column; gap: 16px; padding: 12px 20px 16px; scrollbar-width: auto; scrollbar-color: var(--b-ring) var(--b-page); }
+.ballot-sheet-foot { flex: none; display: flex; flex-direction: column; gap: 12px; padding: 12px 20px calc(20px + env(safe-area-inset-bottom)); border-top: 1px solid var(--b-hair); background: #fff; }
+.ballot-sheet-foot .ballot-btn + .ballot-btn { margin-top: 0; }
+@media (max-width: 559px) { .ballot-sheet { max-height: 100vh; max-height: 100dvh; } }
 .statement-sheet { max-width: 560px; }
 .sheet-handle { align-self: center; width: 40px; height: 4px; border-radius: 2px; background: var(--b-sheet-line); }
 .sheet-title { font-size: 22px; font-weight: 700; line-height: 1.25; color: var(--b-text); }
