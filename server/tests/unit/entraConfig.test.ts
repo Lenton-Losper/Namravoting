@@ -37,8 +37,8 @@ describe('AUTH_MODE=entra configuration', () => {
 
   it('the redirect URI follows PUBLIC_BASE_URL + BASE_PATH: nothing else to keep in step', () => {
     expect(parseConfig({ ...base, ...entra }).entra!.redirectUri).toBe('https://x.example/auth/callback');
-    expect(parseConfig({ ...base, ...entra, PUBLIC_BASE_URL: 'https://voting.namra.org.na', BASE_PATH: '/voting-app' }).entra!.redirectUri).toBe('https://voting.namra.org.na/voting-app/auth/callback');
-    expect(parseConfig({ ...base, ...entra, PUBLIC_BASE_URL: 'https://voting.namra.org.na/voting-app/', BASE_PATH: '/voting-app' }).entra!.redirectUri).toBe('https://voting.namra.org.na/voting-app/auth/callback');
+    expect(parseConfig({ ...base, ...entra, PUBLIC_BASE_URL: 'https://apps.namra.org.na', BASE_PATH: '/voting-app' }).entra!.redirectUri).toBe('https://apps.namra.org.na/voting-app/auth/callback');
+    expect(parseConfig({ ...base, ...entra, PUBLIC_BASE_URL: 'https://apps.namra.org.na/voting-app/', BASE_PATH: '/voting-app' }).entra!.redirectUri).toBe('https://apps.namra.org.na/voting-app/auth/callback');
   });
 
   it('in production an ENTRA_REDIRECT_URI that disagrees with the site address is refused (the old, forgotten override); an equal one is fine', () => {

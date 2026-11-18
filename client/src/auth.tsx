@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useState, type React
 import { withBase } from './basePath';
 import { api, navigation, onSessionExpired, resetCsrf, type User } from './api';
 
-export interface AdminNotice { kind: 'admin_by_email' | 'secret_expiry'; daysLeft?: number; expired?: boolean }
+export interface AdminNotice { kind: 'admin_by_email' | 'secret_expiry' | 'member_bind_conflicts'; daysLeft?: number; expired?: boolean; count?: number }
 interface AuthCtx { observing: number; authMode: string | null; notices: AdminNotice[]; user: User | null; loading: boolean; refresh: () => Promise<void>; logout: () => Promise<void>; isAdmin: boolean }
 const Ctx = createContext<AuthCtx>(null as never);
 export const useAuth = () => useContext(Ctx);

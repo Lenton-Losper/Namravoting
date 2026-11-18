@@ -27,7 +27,8 @@ export interface Standing {
 export async function umojaStanding(db: Queryable, voterOid: string, campaign: { id: string; status: string }): Promise<Standing> {
   const members = campaign.status === 'draft'
     ? 'SELECT employee_code AS member_code, entra_oid, active FROM umoja_members'
-    : 'SELECT member_code, entra_oid, active FROM campaign_voters WHERE campaign_id = $2';
+    // The MEMBERS are frozen at start; which account belongs to a member is not (a member may first sign in after the vote opened: migration 026).
+    : 'SELECT v.member_code, coalesce(v.entra_oid, u.entra_oid) AS entra_oid, v.active FROM campaign_voters v LEFT JOIN umoja_members u ON u.employee_code = v.member_code WHERE v.campaign_id = $2';
   const params: unknown[] = campaign.status === 'draft' ? [voterOid] : [voterOid, campaign.id];
   const { rows } = await db.query(
     `WITH members AS (${members})
@@ -60,12 +61,28 @@ export const demoMemberEmails = (): string[] => getConfig().entra?.demoMemberEma
 export const isSnapshotMemberSql = (campaignIdExpr: string, oidParam: string): string => {
   // Entries are validated at config time (plain emails only), so embedding them as literals is safe.
   const demo = demoMemberEmails().map((e) => `'${e.replace(/'/g, "''")}'`).join(',');
-  return `(EXISTS (SELECT 1 FROM campaign_voters v WHERE v.campaign_id = ${campaignIdExpr} AND v.active AND v.entra_oid = ${oidParam})
-     OR (NOT EXISTS (SELECT 1 FROM campaign_voters v WHERE v.campaign_id = ${campaignIdExpr} AND v.entra_oid = ${oidParam})
+  const bound = `campaign_voters v LEFT JOIN umoja_members bm ON bm.employee_code = v.member_code WHERE v.campaign_id = ${campaignIdExpr}`;
+  return `(EXISTS (SELECT 1 FROM ${bound} AND v.active AND coalesce(v.entra_oid, bm.entra_oid) = ${oidParam})
+     OR (NOT EXISTS (SELECT 1 FROM ${bound} AND coalesce(v.entra_oid, bm.entra_oid) = ${oidParam})
          AND EXISTS (SELECT 1 FROM users u JOIN campaign_voters v ON v.member_code = u.employee_code
                       WHERE u.entra_oid = ${oidParam} AND v.campaign_id = ${campaignIdExpr} AND v.active))
      OR EXISTS (SELECT 1 FROM users d WHERE d.entra_oid = ${oidParam} AND lower(d.email) = ANY(ARRAY[${demo}]::text[])))`;
 };
+
+export type BindOutcome = 'bound' | 'already_bound' | 'no_match' | 'conflict';
+/**
+ * Entra sign-in: if no member is bound to this account yet, match the (lower-cased) email claim to a member's stored address and bind the
+ * account id to that member (database function bind_umoja_member, migration 026; audited). An address that is ambiguous, or already bound to a
+ * DIFFERENT account, binds nothing and is audited as a conflict for the admins' warning.
+ */
+export async function bindMemberByEmail(db: Queryable, oid: string, email: string): Promise<BindOutcome> {
+  return (await db.query('SELECT bind_umoja_member($1, $2) AS r', [oid, email])).rows[0].r as BindOutcome;
+}
+
+/** Sign-ins in the last 30 days that could not be matched to a member because their address was ambiguous or already bound to another account. */
+export async function memberBindConflicts(db: Queryable): Promise<number> {
+  return (await db.query("SELECT count(DISTINCT details->>'oid')::int AS n FROM audit_log WHERE action = 'umoja.bind_conflict' AND at > now() - interval '30 days'")).rows[0].n as number;
+}
 
 /** Live count of active members (used before a campaign starts). */
 export async function activeMemberCount(db: Queryable): Promise<number> {

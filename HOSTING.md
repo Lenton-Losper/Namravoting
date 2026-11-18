@@ -62,7 +62,7 @@ Settings are environment variables. Make a file from `.env.example` (**the file 
 
 ```
 AUTH_MODE=entra
-PUBLIC_BASE_URL=https://voting.namra.org.na      # origin only, no path
+PUBLIC_BASE_URL=https://apps.namra.org.na      # origin only, no path
 TRUST_PROXY=1                                    # one reverse proxy in front (nginx / IIS)
 SESSION_SECRET=<48+ random characters>
 MIGRATE_DATABASE_URL=postgres://namra_owner:OWNER_PASSWORD@DB_HOST:5432/namra
@@ -81,7 +81,7 @@ Generate `SESSION_SECRET`: `node -e "console.log(require('crypto').randomBytes(4
 - **Microsoft sign-in, the redirect URI IT must register.** There is no `ENTRA_REDIRECT_URI` setting to fill in: the app builds the address Microsoft sends people back to as `PUBLIC_BASE_URL` + `BASE_PATH` + `/auth/callback`. With the values in this guide that is exactly:
 
   ```
-  https://voting.namra.org.na/voting-app/auth/callback
+  https://apps.namra.org.na/voting-app/auth/callback
   ```
 
   In the Entra admin centre: App registrations -> **NamRA Voting** (application/client id `281ab38e-9ff5-4f17-88ea-18bdc3e65457`) -> Authentication -> Add a platform / Add URI -> **Web** -> paste that address, character for character (https, no trailing slash, `/voting-app/` included). It is added next to the existing redirect URI, so the live site keeps working until the move. If `PUBLIC_BASE_URL` is a different host, register that host's address instead: `<PUBLIC_BASE_URL>/voting-app/auth/callback`. The app prints the address it uses in its start-up log line `[config] Microsoft redirect URI: ...`. (An old `ENTRA_REDIRECT_URI` line, if you have one, is only accepted when it is identical to this address; remove it.)
@@ -118,7 +118,7 @@ curl -fsS http://127.0.0.1:8080/voting-app/api/health          # {"ok":true}  (2
 docker compose logs --tail 50 app                              # "NamRA voting API listening on 0.0.0.0:8080 ..."
 ```
 
-Then, through the reverse proxy: `curl -i https://voting.namra.org.na/voting-app/api/health` and open `https://voting.namra.org.na/voting-app/` in a browser.
+Then, through the reverse proxy: `curl -i https://apps.namra.org.na/voting-app/api/health` and open `https://apps.namra.org.na/voting-app/` in a browser.
 
 If the container exits at once, `docker compose logs app` shows one line starting `STARTUP ERROR` or `Refusing to start` that names the setting at fault (never its value).
 
@@ -239,9 +239,9 @@ The proxy must pass the path **as is** (`/voting-app/...` arrives at the app as 
 server {
     listen 443 ssl;
     http2 on;
-    server_name voting.namra.org.na;
-    ssl_certificate     /etc/ssl/certs/voting.namra.org.na.pem;
-    ssl_certificate_key /etc/ssl/private/voting.namra.org.na.key;
+    server_name apps.namra.org.na;
+    ssl_certificate     /etc/ssl/certs/apps.namra.org.na.pem;
+    ssl_certificate_key /etc/ssl/private/apps.namra.org.na.key;
 
     client_max_body_size 4m;                       # candidate photos (the app allows 2 MB)
 
@@ -257,7 +257,7 @@ server {
         proxy_read_timeout 60s;                    # PDF / Excel exports
     }
 }
-server { listen 80; server_name voting.namra.org.na; return 301 https://$host$request_uri; }
+server { listen 80; server_name apps.namra.org.na; return 301 https://$host$request_uri; }
 ```
 
 Test and reload: `sudo nginx -t && sudo systemctl reload nginx`. Keep `TRUST_PROXY=1` in the settings (one proxy hop). If another proxy sits in front of nginx, use `2`.
@@ -288,7 +288,7 @@ Test and reload: `sudo nginx -t && sudo systemctl reload nginx`. Keep `TRUST_PRO
 
 ## 6. After it is running
 
-- Sign in at `https://voting.namra.org.na/voting-app/` with a NamRA account listed in `ADMIN_OIDS`, create a test campaign, open its share link on a phone.
+- Sign in at `https://apps.namra.org.na/voting-app/` with a NamRA account listed in `ADMIN_OIDS`, create a test campaign, open its share link on a phone.
 - Changing the path later (for example from `/voting-app` to `/vote`) means **a rebuild**: a new package built with the new path (or, from source: change both places in `docker-compose.yml` and `docker compose build`, or `env BASE_PATH=/vote npm run build`), plus `BASE_PATH`, the proxy rule and the Entra redirect URI. The server refuses to start if the built client and `BASE_PATH` disagree.
 - Backups, restores and retention: `docs/disaster-recovery.md`, `docs/retention.md`. Day-to-day settings: `docs/operations.md`.
 

@@ -13,6 +13,7 @@ import * as emailDemoAuth from './emailDemoAuth.js';
 import { mountEntra, type EntraOptions } from './entra.js';
 import { endSession, sessionUser } from './sessions.js';
 import { adminNotices } from './notices.js';
+import { memberBindConflicts } from '../services/umoja.js';
 
 import { ADMIN_ROLE, type AuthUser } from './types.js';
 export { ADMIN_ROLE, type AuthUser };
@@ -44,8 +45,11 @@ export function mountAuth(app: Express, config: Config, entraOptions: EntraOptio
     const user = getCurrentUser(req);
     // Operator banners (demo override active, secret about to expire) go to campaign admins only.
     // observing: how many campaigns this person has been asked to observe (shows the "Observing" link; a count, nothing else).
-    getObserving(user?.oid).then((observing) => {
-      res.json({ user, authMode: config.authMode, observing, notices: user && user.roles?.includes(ADMIN_ROLE) ? adminNotices(config) : [] });
+    const admin = !!user && !!user.roles?.includes(ADMIN_ROLE);
+    Promise.all([getObserving(user?.oid), admin && config.authMode === 'entra' ? memberBindConflicts(getPool()) : Promise.resolve(0)]).then(([observing, conflicts]) => {
+      const notices: unknown[] = admin ? adminNotices(config) : [];
+      if (conflicts > 0) notices.push({ kind: 'member_bind_conflicts', count: conflicts });
+      res.json({ user, authMode: config.authMode, observing, notices });
     }).catch(next);
   });
 }

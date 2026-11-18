@@ -5,6 +5,7 @@ export const SECRET_WARN_DAYS = 30;
 
 export type AdminNotice =
   | { kind: 'admin_by_email' }
+  | { kind: 'member_bind_conflicts'; count: number }
   | { kind: 'secret_expiry'; daysLeft: number; expired: boolean };
 
 const DAY = 24 * 3600 * 1000;

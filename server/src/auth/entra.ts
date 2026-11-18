@@ -11,6 +11,7 @@ import { createSession, endSession, rolesFor, sessionUser } from './sessions.js'
 import { sign, verify } from './signing.js';
 import { cleanLine } from '../domain/text.js';
 import { bindListedVoter } from '../services/listed.js';
+import { bindMemberByEmail } from '../services/umoja.js';
 import { ADMIN_ROLE, type AuthUser } from './types.js';
 
 /**
@@ -119,6 +120,8 @@ export function mountEntra(app: Express, config: Config, opts: EntraOptions = {}
       await upsertUser(user);
       // First Microsoft sign-in with a listed address: bind that address on every voter list to THIS account (services/listed.ts).
       await bindListedVoter(getPool(), user.oid, email);
+      // Same for the Umoja member list: an account with no member yet is matched to the member that carries its email address and bound to it.
+      await bindMemberByEmail(getPool(), user.oid, email);
       await createSession(req, res, config, { oid: user.oid, email, claimAdmin });
       const admin = rolesFor(config, { claimAdmin, oid: user.oid, email }).length > 0;
       res.redirect(config.basePath + landingFor(st.next, admin));

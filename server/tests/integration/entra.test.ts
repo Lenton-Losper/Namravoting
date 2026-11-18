@@ -517,3 +517,106 @@ describe('identity: the email/mail claim decides the address; the account id dec
     expect(s.never_signed_in).not.toContain('matched@namra.org.na');
   });
 });
+
+// ---- Umoja members bound to accounts by their email address (migration 026) -----------------------------------------------------------
+describe('members are bound to a Microsoft account by the email on the member list', () => {
+  const OID_A = 'dddddddd-0000-4000-8000-00000000000a', OID_B = 'dddddddd-0000-4000-8000-00000000000b', OID_C = 'dddddddd-0000-4000-8000-00000000000c';
+  const MEMBER = 'member@namra.org.na';
+  const boundTo = async (code: string) => (await ownerDb().query('SELECT entra_oid FROM umoja_members WHERE employee_code = $1', [code])).rows[0]?.entra_oid as string | null;
+  const auditsOf = async (action: string) => (await ownerDb().query('SELECT actor_oid, details FROM audit_log WHERE action = $1 ORDER BY seq', [action])).rows;
+  async function load(rows: [string, string][]) {
+    await setMembers(rows.map(([c]) => [c, true] as [string, boolean]));
+    for (const [c, e] of rows) await ownerDb().query('UPDATE umoja_members SET email = $2 WHERE employee_code = $1', [c, e]);
+  }
+  /** An Umoja vote started by the admin BEFORE the member has ever signed in. */
+  async function umojaVote() {
+    const { agent } = await signIn({ claims: { oid: OID2, email: ADMIN_EMAIL, name: 'Boss' } });
+    const a = await asSession(agent);
+    const c = await makeCampaign(a, 2, 'Umoja vote', 'umoja');
+    await a.post(`/api/campaigns/${c.id}/start`).expect(200);
+    return { ...c, admin: a };
+  }
+
+  it('the first sign-in binds the account to the member with that address, case-insensitively, and audits it without the address', async () => {
+    await load([['NAM0001', MEMBER]]);
+    await signIn({ claims: { oid: OID_A, email: 'Member@NamRA.org.na' } });
+    expect(await boundTo('NAM0001')).toBe(OID_A);
+    const a = await auditsOf('umoja.member_bound');
+    expect(a).toHaveLength(1);
+    expect(a[0]).toMatchObject({ actor_oid: null, details: { oid: OID_A, by: 'email' } });
+    expect(JSON.stringify(a)).not.toMatch(/member@|NAM0001/i);
+  });
+
+  it('a member who signs in AFTER the vote started can vote: the members are frozen, the account link is not', async () => {
+    await load([['NAM0001', MEMBER]]);
+    const c = await umojaVote();
+    const { agent } = await signIn({ claims: { oid: OID_A, email: MEMBER } });
+    const s = await asSession(agent);
+    expect((await s.get(`/api/vote/${c.token}`).expect(200)).body.voterState).toBe('can_vote');
+    await s.post(`/api/vote/${c.token}`).send({ candidateId: c.candidates[0] }).expect(201);
+    expect((await ownerDb().query('SELECT member_key FROM vote_receipts WHERE campaign_id = $1', [c.id])).rows).toEqual([{ member_key: 'code:NAM0001' }]);
+  });
+
+  it('a person whose address is not on the list is not bound and cannot vote in the Umoja vote', async () => {
+    await load([['NAM0001', MEMBER]]);
+    const c = await umojaVote();
+    const { agent } = await signIn({ claims: { oid: OID_B, email: 'stranger@namra.org.na' } });
+    expect(await boundTo('NAM0001')).toBeNull();
+    await (await asSession(agent)).get(`/api/vote/${c.token}`).expect(403);
+    expect(await auditsOf('umoja.bind_conflict')).toEqual([]);
+  });
+
+  it('an address already bound to a DIFFERENT account is not bound again: audited as a conflict, shown to admins as a warning, no vote', async () => {
+    await load([['NAM0001', MEMBER]]);
+    const c = await umojaVote();
+    await signIn({ claims: { oid: OID_A, email: MEMBER } });                         // the member binds
+    const { agent } = await signIn({ claims: { oid: OID_C, email: MEMBER } });       // a second account carries the same address
+    expect(await boundTo('NAM0001')).toBe(OID_A);
+    await (await asSession(agent)).get(`/api/vote/${c.token}`).expect(403);
+    const conflicts = await auditsOf('umoja.bind_conflict');
+    expect(conflicts).toHaveLength(1);
+    expect(conflicts[0].details).toEqual({ oid: OID_C, reason: 'bound_to_other_account' });
+    await signIn({ claims: { oid: OID_C, email: MEMBER } });                         // signing in again does not pile up entries
+    expect(await auditsOf('umoja.bind_conflict')).toHaveLength(1);
+    // the warning reaches admins, and only admins
+    const notices = (await c.admin.get('/api/session').expect(200)).body.notices as { kind: string; count?: number }[];
+    expect(notices).toContainEqual({ kind: 'member_bind_conflicts', count: 1 });
+    const staff = await signIn({ claims: { oid: OID_B, email: 'plain@namra.org.na' } });
+    expect((await staff.agent.get('/api/session').expect(200)).body.notices).toEqual([]);
+  });
+
+  it('an ambiguous address (more than one member carries it) binds nobody', async () => {
+    await load([['NAM0001', MEMBER], ['NAM0002', 'other@namra.org.na']]);
+    await ownerDb().query('DROP INDEX umoja_members_email_key');                      // the unique index normally makes this impossible
+    try {
+      await ownerDb().query("UPDATE umoja_members SET email = $1 WHERE employee_code = 'NAM0002'", [MEMBER]);
+      await signIn({ claims: { oid: OID_A, email: MEMBER } });
+      expect(await boundTo('NAM0001')).toBeNull(); expect(await boundTo('NAM0002')).toBeNull();
+      expect((await auditsOf('umoja.bind_conflict'))[0].details).toEqual({ oid: OID_A, reason: 'ambiguous' });
+    } finally {
+      await ownerDb().query("UPDATE umoja_members SET email = 'other@namra.org.na' WHERE employee_code = 'NAM0002'");
+      await ownerDb().query('CREATE UNIQUE INDEX umoja_members_email_key ON umoja_members (email) WHERE email IS NOT NULL');
+    }
+  });
+
+  it('an account that is already bound keeps its member: a later sign-in with another member\'s address changes nothing', async () => {
+    await load([['NAM0001', MEMBER], ['NAM0002', 'other@namra.org.na']]);
+    await signIn({ claims: { oid: OID_A, email: MEMBER } });
+    await signIn({ claims: { oid: OID_A, email: 'other@namra.org.na' } });
+    expect(await boundTo('NAM0001')).toBe(OID_A); expect(await boundTo('NAM0002')).toBeNull();
+    expect(await auditsOf('umoja.member_bound')).toHaveLength(1);
+    expect(await auditsOf('umoja.bind_conflict')).toEqual([]);
+  });
+
+  it('the app role can only bind through the function: it still has no write right on the member table', async () => {
+    await load([['NAM0001', MEMBER]]);
+    const { Pool } = (await import('pg')).default;
+    const { TEST_APP_URL } = await import('../helpers.js');
+    const { pgc } = await import('../testDb.js');
+    const app = new Pool({ ...pgc(TEST_APP_URL), max: 1 });
+    try {
+      await expect(app.query("UPDATE umoja_members SET entra_oid = $1", [OID_A])).rejects.toMatchObject({ code: '42501' });
+      expect((await app.query('SELECT bind_umoja_member($1, $2) AS r', [OID_A, MEMBER])).rows[0].r).toBe('bound');
+    } finally { await app.end(); }
+  });
+});

@@ -83,6 +83,9 @@ function AdminBanners() {
         if (n.kind === 'secret_expiry') {
           return <div key={n.kind} className="admin-banner admin-banner-danger" role="alert">{n.expired ? 'The Entra client secret has EXPIRED: nobody can sign in. ' : `The Entra client secret expires in ${n.daysLeft} day${n.daysLeft === 1 ? '' : 's'}. `}Create a new one in the Entra app registration and update ENTRA_CLIENT_SECRET and ENTRA_SECRET_EXPIRES_AT.</div>;
         }
+        if (n.kind === 'member_bind_conflicts') {
+          return <div key={n.kind} className="admin-banner" role="status">{n.count} sign-in{n.count === 1 ? '' : 's'} in the last 30 days could not be matched to an Umoja member: the email address is on more than one member, or its member is already linked to a different Microsoft account. Those people cannot vote in Umoja votes until the member list is fixed (see the audit log, <code>umoja.bind_conflict</code>).</div>;
+        }
         return <div key={n.kind} className="admin-banner" role="status">Admins are matched by email. Set ADMIN_OIDS so that admin rights follow the Entra account, not an email address.</div>;
       })}
     </div>
