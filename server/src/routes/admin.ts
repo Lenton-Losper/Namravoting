@@ -23,7 +23,8 @@ import { HttpError, notFound } from '../errors.js';
 import { ADMIN_ROLE, currentUser, getCurrentUser, isAdmin, requireUser } from '../auth/index.js';
 import { clientIp } from '../auth/limits.js';
 import { sessionRawId } from '../auth/sessions.js';
-import { normalizeEmail } from '../domain/eligibility.js';
+import { checkEmailList } from '../domain/eligibility.js';
+import { listSummary } from '../services/listed.js';
 import {
   ackBody, candParams, candidateBody, candidatePatchBody, closeBody, createCampaignBody, eligibleBody, idParams, patchCampaignBody, permanentDeleteBody, resetBody,
 } from '../domain/validation.js';
@@ -163,12 +164,22 @@ const sameInstant = (a: string | null | undefined, b: Date | null) => (a == null
 
 export { ABSTAIN_NAME } from '../services/positions.js';
 
-/** Validates and de-duplicates a list of voter emails (shared by creating a campaign and by setting eligibility). */
-function cleanEmails(raw: string[]): string[] {
-  const norm = raw.map(normalizeEmail);
-  const bad = norm.filter((e) => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e));
-  if (bad.length) throw new HttpError(400, `Invalid email address(es): ${bad.slice(0, 5).join(', ')}`);
-  return [...new Set(norm)];
+/**
+ * Checks a list of voter emails (shared by creating a campaign and by setting eligibility). It does NOT reject the list for a bad entry:
+ * the valid addresses are saved, and the entries that are not email addresses (`invalid`, not saved) and the valid ones outside
+ * @namra.org.na (`not_namra`, saved) are named exactly in the answer so the admin can fix them. Only a list with no valid address at all is refused.
+ */
+function cleanEmails(raw: string[]): { emails: string[]; invalid: string[]; not_namra: string[] } {
+  const r = checkEmailList(raw);
+  if (r.emails.length === 0) {
+    throw new HttpError(400, `None of the entries is a valid email address${r.invalid.length ? ` (${r.invalid.slice(0, 5).join(', ')}${r.invalid.length > 5 ? ', …' : ''})` : ''}`, 'no_valid_emails');
+  }
+  return { emails: r.emails, invalid: r.invalid, not_namra: r.notNamra };
+}
+
+/** What the admin is told after saving a list: exactly which entries were skipped or look wrong, and who has never signed in. */
+function warningsOf(checked: { invalid: string[]; not_namra: string[] }, summary: { never_signed_in: string[] } | null) {
+  return { invalid: checked.invalid, not_namra: checked.not_namra, never_signed_in: summary?.never_signed_in ?? [] };
 }
 
 /**
@@ -279,7 +290,9 @@ export function adminRouter(): Router {
     const b = createCampaignBody.parse(req.body);
     const token = crypto.randomBytes(24).toString('base64url');   // 32 URL-safe chars
     const eligibility = b.eligibility ?? 'umoja';   // the mode the creator chose is what gets saved
-    const emails = eligibility === 'list' ? cleanEmails(b.emails ?? []) : [];
+    const checked = eligibility === 'list' ? cleanEmails(b.emails ?? []) : { emails: [] as string[], invalid: [] as string[], not_namra: [] as string[] };
+    const emails = checked.emails;
+    const got: { summary: Awaited<ReturnType<typeof listSummary>> | null } = { summary: null };
     const created = await withTx(async (c) => {
       const { rows } = await c.query(
         `INSERT INTO campaigns (share_token, created_by, title, description, opens_at, closes_at, eligibility, allow_edits_after_start, allow_abstain, require_approval, quorum_percent, nominations_close_at, nominate_eligibility, results_group_by_region, results_release_at)
@@ -289,10 +302,11 @@ export function adminRouter(): Router {
       await seedRegions(c, rows[0].id);   // the 14 regions of Namibia; the admin can rename, add or remove them while the campaign is a draft
       if (b.allow_abstain === true) await setAbstain(c, rows[0].id, true);
       if (emails.length) await c.query('INSERT INTO eligible_voters (campaign_id, voter_email) SELECT $1, unnest($2::text[])', [rows[0].id, emails]);
-      await audit(c, u.oid, 'campaign.create', rows[0].id, { title: b.title, eligibility, allow_edits_after_start: b.allow_edits_after_start === true, allow_abstain: b.allow_abstain === true, require_approval: b.require_approval === true, quorum_percent: b.quorum_percent ?? null, ...(emails.length ? { count: emails.length } : {}) });
+      if (emails.length) got.summary = await listSummary(c, rows[0].id);
+      await audit(c, u.oid, 'campaign.create', rows[0].id, { title: b.title, eligibility, allow_edits_after_start: b.allow_edits_after_start === true, allow_abstain: b.allow_abstain === true, require_approval: b.require_approval === true, quorum_percent: b.quorum_percent ?? null, ...(emails.length ? { count: emails.length, list_sha256: got.summary!.sha256 } : {}) });
       return rows[0] as CampaignRow;
     });
-    res.status(201).json(present(created));
+    res.status(201).json({ ...present(created), ...(eligibility === 'list' ? { eligible_warnings: warningsOf(checked, got.summary) } : {}) });
   });
 
   r.get('/:id', loadRunnable, async (_req, res) => {
@@ -310,6 +324,7 @@ export function adminRouter(): Router {
       positions: await positionBlocks(c),
       regions: (await getPool().query('SELECT id, name, sort_order FROM regions WHERE campaign_id = $1 ORDER BY sort_order, name', [c.id])).rows,
       eligible_emails: el.rows.map((x) => x.voter_email),
+      eligible_summary: c.eligibility === 'list' ? await listSummary(getPool(), c.id) : null,
       turnout: (await getPool().query('SELECT count(DISTINCT member_key)::int AS n FROM vote_receipts WHERE campaign_id = $1', [c.id])).rows[0].n,
       umoja_active_count: await activeMemberCount(getPool()),   // count only; never the members themselves
       integrity_block: c.status === 'open' ? await openIntegrityBlock(getPool(), c.id) : null,   // SEC-16
@@ -510,8 +525,9 @@ export function adminRouter(): Router {
   r.put('/:id/eligible', loadRunnable, async (req, res) => {
     const c = camp(res);
     const b = eligibleBody.parse(req.body);
-    let emails: string[] = [];
-    if (b.mode === 'list') emails = cleanEmails(b.emails);
+    const checked = b.mode === 'list' ? cleanEmails(b.emails) : { emails: [] as string[], invalid: [] as string[], not_namra: [] as string[] };
+    const emails = checked.emails;
+    const got: { summary: Awaited<ReturnType<typeof listSummary>> | null } = { summary: null };
     await inDraftTx(c.id, async (tx) => {
       if (b.mode === 'all' && (await tx.query('SELECT 1 FROM campaigns WHERE id = $1 AND quorum_percent IS NOT NULL', [c.id])).rowCount) {
         throw new HttpError(409, 'This campaign has a quorum, which needs a known list of voters. Remove the quorum first.', 'quorum_needs_list');
@@ -519,9 +535,13 @@ export function adminRouter(): Router {
       await tx.query('UPDATE campaigns SET eligibility = $2 WHERE id = $1', [c.id, b.mode]);
       await tx.query('DELETE FROM eligible_voters WHERE campaign_id = $1', [c.id]);
       if (emails.length) await tx.query('INSERT INTO eligible_voters (campaign_id, voter_email) SELECT $1, unnest($2::text[])', [c.id, emails]);
-      await audit(tx, currentUser(req).oid, 'eligibility.set', c.id, { mode: b.mode, count: emails.length });
+      got.summary = await listSummary(tx, c.id);
+      await audit(tx, currentUser(req).oid, 'eligibility.set', c.id, {
+        mode: b.mode, count: emails.length, list_sha256: got.summary.sha256,
+        ...(checked.invalid.length ? { skipped_invalid: checked.invalid.length } : {}), ...(checked.not_namra.length ? { not_namra: checked.not_namra.length } : {}),
+      });
     });
-    res.json({ mode: b.mode, count: emails.length });
+    res.json({ mode: b.mode, count: emails.length, ...(b.mode === 'list' ? { list_sha256: got.summary!.sha256, warnings: warningsOf(checked, got.summary) } : {}) });
   });
 
   r.post('/:id/start', loadRunnable, async (req, res) => {
@@ -544,7 +564,14 @@ export function adminRouter(): Router {
       await tx.query("UPDATE campaigns SET status = 'open' WHERE id = $1", [c.id]);
       await createTallies(tx, c.id);                                  // one counter per candidate (SEC-02)
       const frozen = fresh.eligibility === 'umoja' ? await snapshotVoters(tx, c.id) : 0;   // the voter list is frozen now (SEC-05)
-      await audit(tx, currentUser(req).oid, 'campaign.start', c.id, { candidates: n, positions: nPos, ...(fresh.eligibility === 'umoja' ? { frozen_members: frozen } : {}) });
+      // The list as it was when voting started, as a SHA-256 of the sorted list: a later change to it can be detected against this entry.
+      const listHash = fresh.eligibility === 'list' ? (await tx.query('SELECT eligible_list_sha256($1) AS h', [c.id])).rows[0].h as string
+        : fresh.eligibility === 'umoja' ? (await tx.query('SELECT campaign_voters_sha256($1) AS h', [c.id])).rows[0].h as string : null;
+      await audit(tx, currentUser(req).oid, 'campaign.start', c.id, {
+        candidates: n, positions: nPos, ...(fresh.eligibility === 'umoja' ? { frozen_members: frozen } : {}),
+        ...(fresh.eligibility === 'list' ? { eligible_count: (await tx.query('SELECT count(*)::int AS n FROM eligible_voters WHERE campaign_id = $1', [c.id])).rows[0].n, list_sha256: listHash } : {}),
+        ...(fresh.eligibility === 'umoja' ? { list_sha256: listHash } : {}),
+      });
     });
     res.json({ status: 'open' });
   });
@@ -800,7 +827,7 @@ export function adminRouter(): Router {
         for (let i = 0; i < tied.length; i++) {
           await tx.query('INSERT INTO candidates (campaign_id, position_id, region_id, name, bio, pledge, photo_path, sort_order) VALUES ($1,$2,(SELECT id FROM regions WHERE campaign_id = $1 AND name = $3),$4,$5,$8,$6,$7)', [id, newPos, tied[i].region, tied[i].name, tied[i].bio, photos[i], i + 1, tied[i].pledge]);
         }
-        if (c.eligibility === 'list') await tx.query('INSERT INTO eligible_voters (campaign_id, voter_email) SELECT $1, voter_email FROM eligible_voters WHERE campaign_id = $2', [id, c.id]);
+        if (c.eligibility === 'list') await tx.query('INSERT INTO eligible_voters (campaign_id, voter_email, voter_oid, left_at) SELECT $1, voter_email, voter_oid, left_at FROM eligible_voters WHERE campaign_id = $2', [id, c.id]);
         await audit(tx, u.oid, 'campaign.runoff_created', c.id, { runoff_id: id, round, tied: results.tie!.names, votes_each: results.tie!.votes });
         await audit(tx, u.oid, 'campaign.create', id, { title, eligibility: c.eligibility, runoff_of: c.id, round });
         return rows[0] as CampaignRow;

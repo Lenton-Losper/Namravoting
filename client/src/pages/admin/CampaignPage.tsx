@@ -4,6 +4,7 @@ import { withBase } from '../../basePath';
 import { api, fmtDate, fromLocalInput, type Campaign, type CampaignDetail, type Results, type SealCheck } from '../../api';
 import { Icon } from '../../icons';
 import { SharePanel } from '../../share';
+import { ListNotes, TestModeWarning } from '../../eligibility';
 import { TeamTab } from './TeamTab';
 import { NotifyPanel } from './NotifyPanel';
 import { LateVoters } from './LateVoters';
@@ -83,9 +84,11 @@ function EligibilityTab({ c, reload }: { c: CampaignDetail; reload: () => Promis
         <Field label="Eligible voters" helper="Who may take part in this vote">{c.eligibility === 'all' ? 'All signed-in NamRA staff' : c.eligibility === 'umoja' ? `Umoja members only (${c.umoja_active_count} active member${c.umoja_active_count === 1 ? '' : 's'})` : `${c.eligible_emails.length} listed email address${c.eligible_emails.length === 1 ? '' : 'es'}`}</Field>
         <Field label="Votes per person" helper="Enforced by the system">One</Field>
       </div>
+      {c.eligibility === 'list' && c.eligible_summary && <ListNotes notNamra={c.eligible_summary.not_namra} neverSignedIn={c.eligible_summary.never_signed_in} left={c.eligible_summary.left} />}
       {c.eligibility === 'list' && (
         <Field label="Voter list">
           <ul className="email-list">{c.eligible_emails.map((e) => <li key={e}>{e}</li>)}</ul>
+          {c.eligible_summary && <p className="field-helper">List fingerprint (SHA-256 of the sorted list, recorded in the audit log): <code>{c.eligible_summary.sha256}</code></p>}
         </Field>
       )}
       <LateVoters c={c} reload={reload} />
@@ -370,6 +373,7 @@ export function CampaignPage() {
         </div>
       </section>
 
+      <TestModeWarning mode={c.eligibility} />
       <IntegrityBanner c={c} reload={reload} />
       <NoticeList notices={c.edited_after_start} title="Edited after start" />
 

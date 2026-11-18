@@ -99,7 +99,8 @@ export function parseConfig(env: NodeJS.ProcessEnv) {
   if (e.NODE_ENV === 'production' && e.SESSION_SECRET.startsWith('change-me')) {
     throw new Error('Refusing to start: set a real SESSION_SECRET in production');
   }
-  const entra = e.AUTH_MODE === 'entra' ? parseEntra(e, basePath) : null;
+  const publicBaseUrl = withBasePath(e.PUBLIC_BASE_URL.replace(/\/$/, ''), basePath);
+  const entra = e.AUTH_MODE === 'entra' ? parseEntra(e, basePath, publicBaseUrl, e.NODE_ENV === 'production') : null;
   // SEC-07: the demo membership override must never ride along into a real election by accident. In production it needs an
   // explicit DEMO=true; the admin banner (auth/notices.ts) shows it whenever it is active.
   if (entra && e.NODE_ENV === 'production' && entra.demoMemberEmails.length > 0 && e.DEMO !== 'true') {
@@ -120,7 +121,7 @@ export function parseConfig(env: NodeJS.ProcessEnv) {
     basePath,
     trustProxy: parseTrustProxy(e.TRUST_PROXY),
     // Every link the app builds for people (share links, QR codes, nomination links, emails) starts here: the origin plus BASE_PATH.
-    publicBaseUrl: withBasePath(e.PUBLIC_BASE_URL.replace(/\/$/, ''), basePath),
+    publicBaseUrl,
     sessionSecret: e.SESSION_SECRET,
     sessionSecretPrevious: e.SESSION_SECRET_PREVIOUS ?? null,
     csrfSecret: e.CSRF_SECRET ?? null,
@@ -151,16 +152,23 @@ export interface EntraConfig {
 }
 
 /** AUTH_MODE=entra needs every ENTRA_* setting. Names the missing keys, never values. */
-function parseEntra(e: { ENTRA_TENANT_ID?: string; ENTRA_CLIENT_ID?: string; ENTRA_CLIENT_SECRET?: string; ENTRA_REDIRECT_URI?: string; ADMIN_EMAILS?: string; ADMIN_OIDS?: string; ADMIN_EMAILS_FALLBACK?: string; DEMO_MEMBER_EMAILS?: string; ENTRA_SECRET_EXPIRES_AT?: string }, basePath = ''): EntraConfig {
-  const need = ['ENTRA_TENANT_ID', 'ENTRA_CLIENT_ID', 'ENTRA_CLIENT_SECRET', 'ENTRA_REDIRECT_URI'] as const;
+function parseEntra(e: { ENTRA_TENANT_ID?: string; ENTRA_CLIENT_ID?: string; ENTRA_CLIENT_SECRET?: string; ENTRA_REDIRECT_URI?: string; ADMIN_EMAILS?: string; ADMIN_OIDS?: string; ADMIN_EMAILS_FALLBACK?: string; DEMO_MEMBER_EMAILS?: string; ENTRA_SECRET_EXPIRES_AT?: string }, basePath = '', publicBaseUrl = '', strictRedirect = false): EntraConfig {
+  const need = ['ENTRA_TENANT_ID', 'ENTRA_CLIENT_ID', 'ENTRA_CLIENT_SECRET'] as const;
   const missing = need.filter((k) => !e[k]?.trim());
   if (missing.length) throw new Error(`Refusing to start: AUTH_MODE=entra requires ${missing.join(', ')}`);
   const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   if (!uuid.test(e.ENTRA_TENANT_ID!.trim())) throw new Error('Refusing to start: ENTRA_TENANT_ID must be a tenant GUID');
   if (!uuid.test(e.ENTRA_CLIENT_ID!.trim())) throw new Error('Refusing to start: ENTRA_CLIENT_ID must be a client (application) GUID');
+  // The redirect URI Microsoft sends people back to is PUBLIC_BASE_URL + BASE_PATH + /auth/callback, so moving the site (another host, or under
+  // /voting-app) moves it with no second setting to forget. ENTRA_REDIRECT_URI is only an optional override; in production it may not disagree.
+  const derived = `${publicBaseUrl}/auth/callback`;
+  const override = e.ENTRA_REDIRECT_URI?.trim();
   let redirect: URL;
-  try { redirect = new URL(e.ENTRA_REDIRECT_URI!.trim()); } catch { throw new Error('Refusing to start: ENTRA_REDIRECT_URI must be an absolute URL'); }
+  try { redirect = new URL(override || derived); } catch { throw new Error(override ? 'Refusing to start: ENTRA_REDIRECT_URI must be an absolute URL' : 'Refusing to start: PUBLIC_BASE_URL must be an absolute URL'); }
   if (redirect.pathname !== `${basePath}/auth/callback`) throw new Error(`Refusing to start: ENTRA_REDIRECT_URI must end with ${basePath}/auth/callback`);
+  if (override && strictRedirect && redirect.toString() !== new URL(derived).toString()) {
+    throw new Error(`Refusing to start: ENTRA_REDIRECT_URI differs from PUBLIC_BASE_URL + BASE_PATH + /auth/callback (${new URL(derived).toString()}). Remove ENTRA_REDIRECT_URI: it follows the site address by itself`);
+  }
   const adminOids = (e.ADMIN_OIDS ?? '').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
   for (const o of adminOids) if (!uuid.test(o)) throw new Error('Refusing to start: ADMIN_OIDS must be a comma-separated list of Entra object ids (GUIDs)');
   const adminEmails = (e.ADMIN_EMAILS ?? '').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);

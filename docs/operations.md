@@ -77,7 +77,7 @@ Repository secrets (Settings -> Secrets and variables -> Actions -> New reposito
 The workflow never prints a secret. It takes the app role's password from `DEMO_DATABASE_URL` for the migration runner
 (only used on a brand-new database), so there is no separate secret for it.
 
-## Temporary demo sign-in while the Entra secret is expired (since 15 Nov 2026)
+## Temporary demo sign-in while the Entra secret is expired (since 15 Nov 2026; replaced by the switch-back below once `entra-return` is deployed)
 
 **Why:** the Entra client secret expired (`AADSTS7000222`) over a weekend, so nobody could sign in with Microsoft. The live site runs a
 **demo-only** sign-in until a new secret can be made. Part B and the positions work were **not** deployed: the live code is still the
@@ -143,38 +143,40 @@ To restore the Access-protected demo (AUTH_MODE=demo) instead of email-demo:
 
 ### Switching back to Microsoft sign-in (entra), step by step
 
-Do this outside a vote: the app restarts in step 4, so sign-in is interrupted for a few minutes.
+**Status:** the code and configuration for the switch-back are on branch `entra-return` (`worker/wrangler.jsonc` says `AUTH_MODE=entra`; `DEMO` and `DEMO_MEMBER_EMAILS` are gone). **Nothing is live until the branch is merged to `main` and Deploy (manual) is run**, which the gate only allows from `main` with green CI.
 
-1. **Make a new client secret.** Entra admin centre -> App registrations -> NamRA Voting (client id `281ab38e-9ff5-4f17-88ea-18bdc3e65457`)
-   -> Certificates & secrets -> New client secret. Copy the **Value** (not the Secret ID) at once, and note the expiry date.
-2. **Check it before using it.** In `.env`, set `ENTRA_CLIENT_SECRET=<value>`, then run:
+> **This deploy is the whole of `main`, not only the sign-in change.** The live site still runs the pre-Part-B code at migration 012. A deploy from `main` also ships Part B, positions, the ballot redesign, results privacy, BASE_PATH and migrations 013 to 023 (019 rewrites the primary keys of `tallies` and `vote_receipts`). Read "Rolling back a deploy" below first, and do not deploy while a vote is open. The Deploy workflow takes the Neon snapshot before it migrates.
+
+Do it outside a vote: the app restarts, so sign-in is interrupted for a few minutes.
+
+1. **Make a new client secret.** Entra admin centre -> App registrations -> NamRA Voting (client id `281ab38e-9ff5-4f17-88ea-18bdc3e65457`) -> Certificates & secrets -> New client secret. Copy the **Value** (not the Secret ID) at once, and note the expiry date.
+2. **Put it in `.env` as `ENTRA_CLIENT_SECRET=<value>`** (never in a file that is committed, and never in chat). Check it before using it:
    ```
    node --input-type=module -e "process.loadEnvFile('.env'); const m = await import('./scripts/monitor-lib.mjs'); console.log(await m.checkEntraToken({ tenantId: 'fe7b029e-7e19-4525-bdf4-57462a59d299', clientId: '281ab38e-9ff5-4f17-88ea-18bdc3e65457', clientSecret: process.env.ENTRA_CLIENT_SECRET }))"
    ```
-   It must report ok (no `AADSTS` code). If it shows `AADSTS7000215`, the Secret ID was copied instead of the Value.
-3. **Store it where the deploy reads it.** Run `gh secret set ENTRA_CLIENT_SECRET` and paste the value. Set the repository variable
-   `ENTRA_SECRET_EXPIRES_AT` (YYYY-MM-DD) for the Monitor workflow.
-4. **Redeploy the live code in entra mode.** Take a snapshot first with `node scripts/neon-snapshot.mjs --label entra-back`. Then go to
-   Actions -> **Deploy (manual)** -> Run workflow, choose the branch **`hotfix-hide-verify`** (the previous live commit `fdf5c98`, entra
-   mode, pre-Part-B), and type `DEPLOY`. It sets `ENTRA_CLIENT_SECRET` from the GitHub secret, sets `AUTH_MODE=entra`, and runs no new
-   migrations ("migrations up to date"). Its smoke test must pass (`GET /api/csrf` -> 200).
-   Note: `hotfix-hide-verify`'s Worker does not have the "restart the container when its settings change" fix. If the site still shows
-   the email sign-in page after the deploy, the container kept the old settings. It stops by itself after 60 idle minutes; to restart it
-   at once, run Deploy on `hotfix-hide-verify` a second time.
-   *Do not* use this run to ship Part B. That is the separate release from `main`, with its own pre-deploy snapshot (see below).
-5. **Tidy the Worker.** These secrets are unused in entra mode; remove them so they cannot ride along later. From `worker/`, run
-   `npx wrangler secret delete DEMO_USERS` and `npx wrangler secret delete CF_ACCESS_AUD`.
-   Delete the GitHub secret `CF_ACCESS_AUD` as well (`gh secret delete CF_ACCESS_AUD`). (`ADMIN_DEMO_PASSWORD` is already gone.)
-6. **Check it.** Open the site: it must go straight to Microsoft sign-in, not the email sign-in page. Sign in as
-   lenton.losper@namra.org.na. You are the same account (`87a4af90…`) with your campaigns. Microsoft sign-in rewrites your name and
-   employee code from the token, so the temporary `TST0026` disappears by itself. Accounts that email-demo created for other addresses
-   (and `llosperofficial@gmail.com`) stay in the database, unused; they can do nothing without a sign-in. Their sign-ins are in the
-   audit log.
-7. **Clean up the git side.** Delete the `demo-fallback` branch (`git push origin --delete demo-fallback`, and
-   `git worktree remove ../UmonjaVoting-demo` where it was checked out). Delete the `pre-deploy-...-demofb-...` Neon branches once the
-   switch-back has been verified.
+   It must report ok (no `AADSTS` code). `AADSTS7000215` means the Secret ID was copied instead of the Value.
+3. **Store it where the deploy and the monitor read it.**
+   - `gh secret set ENTRA_CLIENT_SECRET` (paste the value): the Deploy workflow sends it to the Worker.
+   - The expiry date, in **two** places: uncomment `"ENTRA_SECRET_EXPIRES_AT": "YYYY-MM-DD"` in `worker/wrangler.jsonc` and put the real date there (the app warns admins from it, 30 days before), and set the repository variable of the same name for the Monitor (`gh variable set ENTRA_SECRET_EXPIRES_AT --body YYYY-MM-DD`).
+4. **Check the redirect URI is registered.** The app uses `PUBLIC_BASE_URL` + `BASE_PATH` + `/auth/callback`. For the live site that is `https://namra-voting-demo.llosperofficial.workers.dev/auth/callback` (already registered). For the VM it is the address in HOSTING.md.
+5. **Merge and deploy.** After CI is green on `entra-return`, merge it to `main`, wait for CI on `main`, take a snapshot by hand (`node scripts/neon-snapshot.mjs --label entra-back`), then Actions -> **Deploy (manual)** -> Run workflow on `main`, type `DEPLOY`. It sets `AUTH_MODE=entra` and sends only `ENTRA_CLIENT_SECRET` (not `DEMO_USERS`, not `CF_ACCESS_AUD`). The smoke test must pass (`GET /api/csrf` -> 200). The container restarts when its settings change; if the site still shows the email sign-in page, run Deploy a second time.
+6. **Tidy the Worker.** The demo-only secrets are unused in entra mode. From `worker/`, run `npx wrangler secret delete DEMO_USERS` and `npx wrangler secret delete CF_ACCESS_AUD`; delete the GitHub secrets `DEMO_USERS` and `CF_ACCESS_AUD` too (`gh secret delete ...`).
+7. **Check it** (a phone test with your own account and a colleague's): the site goes straight to Microsoft sign-in, not the email page; sign in as lenton.losper@namra.org.na: same account (`87a4af90…`) and campaigns. Microsoft sign-in rewrites your name and employee code from the token, so the temporary `TST0026` disappears by itself. Accounts that email-demo created for other addresses stay in the database, unused; their sign-ins are in the audit log.
+8. **Clean up the git side.** Delete the `demo-fallback` branch (`git push origin --delete demo-fallback`, and `git worktree remove ../UmonjaVoting-demo` where it was checked out), and the `pre-deploy-...-demofb-...` Neon branches once the switch-back has been verified.
 
-If anything goes wrong in steps 4 to 6, run the Deploy workflow on `demo-fallback` again with `DEPLOY` (email-demo needs nothing else).
+If anything goes wrong in steps 5 to 7, roll back as described in "Rolling back a deploy" (the Worker's previous deployment in Cloudflare, and the pre-deploy Neon snapshot). The Deploy workflow only runs from `main`, so the old `demo-fallback` code can no longer be redeployed through it.
+
+**What stays in the code.** `AUTH_MODE=email-demo` (and `demo`, `dev`) are still there but are **off**: nothing in production config selects them, `DEMO_MEMBER_EMAILS` needs `DEMO=true` (the app refuses to start otherwise), and the deploy sends no demo secrets in entra mode. To turn the typed-email demo on again (a demo only, never for a real vote): set `AUTH_MODE=email-demo` and `DEMO=true` in `worker/wrangler.jsonc`, put `DEMO_USERS` in `.env` and in GitHub, deploy. While it is on, admins see "Test mode: sign-in doesn't verify identity. Don't use for a real vote." on every list and Umoja campaign.
+
+**The Monitor workflow.** Once the app reports `AUTH_MODE=entra`, the Monitor again tests the Microsoft redirect, exercises `ENTRA_CLIENT_SECRET` once an hour, and checks `ENTRA_SECRET_EXPIRES_AT`: a **warning** from 30 days before expiry, a **failure** in the last 7 days and after it. Without the date it warns that the expiry is not tracked.
+
+### Who a person is, and voter lists (entra mode)
+
+- **Address.** The person's address is the token's `email` claim, then its `mail` claim; `preferred_username` (the sign-in name, which can differ from the mail address) is used only when both are missing.
+- **Account binding.** The first time a listed person signs in with Microsoft, their address on every voter list is bound to their account id (`eligible_voters.voter_oid`). From then on the account decides, not the address: a renamed account keeps its vote, and a different account that is later given the same address does not inherit it. Rows not yet bound are matched by address. Receipts (`vote_receipts.voter_oid`, member key `oid:<id>`) were already per account. Nothing is bound in the other modes (their accounts are not real Microsoft identities).
+- **Warnings for admins.** Saving a list names the entries that are not email addresses (not saved) and the ones outside `@namra.org.na` (saved, flagged). The campaign page shows how many listed addresses have never matched a Microsoft account (with the addresses), and the SHA-256 fingerprint of the list.
+- **The list of a started vote is locked by the database** (trigger on `eligible_voters`, migration 023), for every role. The only ways in are the creator's audited late add (`late_add_eligible`) and the retention job. The list fingerprint is in the audit entries `eligibility.set`, `campaign.start`, `voter.late_added` and `retention.purged`.
+- **Leavers** (`npm run retention -- --leavers <file> --apply`): on a campaign that has started their address stays on the list, marked `left_at`, so the eligible count and quorum do not move; a draft's list simply loses it. One audit entry per campaign (`retention.leaver_marked` / `retention.leaver_removed`).
 
 ## Rolling back a deploy (pre-deploy snapshot)
 

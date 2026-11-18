@@ -3,10 +3,10 @@ import { safeNext as clientSafeNext } from '../../../client/src/safeNext.js';
 import { safeNext as serverSafeNext } from '../../src/auth/safeNext.js';
 import { describeConfigError, parseConfig } from '../../src/config.js';
 
-const base = { SESSION_SECRET: 'x'.repeat(40), DATABASE_URL: 'postgres://u:p@h/db', NODE_ENV: 'production' };
+const base = { SESSION_SECRET: 'x'.repeat(40), DATABASE_URL: 'postgres://u:p@h/db', NODE_ENV: 'production', PUBLIC_BASE_URL: 'https://x.example' };
 const entra = {
   AUTH_MODE: 'entra', ENTRA_TENANT_ID: 'fe7b029e-7e19-4525-bdf4-57462a59d299', ENTRA_CLIENT_ID: '281ab38e-9ff5-4f17-88ea-18bdc3e65457',
-  ENTRA_CLIENT_SECRET: 'super-secret-value', ENTRA_REDIRECT_URI: 'https://x.example/auth/callback', ADMIN_EMAILS: 'A@b.c, d@e.f',
+  ENTRA_CLIENT_SECRET: 'super-secret-value', ADMIN_EMAILS: 'A@b.c, d@e.f',
 };
 
 describe('AUTH_MODE=entra configuration', () => {
@@ -16,7 +16,7 @@ describe('AUTH_MODE=entra configuration', () => {
     expect(c.access).toBeNull();   // Microsoft sign-in is the gate: no Access JWT is required
   });
 
-  it.each(['ENTRA_TENANT_ID', 'ENTRA_CLIENT_ID', 'ENTRA_CLIENT_SECRET', 'ENTRA_REDIRECT_URI'] as const)('refuses to start without %s, naming the key and never a value', (k) => {
+  it.each(['ENTRA_TENANT_ID', 'ENTRA_CLIENT_ID', 'ENTRA_CLIENT_SECRET'] as const)('refuses to start without %s, naming the key and never a value', (k) => {
     const env = { ...base, ...entra } as Record<string, string>;
     delete env[k];
     let msg = '';
@@ -33,6 +33,19 @@ describe('AUTH_MODE=entra configuration', () => {
     expect(() => parseConfig({ ...base, ...entra, ENTRA_CLIENT_ID: 'nope' })).toThrow(/client .*GUID/);
     expect(() => parseConfig({ ...base, ...entra, ENTRA_REDIRECT_URI: 'not a url' })).toThrow(/absolute URL/);
     expect(() => parseConfig({ ...base, ...entra, ENTRA_REDIRECT_URI: 'https://x.example/other' })).toThrow(/\/auth\/callback/);
+  });
+
+  it('the redirect URI follows PUBLIC_BASE_URL + BASE_PATH: nothing else to keep in step', () => {
+    expect(parseConfig({ ...base, ...entra }).entra!.redirectUri).toBe('https://x.example/auth/callback');
+    expect(parseConfig({ ...base, ...entra, PUBLIC_BASE_URL: 'https://voting.namra.org.na', BASE_PATH: '/voting-app' }).entra!.redirectUri).toBe('https://voting.namra.org.na/voting-app/auth/callback');
+    expect(parseConfig({ ...base, ...entra, PUBLIC_BASE_URL: 'https://voting.namra.org.na/voting-app/', BASE_PATH: '/voting-app' }).entra!.redirectUri).toBe('https://voting.namra.org.na/voting-app/auth/callback');
+  });
+
+  it('in production an ENTRA_REDIRECT_URI that disagrees with the site address is refused (the old, forgotten override); an equal one is fine', () => {
+    expect(() => parseConfig({ ...base, ...entra, ENTRA_REDIRECT_URI: 'https://old-host.example/auth/callback' })).toThrow(/differs from PUBLIC_BASE_URL \+ BASE_PATH/);
+    expect(parseConfig({ ...base, ...entra, ENTRA_REDIRECT_URI: 'https://x.example/auth/callback' }).entra!.redirectUri).toBe('https://x.example/auth/callback');
+    // outside production an override is accepted as given (a developer pointing at a tunnel)
+    expect(parseConfig({ ...base, ...entra, NODE_ENV: 'development', ENTRA_REDIRECT_URI: 'https://tunnel.example/auth/callback' }).entra!.redirectUri).toBe('https://tunnel.example/auth/callback');
   });
 
   it('other modes do not need ENTRA_* settings', () => {

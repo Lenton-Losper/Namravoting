@@ -5,6 +5,7 @@ import { isVotingWindowOpen, shouldAutoClose } from '../domain/status.js';
 import { refreshStatus } from './campaigns.js';
 import { restampAfterVote } from './tallies.js';
 import { logNotMember, umojaStanding } from './umoja.js';
+import { isListed } from './listed.js';
 import { BallotRejected, validateBallot, validateSelection } from '../domain/rules.js';
 
 /** Test seam: lets a test force a specific interleaving (e.g. a close landing right after the status read). Empty in production. */
@@ -65,8 +66,7 @@ export async function castVote(voterOid: string, voterEmail: string, shareToken:
 
         let memberKey = `oid:${voterOid}`;
         if (camp.eligibility === 'list') {
-          const e = await c.query('SELECT 1 FROM eligible_voters WHERE campaign_id = $1 AND voter_email = $2', [camp.id, voterEmail.toLowerCase()]);
-          if (e.rowCount === 0) return { kind: 'not_eligible' } as Outcome;
+          if (!(await isListed(c, camp.id, voterOid, voterEmail))) return { kind: 'not_eligible' } as Outcome;
         }
         if (camp.eligibility === 'umoja') {
           // Same check as the ballot page (services/umoja.ts), against the list frozen when the campaign started.

@@ -4,6 +4,7 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../../src/app.js';
 import { closePool } from '../../src/db.js';
 import { anonymiseUsers, findPurgeable, purgeCampaign } from '../../src/services/retention.js';
+import { eligibleListHash } from '../../src/domain/eligibility.js';
 import { ADMIN_A, S1, S2, S3, TEST_APP_URL, closeOwner, login, ownerDb, png, resetDb } from '../helpers.js';
 import { pgc } from '../testDb.js';
 
@@ -111,9 +112,7 @@ describe('people who have left', () => {
     const admin = await login(app, ADMIN_A);
     await login(app, S1);
     await ownerDb().query("UPDATE users SET employee_code = 'TST0445' WHERE entra_oid = $1", [S1.oid]);
-    await ownerDb().query('INSERT INTO eligible_voters (campaign_id, voter_email) SELECT id, $1 FROM campaigns', [S1.email]);
-    const c = await campaign(admin, { close: false });
-    await ownerDb().query('INSERT INTO eligible_voters (campaign_id, voter_email) VALUES ($1, $2) ON CONFLICT DO NOTHING', [c.id, S1.email]);
+    const c = await campaign(admin, { close: false });   // S1 is on its list (and the campaign has started, so the list is guarded: migration 023)
     const dry = await anonymiseUsers(ownerDb(), [S1.email], false);
     expect(dry).toEqual([expect.objectContaining({ outcome: 'anonymised' })]);
     expect((await ownerDb().query('SELECT display_name FROM users WHERE entra_oid = $1', [S1.oid])).rows[0].display_name).toBe(S1.displayName);   // dry run changed nothing
@@ -123,7 +122,9 @@ describe('people who have left', () => {
     const u = (await ownerDb().query('SELECT email, display_name, employee_code FROM users WHERE entra_oid = $1', [S1.oid])).rows[0];
     expect(u).toEqual({ email: `removed-${S1.oid}@removed.invalid`, display_name: 'Former staff member', employee_code: null });
     expect(await count('SELECT count(*)::int AS n FROM sessions WHERE user_oid = $1', [S1.oid])).toBe(0);
-    expect(await count('SELECT count(*)::int AS n FROM eligible_voters WHERE voter_email = $1', [S1.email])).toBe(0);
+    // the campaign has started: the address is MARKED as left, never removed, so the eligible count and the quorum stay put
+    expect((await ownerDb().query('SELECT left_at IS NOT NULL AS left FROM eligible_voters WHERE voter_email = $1 AND campaign_id = $2', [S1.email, c.id])).rows).toEqual([{ left: true }]);
+    expect(await count('SELECT count(*)::int AS n FROM eligible_voters WHERE campaign_id = $1', [c.id])).toBe(3);
     expect(await count("SELECT count(*)::int AS n FROM audit_log WHERE action = 'retention.user_anonymised' AND details->>'user' = $1", [S1.oid])).toBe(1);
     expect((await anonymiseUsers(ownerDb(), [u.email], true))[0].outcome).toBe('already_anonymised');   // idempotent
     expect((await anonymiseUsers(ownerDb(), [S1.email], true))[0].outcome).toBe('not_found');           // the old address no longer exists
@@ -136,5 +137,76 @@ describe('people who have left', () => {
     const res = await anonymiseUsers(ownerDb(), [ADMIN_A.email], true);
     expect(res[0].outcome).toBe('owns_active_campaigns');
     expect((await ownerDb().query('SELECT display_name FROM users WHERE entra_oid = $1', [ADMIN_A.oid])).rows[0].display_name).toBe(ADMIN_A.displayName);
+  });
+});
+
+describe('leavers on voter lists (migration 023)', () => {
+  const lists = async (id: string) => (await ownerDb().query('SELECT voter_email, left_at IS NOT NULL AS left FROM eligible_voters WHERE campaign_id = $1 ORDER BY voter_email', [id])).rows;
+  const audits = async (action: string) => (await ownerDb().query('SELECT campaign_id, actor_oid, details FROM audit_log WHERE action = $1 ORDER BY seq', [action])).rows;
+
+  it('an open campaign keeps the address, marked as left: the list and the eligible count do not move', async () => {
+    const admin = await login(app, ADMIN_A);
+    await login(app, S1);
+    const c = await campaign(admin, { close: false });
+    const res = await anonymiseUsers(ownerDb(), [S1.email], true);
+    expect(res).toEqual([expect.objectContaining({ outcome: 'anonymised', marked: 1, removed: 0 })]);
+    expect(await lists(c.id)).toEqual([{ voter_email: S1.email, left: true }, { voter_email: S2.email, left: false }, { voter_email: S3.email, left: false }].sort((a, b) => a.voter_email.localeCompare(b.voter_email)));
+    expect(await count('SELECT count(*)::int AS n FROM eligible_voters WHERE campaign_id = $1', [c.id])).toBe(3);
+    // the one fingerprint of the list is unchanged: nothing was added or removed
+    expect((await ownerDb().query('SELECT eligible_list_sha256($1) AS h', [c.id])).rows[0].h).toBe(eligibleListHash([S1.email, S2.email, S3.email]));
+  });
+
+  it('a closed campaign keeps the same eligible count and quorum after a leaver is processed', async () => {
+    const admin = await login(app, ADMIN_A);
+    await login(app, S1);
+    const c = await campaign(admin, { archive: false });
+    const before = (await admin.get(`/api/campaigns/${c.id}/results`).expect(200)).body.turnout;
+    await anonymiseUsers(ownerDb(), [S1.email], true);
+    const after = (await admin.get(`/api/campaigns/${c.id}/results`).expect(200)).body.turnout;
+    expect(before).toEqual({ votes: 3, eligible: 3 });
+    expect(after).toEqual(before);
+    expect((await admin.get(`/api/campaigns/${c.id}`).expect(200)).body.eligible_summary).toMatchObject({ count: 3, left: 1 });
+  });
+
+  it('a draft is still being written, so the address is removed from it', async () => {
+    const admin = await login(app, ADMIN_A);
+    await login(app, S1);
+    const d = (await admin.post('/api/campaigns').send({ title: 'Draft vote', eligibility: 'list', emails: [S1.email, S2.email] }).expect(201)).body;
+    const res = await anonymiseUsers(ownerDb(), [S1.email], true);
+    expect(res).toEqual([expect.objectContaining({ outcome: 'anonymised', marked: 0, removed: 1 })]);
+    expect(await lists(d.id)).toEqual([{ voter_email: S2.email, left: false }]);
+  });
+
+  it('every affected campaign gets its own audit entry (no address in it), plus one for the person', async () => {
+    const admin = await login(app, ADMIN_A);
+    await login(app, S1);
+    const open = await campaign(admin, { close: false });
+    const draft = (await admin.post('/api/campaigns').send({ title: 'Draft vote', eligibility: 'list', emails: [S1.email, S2.email] }).expect(201)).body;
+    await anonymiseUsers(ownerDb(), [S1.email], true);
+    const marked = await audits('retention.leaver_marked');
+    expect(marked).toHaveLength(1);
+    expect(marked[0]).toMatchObject({ campaign_id: open.id, actor_oid: null, details: { user: S1.oid, marked: 1, status: 'open' } });
+    const removed = await audits('retention.leaver_removed');
+    expect(removed).toHaveLength(1);
+    expect(removed[0]).toMatchObject({ campaign_id: draft.id, actor_oid: null, details: { user: S1.oid, removed: 1 } });
+    expect((await audits('retention.user_anonymised'))[0].details).toMatchObject({ user: S1.oid, lists_marked: 1, lists_removed: 1 });
+    expect(JSON.stringify([marked, removed])).not.toContain(S1.email);
+  });
+
+  it('a dry run marks and removes nothing', async () => {
+    const admin = await login(app, ADMIN_A);
+    await login(app, S1);
+    const c = await campaign(admin, { close: false });
+    await anonymiseUsers(ownerDb(), [S1.email], false);
+    expect((await lists(c.id)).every((r) => !r.left)).toBe(true);
+    expect(await audits('retention.leaver_marked')).toEqual([]);
+  });
+
+  it('purging a closed, archived campaign passes the guard and records the fingerprint of the list it removed', async () => {
+    const admin = await login(app, ADMIN_A);
+    const c = await campaign(admin);
+    await purgeCampaign(ownerDb(), c.id, async () => undefined);
+    const a = (await ownerDb().query("SELECT details FROM audit_log WHERE campaign_id = $1 AND action = 'retention.purged'", [c.id])).rows[0];
+    expect(a.details).toMatchObject({ eligible_voters_removed: 3, removed_list_sha256: eligibleListHash([S1.email, S2.email, S3.email]) });
   });
 });

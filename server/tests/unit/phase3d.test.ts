@@ -94,16 +94,19 @@ describe('SEC-23: the deploy script only asks for, and sends, what the active mo
     expect(planDeploy(noToken, entra).problems).toContain('CLOUDFLARE_API_TOKEN is missing from .env');
     expect(planDeploy({ ...noToken, WRANGLER_OAUTH: '1' }, entra).problems).toEqual([]);
   });
-  it('the real worker/wrangler.jsonc parses (comments and all) and is deployable in its mode', () => {
+  it('the real worker/wrangler.jsonc parses (comments and all) and is deployable in entra mode, with no demo settings left in it', () => {
     const w = parseJsonc(fs.readFileSync(path.resolve(import.meta.dirname, '../../../worker/wrangler.jsonc'), 'utf8'));
-    expect(w.vars.AUTH_MODE).toBe('email-demo');                               // demo-fallback branch: DEMO-ONLY email sign-in while the Entra secret is expired
-    expect(w.vars.DEMO).toBe('true');                                          // email-demo refuses to start in production without it
+    expect(w.vars.AUTH_MODE).toBe('entra');                                    // Microsoft sign-in is live again; email-demo stays in the code but is off
     expect(w.vars.NODE_ENV).toBe('production');
+    expect(w.vars).not.toHaveProperty('DEMO');                                  // no demo switch in production config
+    expect(w.vars).not.toHaveProperty('DEMO_MEMBER_EMAILS');                    // nobody is a member by an email override
+    expect(w.vars).not.toHaveProperty('DEMO_USERS');
+    expect(w.vars).not.toHaveProperty('ENTRA_REDIRECT_URI');                    // it follows PUBLIC_BASE_URL + BASE_PATH
     expect(w.observability.logs.invocation_logs).toBe(false);                  // SEC-19: no per-request URL logs
-    expect(planDeploy(env, w.vars).problems).toEqual([]);                      // email-demo needs no password secret
-    const sent = planDeploy({ ...env, ADMIN_DEMO_PASSWORD: 'left-over' }, w.vars).names;
-    expect(sent).not.toContain('ADMIN_DEMO_PASSWORD'); expect(sent).toContain('DEMO_USERS');
-    expect(sent).not.toContain('ENTRA_CLIENT_SECRET'); expect(sent).not.toContain('CF_ACCESS_AUD');
+    expect(planDeploy(env, w.vars).problems).toEqual([]);
+    const sent = planDeploy({ ...env, ADMIN_DEMO_PASSWORD: 'left-over', DEMO_USERS: '{}', CF_ACCESS_AUD: 'aud' }, w.vars).names;
+    expect(sent).toContain('ENTRA_CLIENT_SECRET');
+    for (const k of ['ADMIN_DEMO_PASSWORD', 'DEMO_USERS', 'CF_ACCESS_AUD']) expect(sent, `${k} must not ride along`).not.toContain(k);
   });
   it('parseJsonc handles comments, strings that contain slashes, and trailing commas', () => {
     expect(parseJsonc('{ // c\n "a": "http://x//y", /* b */ "b": [1,2,], }')).toEqual({ a: 'http://x//y', b: [1, 2] });

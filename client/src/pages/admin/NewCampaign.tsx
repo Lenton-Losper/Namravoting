@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api, fromLocalInput, type Campaign } from '../../api';
-import { EligibilityPicker, parseEmails, type EligMode } from '../../eligibility';
+import { EligibilityPicker, parseEmails, type EligMode, type ListWarnings } from '../../eligibility';
 import { BackLink, ErrorBox, PageTitle, SectionTitle } from '../../ui';
 
 /** Step 1: details, voting window and who may vote. Candidates are added on the next screen (the draft needs an id first). */
@@ -26,11 +26,11 @@ export function NewCampaign() {
     e.preventDefault(); setBusy(true); setError(null);
     try {
       // The mode chosen here is saved WITH the campaign (it used to be chosen only on the next screen and had to be saved separately).
-      const c = await api<Campaign>('POST', '/api/campaigns', {
+      const c = await api<Campaign & { eligible_warnings?: ListWarnings }>('POST', '/api/campaigns', {
         title, description: description || null, opens_at: fromLocalInput(opens), closes_at: fromLocalInput(closes), results_release_at: fromLocalInput(release),
         eligibility, ...(eligibility === 'list' ? { emails } : {}), allow_edits_after_start: allowEdits, allow_abstain: allowAbstain, require_approval: needApproval, ...(eligibility !== 'all' && quorum ? { quorum_percent: Number(quorum) } : {}),
       });
-      nav(`/admin/c/${c.id}/edit`);
+      nav(`/admin/c/${c.id}/edit`, { state: c.eligible_warnings ? { listWarnings: c.eligible_warnings } : undefined });   // exact entries the server skipped or flagged
     } catch (err) { setError((err as Error).message); setBusy(false); }
   }
 

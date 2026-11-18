@@ -106,6 +106,11 @@ describe('checkSecretExpiry (item 12)', () => {
     expect(gone.ok).toBe(false); expect(gone.warn).toBeUndefined(); expect(gone.detail).toContain('EXPIRED 11 day(s) ago');
     expect(checkSecretExpiry('2026-11-13', now).detail).toContain('expires in 1 day(s)');     // the whole last day still counts
   });
+  it('the warning starts exactly 30 days before expiry: 31 days left is fine, 30 days left warns (and does not fail yet)', () => {
+    expect(checkSecretExpiry('2026-12-13', now)).toMatchObject({ ok: true, detail: expect.stringContaining('31 days left') });
+    const t = checkSecretExpiry('2026-12-12', now);
+    expect(t).toMatchObject({ ok: false, warn: true }); expect(t.detail).toContain('expires in 30 days');
+  });
   it('an unset or unreadable date is a warning that says what to set', () => {
     expect(checkSecretExpiry(undefined, now)).toMatchObject({ ok: false, warn: true, detail: expect.stringContaining('ENTRA_SECRET_EXPIRES_AT') });
     expect(checkSecretExpiry('soon', now)).toMatchObject({ ok: false, warn: true });

@@ -2,7 +2,8 @@ import { Router, type RequestHandler, type Response } from 'express';
 import { z } from 'zod';
 import { getConfig } from '../config.js';
 import { getPool, withTx } from '../db.js';
-import { HttpError } from '../errors.js';
+import { HttpError, notFound } from '../errors.js';
+import { sessionRawId } from '../auth/sessions.js';
 import { currentUser } from '../auth/index.js';
 import { normalizeEmail } from '../domain/eligibility.js';
 import { normalizeEmployeeCode } from '../domain/employeeCode.js';
@@ -49,9 +50,19 @@ export function lateRouter(d: { loadOwned: RequestHandler; loadRunnable: Request
         if (b.email === undefined) throw new HttpError(400, 'This is a listed vote: give an email address', 'needs_email');
         const email = normalizeEmail(b.email);
         if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new HttpError(400, 'That is not a valid email address', 'bad_email');
-        const ins = await tx.query('INSERT INTO eligible_voters (campaign_id, voter_email) VALUES ($1, $2) ON CONFLICT DO NOTHING', [c.id, email]);
-        if (!ins.rowCount) throw new HttpError(409, 'That email address is already on the voter list', 'already_listed');
-        who = { email };
+        // The database is the only way in: late_add_eligible() re-checks creator and state from the live session, switches the list guard off
+        // for this one insert, and writes the audit entry itself (with the SHA-256 of the list after the change). Migration 023.
+        let r: { inserted: boolean };
+        try { r = (await tx.query('SELECT late_add_eligible($1, $2, $3, $4) AS r', [c.id, sessionRawId(req), email, b.reason])).rows[0].r; } catch (e) {
+          const code = (e as { code?: string }).code;
+          if (code === 'NR401') throw new HttpError(401, 'Not signed in');
+          if (code === 'NR404') throw notFound();
+          if (code === 'NR400') throw new HttpError(400, (e as Error).message, 'invalid');
+          if (code === 'NR409') throw new HttpError(409, (e as Error).message, 'not_open');
+          throw e;
+        }
+        if (!r.inserted) throw new HttpError(409, 'That email address is already on the voter list', 'already_listed');
+        return { email };
       } else {
         if (b.employee_code === undefined) throw new HttpError(400, 'This is an Umoja vote: give the employee code', 'needs_code');
         const code = normalizeEmployeeCode(b.employee_code);

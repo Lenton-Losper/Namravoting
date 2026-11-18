@@ -10,6 +10,7 @@ import { signingKey, verifyKeys } from './keys.js';
 import { createSession, endSession, rolesFor, sessionUser } from './sessions.js';
 import { sign, verify } from './signing.js';
 import { cleanLine } from '../domain/text.js';
+import { bindListedVoter } from '../services/listed.js';
 import { ADMIN_ROLE, type AuthUser } from './types.js';
 
 /**
@@ -98,10 +99,13 @@ export function mountEntra(app: Express, config: Config, opts: EntraOptions = {}
       if (claims.nonce !== st.n) throw reject('nonce mismatch');
       const oid = typeof claims.oid === 'string' ? claims.oid : '';
       if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(oid)) throw reject('no oid');
-      const email = [claims.preferred_username, claims.email].find((v): v is string => typeof v === 'string' && v.includes('@'))?.trim().toLowerCase();
-      if (!email) throw reject('no email');
-
       const graph = await readGraphProfile(graphBase, tokens.access_token, fetch);
+      // WHO this person is, for the voter lists, is their mail address: the `email` claim, then the `mail` claim. `preferred_username` is the
+      // sign-in name (the UPN), which can differ from the mail address, so it is only a last resort when neither is present.
+      const picked = pickEmail(claims);
+      if (!picked) throw reject('no email');
+      if (picked.source === 'preferred_username') console.warn('[entra] no email/mail claim: fell back to preferred_username');
+      const email = picked.email;
       const roles = Array.isArray(claims.roles) ? (claims.roles as unknown[]) : [];
       // Admin = the app role in the token, or the account id in ADMIN_OIDS (SEC-11); email only as a documented fallback.
       // The session stores only what the IdP asserted; roles are recomputed on every request (auth/sessions.ts).
@@ -113,6 +117,8 @@ export function mountEntra(app: Express, config: Config, opts: EntraOptions = {}
         employeeCode: graph.employeeCode,
       };
       await upsertUser(user);
+      // First Microsoft sign-in with a listed address: bind that address on every voter list to THIS account (services/listed.ts).
+      await bindListedVoter(getPool(), user.oid, email);
       await createSession(req, res, config, { oid: user.oid, email, claimAdmin });
       const admin = rolesFor(config, { claimAdmin, oid: user.oid, email }).length > 0;
       res.redirect(config.basePath + landingFor(st.next, admin));
@@ -152,26 +158,40 @@ function pruneFlows(req: Request, res: Response, basePath: string): void {
   for (const f of drop) res.clearCookie(f.name, { httpOnly: true, sameSite: 'lax', path: `${basePath}/auth` });
 }
 
+interface GraphProfile { employeeCode: string | null; displayName: string | null }
+const NO_PROFILE: GraphProfile = { employeeCode: null, displayName: null };
+
+const asEmail = (v: unknown): string | undefined => (typeof v === 'string' && v.includes('@') ? v.trim().toLowerCase() : undefined);
+
+/** The address an account is known by: the `email` claim, the `mail` claim, and only when both are missing `preferred_username`. */
+export function pickEmail(claims: Record<string, unknown>): { email: string; source: 'email' | 'mail' | 'preferred_username' } | null {
+  const candidates: [string | undefined, 'email' | 'mail' | 'preferred_username'][] = [
+    [asEmail(claims.email), 'email'], [asEmail(claims.mail), 'mail'], [asEmail(claims.preferred_username), 'preferred_username'],
+  ];
+  const hit = candidates.find(([v]) => v);
+  return hit ? { email: hit[0]!, source: hit[1] } : null;
+}
+
 /** Graph `GET /me?$select=employeeId,displayName,mail`. Any failure means "no code" (-> not_member), never a failed sign-in. */
-async function readGraphProfile(base: string, accessToken: string, f: typeof fetch): Promise<{ employeeCode: string | null; displayName: string | null }> {
+async function readGraphProfile(base: string, accessToken: string, f: typeof fetch): Promise<GraphProfile> {
   try {
     const r = await f(`${base}/me?$select=employeeId,displayName,mail`, { headers: { authorization: `Bearer ${accessToken}`, accept: 'application/json' } });
-    if (!r.ok) { console.warn(`[entra] Graph /me returned HTTP ${r.status}; user has no employee code`); return { employeeCode: null, displayName: null }; }
+    if (!r.ok) { console.warn(`[entra] Graph /me returned HTTP ${r.status}; user has no employee code`); return NO_PROFILE; }
     const j = (await r.json()) as { employeeId?: unknown; displayName?: unknown };
     const employeeCode = normalizeEmployeeCode(j.employeeId);
     if (!employeeCode) console.warn(`[entra] employeeId ${j.employeeId == null ? 'absent' : 'present but not a valid code'}; user will be not_member`);
     return { employeeCode, displayName: typeof j.displayName === 'string' ? j.displayName : null };
   } catch (e) {
     console.warn(`[entra] Graph /me failed (${e instanceof Error ? e.message.slice(0, 100) : 'error'}); user has no employee code`);
-    return { employeeCode: null, displayName: null };
+    return NO_PROFILE;
   }
 }
 
 async function upsertUser(u: AuthUser): Promise<void> {
   const pool = getPool();
   const run = () => pool.query(
-    `INSERT INTO users (entra_oid, email, display_name, employee_code) VALUES ($1, $2, $3, $4)
-     ON CONFLICT (entra_oid) DO UPDATE SET email = EXCLUDED.email, display_name = EXCLUDED.display_name, employee_code = EXCLUDED.employee_code`,
+    `INSERT INTO users (entra_oid, email, display_name, employee_code, entra_signin_at) VALUES ($1, $2, $3, $4, now())
+     ON CONFLICT (entra_oid) DO UPDATE SET email = EXCLUDED.email, display_name = EXCLUDED.display_name, employee_code = EXCLUDED.employee_code, entra_signin_at = now()`,
     [u.oid, u.email, u.displayName, u.employeeCode]);
   try { await run(); } catch (err) {
     if ((err as { code?: string }).code !== UNIQUE_VIOLATION) throw err;

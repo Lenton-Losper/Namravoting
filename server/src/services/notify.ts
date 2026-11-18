@@ -82,7 +82,8 @@ export async function audienceFor(db: Queryable, c: { id: string; eligibility: '
   if (c.eligibility === 'all') return { mailable: false, total: 0, reachable: 0, pending: [], all: [], unreachable: 0 };
   const rows = c.eligibility === 'list'
     ? (await db.query(
-      `SELECT e.voter_email AS email, EXISTS (SELECT 1 FROM users u JOIN vote_receipts r ON r.voter_oid = u.entra_oid AND r.campaign_id = $1 WHERE u.email = e.voter_email) AS voted
+      `SELECT CASE WHEN e.left_at IS NULL THEN e.voter_email END AS email,   -- a leaver is still counted but cannot be written to
+            EXISTS (SELECT 1 FROM vote_receipts r WHERE r.campaign_id = $1 AND (r.voter_oid = e.voter_oid OR r.voter_oid IN (SELECT u.entra_oid FROM users u WHERE u.email = e.voter_email))) AS voted
          FROM eligible_voters e WHERE e.campaign_id = $1`, [c.id])).rows
     : (await db.query(
       `SELECT u.email, EXISTS (SELECT 1 FROM vote_receipts r WHERE r.campaign_id = $1 AND (r.voter_oid = v.entra_oid OR r.member_key = 'code:' || v.member_code OR r.voter_oid IN (SELECT y.entra_oid FROM users y WHERE y.employee_code = v.member_code))) AS voted

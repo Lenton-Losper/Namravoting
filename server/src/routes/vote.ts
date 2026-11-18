@@ -11,6 +11,7 @@ import { positionVoteBody, tokenParams, uuid, voteBody } from '../domain/validat
 import { getNotices, noticesForVoters, refreshStatus, type CampaignRow } from '../services/campaigns.js';
 import { castVote, notMemberMessage } from '../services/voting.js';
 import { isSnapshotMemberSql, liveMemberKey, logNotMember, umojaStanding } from '../services/umoja.js';
+import { isListed, isListedSql } from '../services/listed.js';
 
 /** Malformed and unknown tokens answer identically (404) so nothing reveals whether a campaign exists. */
 function parseToken(req: Request): string {
@@ -38,7 +39,7 @@ async function standing(c: CampaignRow, u: AuthUser) {
     eligible = !notMember;
   } else {
     eligible = c.eligibility === 'all' ||
-      (await getPool().query('SELECT 1 FROM eligible_voters WHERE campaign_id = $1 AND voter_email = $2', [c.id, u.email.toLowerCase()])).rowCount! > 0;
+      await isListed(getPool(), c.id, u.oid, u.email);
   }
   // One vote per member and position (SEC-03): a second account of the same member sees "already voted" too. `votedPositions` are the
   // caller's own receipts (positions only: a receipt holds no candidate). "Already voted" for the campaign means every position is done.
@@ -102,7 +103,7 @@ export function voteRouter(): Router {
                OR (c.status = 'closed' AND c.archived_at IS NULL
                    AND EXISTS (SELECT 1 FROM vote_receipts v WHERE v.campaign_id = c.id AND (v.voter_oid = $1 OR v.member_key = ANY($3::text[])))))
           AND (c.eligibility = 'all' OR (c.eligibility = 'umoja' AND ${isSnapshotMemberSql('c.id', '$1')})
-               OR (c.eligibility = 'list' AND EXISTS (SELECT 1 FROM eligible_voters e WHERE e.campaign_id = c.id AND e.voter_email = $2)))
+               OR (c.eligibility = 'list' AND ${isListedSql('c.id', '$1', '$2')}))
         ORDER BY c.closes_at NULLS LAST, c.created_at DESC`, [u.oid, u.email.toLowerCase(), myKeys]);
     res.set('Cache-Control', 'no-store').json({
       campaigns: rows.map((c) => ({

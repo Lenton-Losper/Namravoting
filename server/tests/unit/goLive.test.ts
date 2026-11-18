@@ -8,7 +8,7 @@ const CLIENT = '281ab38e-9ff5-4f17-88ea-18bdc3e65457';
 const OID = '0f1d2c3b-4a59-4687-8795-a4b3c2d1e0f9';
 const base = {
   AUTH_MODE: 'entra', NODE_ENV: 'production', SESSION_SECRET: 'x'.repeat(40), DATABASE_URL: 'postgres://x@localhost/x', STORAGE: 'disk',
-  ENTRA_TENANT_ID: TENANT, ENTRA_CLIENT_ID: CLIENT, ENTRA_CLIENT_SECRET: 's', ENTRA_REDIRECT_URI: 'https://app.test/auth/callback',
+  ENTRA_TENANT_ID: TENANT, ENTRA_CLIENT_ID: CLIENT, ENTRA_CLIENT_SECRET: 's', PUBLIC_BASE_URL: 'https://app.test',   // the redirect URI follows it
 };
 const cfg = (extra: Record<string, string> = {}) => parseConfig({ ...base, ...extra } as NodeJS.ProcessEnv);
 

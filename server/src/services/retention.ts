@@ -7,8 +7,11 @@ import type pg from 'pg';
  *  - purgeCampaign: for a campaign that is closed AND archived for N months, removes the personal data (receipts, the voter list, the
  *    Umoja snapshot, candidate photos). The sealed result (tallies, turnout, the audit chain) stays, and so does the campaign row.
  *  - anonymiseUsers: for people who have left, replaces name, email and employee code and ends their sessions; the account id stays, so
- *    the audit log still makes sense ("a former staff member did this").
- * Every step is audited (actor null = the job) and nothing is removed from a campaign that is not closed and archived.
+ *    the audit log still makes sense ("a former staff member did this"). On a campaign that has STARTED their address is never removed from
+ *    the voter list: it is MARKED as left (left_at), so the eligible count and the quorum do not move. Only a draft's list is edited.
+ * Every step is audited (actor null = the job), per affected campaign, and nothing is removed from a campaign that is not closed and archived.
+ * The voter list of a started campaign is guarded by a database trigger (migration 023); this job passes it with a named, transaction-long
+ * reason ('retention') that the application role cannot use.
  */
 
 export interface Purgeable { id: string; title: string; closed_at: Date; archived_at: Date; receipts: number }
@@ -36,12 +39,17 @@ export async function purgeCampaign(pool: pg.Pool, id: string, deleteFile: (name
     if (!c || c.status !== 'closed' || !c.archived_at || c.receipts_purged_at) { await client.query('ROLLBACK'); return null; }
     photos = (await client.query('SELECT photo_path FROM candidates WHERE campaign_id = $1 AND photo_path IS NOT NULL', [id])).rows.map((r) => r.photo_path as string);
     const rc = (await client.query('DELETE FROM vote_receipts WHERE campaign_id = $1', [id])).rowCount ?? 0;
+    // What is about to go, fingerprinted: the audit entry keeps the SHA-256 of the list (and of the frozen Umoja list), not the addresses.
+    const hashes = (await client.query('SELECT eligible_list_sha256($1) AS listed, campaign_voters_sha256($1) AS umoja', [id])).rows[0];
+    await client.query("SELECT set_config('namra.eligible_bypass', 'retention', true)");   // this transaction only
     const ev = (await client.query('DELETE FROM eligible_voters WHERE campaign_id = $1', [id])).rowCount ?? 0;
+    await client.query("SELECT set_config('namra.eligible_bypass', '', true)");
     const cv = (await client.query('DELETE FROM campaign_voters WHERE campaign_id = $1', [id])).rowCount ?? 0;
     await client.query('UPDATE campaigns SET receipts_purged_at = now(), photos_purged_at = now() WHERE id = $1', [id]);
     out = { id, title: c.title, receipts: rc, eligible_voters: ev, snapshot_rows: cv, photos: photos.length };
     await client.query("INSERT INTO audit_log (actor_oid, action, campaign_id, details) VALUES (NULL, 'retention.purged', $1, $2)",
-      [id, JSON.stringify({ title: c.title, receipts_removed: rc, eligible_voters_removed: ev, snapshot_rows_removed: cv, photos_removed: photos.length })]);
+      [id, JSON.stringify({ title: c.title, receipts_removed: rc, eligible_voters_removed: ev, snapshot_rows_removed: cv, photos_removed: photos.length,
+        ...(ev ? { removed_list_sha256: hashes.listed } : {}), ...(cv ? { removed_snapshot_sha256: hashes.umoja } : {}) })]);
     await client.query('COMMIT');
   } catch (e) { await client.query('ROLLBACK').catch(() => undefined); throw e; } finally { client.release(); }
   // Files go only AFTER the database commit: a storage hiccup never undoes the purge.
@@ -50,7 +58,8 @@ export async function purgeCampaign(pool: pg.Pool, id: string, deleteFile: (name
 }
 
 export type LeaverOutcome = 'anonymised' | 'not_found' | 'already_anonymised' | 'owns_active_campaigns';
-export interface LeaverResult { email_hash: string; outcome: LeaverOutcome }
+/** `marked`: voter lists of started campaigns where the address was marked as left; `removed`: voter lists of drafts it was removed from. */
+export interface LeaverResult { email_hash: string; outcome: LeaverOutcome; marked?: number; removed?: number }
 
 const REMOVED_DOMAIN = '@removed.invalid';
 
@@ -67,18 +76,35 @@ export async function anonymiseUsers(pool: pg.Pool, emails: string[], apply: boo
     // Someone who still runs a draft or open campaign is not removed: their name is what the voters and the audit trail rely on.
     const active = (await pool.query("SELECT 1 FROM campaigns WHERE created_by = $1 AND status IN ('draft', 'open') LIMIT 1", [u.entra_oid])).rowCount;
     if (active) { out.push({ email_hash: h, outcome: 'owns_active_campaigns' }); continue; }
+    let marked = 0, removed = 0;
     if (apply) {
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
         await client.query("UPDATE users SET email = 'removed-' || entra_oid::text || $2, display_name = 'Former staff member', employee_code = NULL WHERE entra_oid = $1", [u.entra_oid, REMOVED_DOMAIN]);
         await client.query('DELETE FROM sessions WHERE user_oid = $1', [u.entra_oid]);
-        await client.query('DELETE FROM eligible_voters WHERE voter_email = $1', [raw]);
-        await client.query("INSERT INTO audit_log (actor_oid, action, campaign_id, details) VALUES (NULL, 'retention.user_anonymised', NULL, $1)", [JSON.stringify({ user: u.entra_oid })]);
+        // Voter lists. A draft is still being written, so the address simply goes. A started campaign keeps it, marked as left, so its eligible
+        // count and quorum stay what voters and the creator saw (and the sealed list hash still describes the list). One audit entry per campaign.
+        const lists = (await client.query(
+          `SELECT e.campaign_id, c.status, c.archived_at FROM eligible_voters e JOIN campaigns c ON c.id = e.campaign_id WHERE e.voter_email = $1 ORDER BY e.campaign_id FOR UPDATE OF e`, [raw])).rows;
+        for (const l of lists) {
+          if (l.status === 'draft') {
+            await client.query('DELETE FROM eligible_voters WHERE campaign_id = $1 AND voter_email = $2', [l.campaign_id, raw]);
+            await client.query("INSERT INTO audit_log (actor_oid, action, campaign_id, details) VALUES (NULL, 'retention.leaver_removed', $1, $2)", [l.campaign_id, JSON.stringify({ user: u.entra_oid, removed: 1 })]);
+            removed++;
+          } else {
+            await client.query("SELECT set_config('namra.eligible_bypass', 'retention', true)");
+            await client.query('UPDATE eligible_voters SET left_at = now() WHERE campaign_id = $1 AND voter_email = $2 AND left_at IS NULL', [l.campaign_id, raw]);
+            await client.query("SELECT set_config('namra.eligible_bypass', '', true)");
+            await client.query("INSERT INTO audit_log (actor_oid, action, campaign_id, details) VALUES (NULL, 'retention.leaver_marked', $1, $2)", [l.campaign_id, JSON.stringify({ user: u.entra_oid, marked: 1, status: l.status })]);
+            marked++;
+          }
+        }
+        await client.query("INSERT INTO audit_log (actor_oid, action, campaign_id, details) VALUES (NULL, 'retention.user_anonymised', NULL, $1)", [JSON.stringify({ user: u.entra_oid, lists_marked: marked, lists_removed: removed })]);
         await client.query('COMMIT');
       } catch (e) { await client.query('ROLLBACK').catch(() => undefined); throw e; } finally { client.release(); }
     }
-    out.push({ email_hash: h, outcome: 'anonymised' });
+    out.push({ email_hash: h, outcome: 'anonymised', ...(apply ? { marked, removed } : {}) });
   }
   return out;
 }

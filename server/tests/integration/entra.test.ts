@@ -432,3 +432,88 @@ describe('re-sign-in after a session expired (resume=1)', () => {
     expect(new URL(r.headers.location).searchParams.get('prompt')).toBe('select_account');
   });
 });
+
+// ---- Who a person is: the mail claim, then the account id ------------------------------------------------------------------------------
+describe('identity: the email/mail claim decides the address; the account id decides afterwards', () => {
+  const OID3 = 'cccccccc-dddd-4eee-8fff-000000000000';
+  const STAFF = 'staff@namra.org.na';
+  const emailOf = async (oid: string) => (await ownerDb().query('SELECT email FROM users WHERE entra_oid = $1', [oid])).rows[0]?.email as string | undefined;
+
+  it('uses the `email` claim, not the sign-in name (UPN), when both are present', async () => {
+    await signIn({ claims: { oid: OID, email: 'Real.Mail@namra.org.na', preferred_username: 'upn.name@namra.onmicrosoft.com' } });
+    expect(await emailOf(OID)).toBe('real.mail@namra.org.na');
+  });
+  it('uses the `mail` claim when there is no `email` claim', async () => {
+    await signIn({ claims: { oid: OID, mail: 'The.Mail@namra.org.na', email: undefined, preferred_username: 'upn.name@namra.onmicrosoft.com' } });
+    expect(await emailOf(OID)).toBe('the.mail@namra.org.na');
+  });
+  it('falls back to preferred_username only when neither is there', async () => {
+    await signIn({ claims: { oid: OID, email: undefined, mail: undefined, preferred_username: 'Fallback@namra.org.na' } });
+    expect(await emailOf(OID)).toBe('fallback@namra.org.na');
+  });
+  it('a claim that is not an address is skipped, not trusted', async () => {
+    await signIn({ claims: { oid: OID, email: 'not-an-address', preferred_username: 'ok@namra.org.na' } });
+    expect(await emailOf(OID)).toBe('ok@namra.org.na');
+  });
+
+  /** An open listed vote created by the admin, listing `emails`. */
+  async function listedVote(emails: string[], start = true) {
+    await setMembers([]);
+    const { agent } = await signIn({ claims: { oid: OID2, email: ADMIN_EMAIL, preferred_username: ADMIN_EMAIL, name: 'Boss' } });
+    const a = await asSession(agent);
+    const c = await makeCampaign(a, 2, 'Listed vote', 'all');
+    await a.put(`/api/campaigns/${c.id}/eligible`).send({ mode: 'list', emails }).expect(200);
+    if (start) await a.post(`/api/campaigns/${c.id}/start`).expect(200);
+    return { ...c, admin: a };
+  }
+  const row = async (id: string, email: string) => (await ownerDb().query('SELECT voter_oid FROM eligible_voters WHERE campaign_id = $1 AND voter_email = $2', [id, email])).rows[0];
+
+  it('the first sign-in binds every listed row with that address to the account, and records the Microsoft sign-in', async () => {
+    const c = await listedVote([STAFF], false);
+    expect((await row(c.id, STAFF)).voter_oid).toBeNull();
+    await signIn({ claims: { oid: OID, email: STAFF } });
+    expect((await row(c.id, STAFF)).voter_oid).toBe(OID);
+    expect((await ownerDb().query('SELECT entra_signin_at IS NOT NULL AS seen FROM users WHERE entra_oid = $1', [OID])).rows[0].seen).toBe(true);
+  });
+
+  it('a listed person who signs in only after the vote started can vote (matched by address), and is bound; the receipt is theirs by account id', async () => {
+    const c = await listedVote([STAFF]);
+    const { agent } = await signIn({ claims: { oid: OID, email: STAFF } });
+    const s = await asSession(agent);
+    expect((await s.get(`/api/vote/${c.token}`).expect(200)).body.voterState).toBe('can_vote');
+    await s.post(`/api/vote/${c.token}`).send({ candidateId: c.candidates[0] }).expect(201);
+    expect((await row(c.id, STAFF)).voter_oid).toBe(OID);
+    const rc = (await ownerDb().query('SELECT voter_oid, member_key FROM vote_receipts WHERE campaign_id = $1', [c.id])).rows;
+    expect(rc).toEqual([{ voter_oid: OID, member_key: `oid:${OID}` }]);
+  });
+
+  it('once bound, a renamed account keeps its right to vote (the account decides, not the address)', async () => {
+    const c = await listedVote([STAFF]);
+    await signIn({ claims: { oid: OID, email: STAFF } });                       // binds
+    const { agent } = await signIn({ claims: { oid: OID, email: 'renamed.staff@namra.org.na' } });   // same account, new address
+    expect(await emailOf(OID)).toBe('renamed.staff@namra.org.na');
+    const s = await asSession(agent);
+    expect((await s.get(`/api/vote/${c.token}`).expect(200)).body.voterState).toBe('can_vote');
+    await s.post(`/api/vote/${c.token}`).send({ candidateId: c.candidates[0] }).expect(201);
+  });
+
+  it('once bound, a DIFFERENT account that now holds the same address does not inherit the vote', async () => {
+    const c = await listedVote([STAFF]);
+    await signIn({ claims: { oid: OID, email: STAFF } });                       // the original person binds the row
+    const { agent } = await signIn({ claims: { oid: OID3, email: STAFF } });    // the address is handed to someone else
+    const s = await asSession(agent);
+    await s.get(`/api/vote/${c.token}`).expect(403);
+    await s.post(`/api/vote/${c.token}`).send({ candidateId: c.candidates[0] }).expect(403);
+    expect((await row(c.id, STAFF)).voter_oid).toBe(OID);                       // still the first account
+  });
+
+  it('warns admins about listed addresses that never matched a Microsoft account (an email-demo account does not count)', async () => {
+    const c = await listedVote(['matched@namra.org.na', 'ghost@namra.org.na', 'demo.only@namra.org.na'], false);
+    await signIn({ claims: { oid: OID, email: 'matched@namra.org.na' } });
+    // a pre-Entra / typed-email account for this address: a users row, but never a Microsoft sign-in
+    await ownerDb().query("INSERT INTO users (entra_oid, email, display_name) VALUES ($1, 'demo.only@namra.org.na', 'Demo only')", [OID3]);
+    const s = (await c.admin.get(`/api/campaigns/${c.id}`).expect(200)).body.eligible_summary;
+    expect(s.never_signed_in).toEqual(['demo.only@namra.org.na', 'ghost@namra.org.na']);
+    expect(s.never_signed_in).not.toContain('matched@namra.org.na');
+  });
+});

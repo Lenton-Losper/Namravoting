@@ -13,6 +13,7 @@ import type { CampaignRow } from '../services/campaigns.js';
 import { deletePhoto, MAX_UPLOAD_BYTES, savePhoto } from '../services/images.js';
 import { nominationState } from '../services/positions.js';
 import { logNotMember, umojaStanding } from '../services/umoja.js';
+import { isListed } from '../services/listed.js';
 
 /**
  * Candidate self-nomination. A candidate opens the position's link, signs in with Microsoft and fills in their own profile (name, photo,
@@ -49,8 +50,7 @@ async function mayNominate(c: CampaignRow, u: AuthUser): Promise<{ ok: boolean; 
     if (s.reason !== 'member') { logNotMember(s.reason, c.id, u.oid); return { ok: false, notMember: true }; }
     return { ok: true, notMember: false };
   }
-  const listed = (await getPool().query('SELECT 1 FROM eligible_voters WHERE campaign_id = $1 AND voter_email = $2', [c.id, u.email.toLowerCase()])).rowCount! > 0;
-  return { ok: listed, notMember: false };
+  return { ok: await isListed(getPool(), c.id, u.oid, u.email), notMember: false };
 }
 
 const profileOut = (k: Record<string, unknown> | undefined) => (k ? {

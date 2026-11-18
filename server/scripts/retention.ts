@@ -53,7 +53,7 @@ try {
   if (lf) {
     const emails = readFileSync(path.resolve(process.env.INIT_CWD ?? process.cwd(), lf), 'utf8').split(/\r?\n/);
     say(`Leavers: ${emails.filter((e) => e.trim()).length} entries ${apply ? '' : '(dry run)'}`);
-    for (const r of await anonymiseUsers(pool, emails, apply)) say(`  ${r.email_hash}: ${apply || r.outcome !== 'anonymised' ? r.outcome : 'would be anonymised'}`);
+    for (const r of await anonymiseUsers(pool, emails, apply)) say(`  ${r.email_hash}: ${apply || r.outcome !== 'anonymised' ? r.outcome : 'would be anonymised'}${r.marked || r.removed ? ` (voter lists: ${r.marked ?? 0} marked as left, ${r.removed ?? 0} drafts edited)` : ''}`);
   }
 } finally { await pool.end(); }
 if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, '### Retention\n```\n' + lines.join('\n') + '\n```\n');

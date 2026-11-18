@@ -13,7 +13,7 @@ interface Env {
   // secrets
   SESSION_SECRET: string; DEMO_USERS?: string; ENTRA_CLIENT_SECRET: string; DATABASE_URL: string; R2_ACCESS_KEY_ID: string; R2_SECRET_ACCESS_KEY: string; R2_ENDPOINT: string;
   // vars
-  ENTRA_TENANT_ID: string; ENTRA_CLIENT_ID: string; ENTRA_REDIRECT_URI: string; ADMIN_EMAILS: string; DEMO_MEMBER_EMAILS: string; DEMO?: string; ADMIN_OIDS?: string; ADMIN_EMAILS_FALLBACK?: string; ENTRA_SECRET_EXPIRES_AT?: string; NOTIFY_SENDER?: string; LATE_VOTERS?: string;
+  ENTRA_TENANT_ID: string; ENTRA_CLIENT_ID: string; ENTRA_REDIRECT_URI?: string; ADMIN_EMAILS: string; DEMO_MEMBER_EMAILS?: string; DEMO?: string; ADMIN_OIDS?: string; ADMIN_EMAILS_FALLBACK?: string; ENTRA_SECRET_EXPIRES_AT?: string; NOTIFY_SENDER?: string; LATE_VOTERS?: string;
   NODE_ENV: string; AUTH_MODE: string; STORAGE: string; R2_BUCKET: string; PUBLIC_BASE_URL: string;
   CF_ACCESS_TEAM_DOMAIN: string; CF_ACCESS_AUD: string; SLEEP_AFTER_MINUTES?: string;
 }

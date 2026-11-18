@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
-import { Link, Navigate, useParams } from 'react-router-dom';
+import { Link, Navigate, useLocation, useParams } from 'react-router-dom';
 import { api, fromLocalInput, toLocalInput, type Candidate, type CampaignDetail } from '../../api';
-import { EligibilityPicker, parseEmails, type EligMode } from '../../eligibility';
+import { EligibilityPicker, ListNotes, parseEmails, TestModeWarning, type EligMode, type ListWarnings } from '../../eligibility';
 import { BackLink, ErrorBox, PageTitle, SectionTitle, Spinner, Thumb } from '../../ui';
 
 /** `live` = the campaign is already open and was created with "Allow edits after start": only some things can still change. */
@@ -161,6 +161,10 @@ const modeLabel = (c: CampaignDetail) => c.eligibility === 'all' ? 'All signed-i
  * with "Done" silently kept the old mode.) The email list needs an explicit save, and "Done" waits until it has been saved.
  */
 function EligibilitySection({ c, live, onSaved, onDirty }: { c: CampaignDetail; live: boolean; onSaved: () => void; onDirty: (d: boolean) => void }) {
+  // What the server skipped or flagged when the list was saved: kept after the save (an entry that is not an address is not stored, so it cannot be shown again later).
+  const location = useLocation();
+  const first = (location.state as { listWarnings?: ListWarnings } | null)?.listWarnings ?? null;
+  const [warnings, setWarnings] = useState<ListWarnings | null>(first);
   const [mode, setMode] = useState<EligMode>(c.eligibility);
   const [text, setText] = useState(c.eligible_emails.join('\n'));
   const [msg, setMsg] = useState<string | null>(null);
@@ -173,7 +177,8 @@ function EligibilitySection({ c, live, onSaved, onDirty }: { c: CampaignDetail; 
   async function save(m: EligMode) {
     setError(null); setMsg(null);
     try {
-      await api('PUT', `/api/campaigns/${c.id}/eligible`, m === 'list' ? { mode: m, emails } : { mode: m });
+      const r = await api<{ warnings?: ListWarnings }>('PUT', `/api/campaigns/${c.id}/eligible`, m === 'list' ? { mode: m, emails } : { mode: m });
+      setWarnings(m === 'list' ? r.warnings ?? null : null);
       setMsg('Saved.'); onSaved();
     } catch (e) { setError((e as Error).message); setMode(c.eligibility); }
   }
@@ -183,8 +188,10 @@ function EligibilitySection({ c, live, onSaved, onDirty }: { c: CampaignDetail; 
     return (
       <section className="form-section">
         <SectionTitle icon="lock">Eligibility</SectionTitle>
+        <TestModeWarning mode={c.eligibility} />
         <p>{modeLabel(c)}</p>
         <p className="field-helper">Locked: who can vote was frozen when voting started.</p>
+        {c.eligible_summary && <ListNotes notNamra={c.eligible_summary.not_namra} neverSignedIn={c.eligible_summary.never_signed_in} left={c.eligible_summary.left} />}
       </section>
     );
   }
@@ -201,6 +208,9 @@ function EligibilitySection({ c, live, onSaved, onDirty }: { c: CampaignDetail; 
           </div>
         )}
         {msg && !dirty && <span className="ok">{msg}</span>}
+        {mode === 'list' && !dirty && (warnings || c.eligible_summary) && (
+          <ListNotes invalid={warnings?.invalid} notNamra={c.eligible_summary?.not_namra ?? warnings?.not_namra} neverSignedIn={c.eligible_summary?.never_signed_in ?? warnings?.never_signed_in} left={c.eligible_summary?.left} />
+        )}
       </div>
     </section>
   );

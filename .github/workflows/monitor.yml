@@ -4,8 +4,9 @@ name: Monitor
 # emails the people watching this repository / who last edited this workflow, and the run shows red in the Actions tab.
 # The Microsoft checks (the sign-in redirect, the secret, its expiry) run only while the app reports AUTH_MODE=entra (read from /api/session); with the
 # typed-email demo they are skipped. If the mode cannot be read they are kept, so a broken answer never switches the alert off.
-# Item 12: once an hour it also exercises the Microsoft sign-in secret and warns 30 days before it expires (fails in the last 7 days). Set the
-# repository variable ENTRA_SECRET_EXPIRES_AT (YYYY-MM-DD) from the Entra app registration.
+# Item 12: once an hour it also exercises the Microsoft sign-in secret and checks its expiry: a WARNING from 30 days before it expires, a failure in
+# the last 7 days and after it. Live in AUTH_MODE=entra (the typed-email demo skipped them). Set the repository variable ENTRA_SECRET_EXPIRES_AT
+# (YYYY-MM-DD) from the Entra app registration, and the repository secret ENTRA_CLIENT_SECRET (docs/operations.md, switch-back step 3).
 # Optional extra alert: set the repository secret ALERT_WEBHOOK_URL to a Microsoft Teams or Slack incoming-webhook URL.
 #
 # Notes: GitHub may delay scheduled runs by several minutes, and pauses schedules in a repository with no activity for 60 days

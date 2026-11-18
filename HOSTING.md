@@ -71,15 +71,20 @@ APP_DB_PASSWORD=APP_PASSWORD                     # same as in DATABASE_URL
 ENTRA_TENANT_ID=...
 ENTRA_CLIENT_ID=...
 ENTRA_CLIENT_SECRET=...
-ENTRA_REDIRECT_URI=https://voting.namra.org.na/voting-app/auth/callback
-ENTRA_SECRET_EXPIRES_AT=2027-05-30
+ENTRA_SECRET_EXPIRES_AT=2027-05-30               # the client secret's expiry date: admins are warned 30 days before
 ADMIN_OIDS=<object id>,<object id>               # who can create campaigns
 ```
 
 Generate `SESSION_SECRET`: `node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"` (or `openssl rand -base64 48`).
 
 - `BASE_PATH` is `/voting-app`. Docker sets it for you (in `docker-compose.yml`). For the plain Node install, put `BASE_PATH=/voting-app` in the env file **and** build with it (section 4).
-- **Microsoft sign-in:** in the Entra admin centre, App registration, Authentication, add a **Web** redirect URI exactly equal to `ENTRA_REDIRECT_URI` (it must contain `/voting-app/`). The app refuses to start if `ENTRA_REDIRECT_URI` does not end with `/voting-app/auth/callback`.
+- **Microsoft sign-in, the redirect URI IT must register.** There is no `ENTRA_REDIRECT_URI` setting to fill in: the app builds the address Microsoft sends people back to as `PUBLIC_BASE_URL` + `BASE_PATH` + `/auth/callback`. With the values in this guide that is exactly:
+
+  ```
+  https://voting.namra.org.na/voting-app/auth/callback
+  ```
+
+  In the Entra admin centre: App registrations -> **NamRA Voting** (application/client id `281ab38e-9ff5-4f17-88ea-18bdc3e65457`) -> Authentication -> Add a platform / Add URI -> **Web** -> paste that address, character for character (https, no trailing slash, `/voting-app/` included). It is added next to the existing redirect URI, so the live site keeps working until the move. If `PUBLIC_BASE_URL` is a different host, register that host's address instead: `<PUBLIC_BASE_URL>/voting-app/auth/callback`. The app prints the address it uses in its start-up log line `[config] Microsoft redirect URI: ...`. (An old `ENTRA_REDIRECT_URI` line, if you have one, is only accepted when it is identical to this address; remove it.)
 - `AUTH_MODE=email-demo` and `dev` sign people in without proof of identity. Never use them for a real election. In production the app refuses `dev`.
 - With Docker Compose, avoid the `$` character in values (Compose treats it as a variable).
 - Everything else has safe defaults. The full list is in `.env.example` and `docs/operations.md`.
@@ -294,6 +299,6 @@ Test and reload: `sudo nginx -t && sudo systemctl reload nginx`. Keep `TRUST_PRO
 | `Refusing to start: BASE_PATH is "/voting-app" but client/dist was built for ""` | the client was built without `BASE_PATH`. Rebuild (Docker: `docker compose build`; Node: `env BASE_PATH=/voting-app npm run build`) |
 | `/voting-app/api/health` returns `{"ok":false}` (503) | the database is unreachable or `DATABASE_URL` is wrong. Check the host, password, and TLS (`DB_SSL_CA` / `DB_TLS`) |
 | Browser shows a blank page, files `404` | the proxy is stripping `/voting-app`, or the client was built for a different path |
-| After Microsoft sign-in: error page / loop | `ENTRA_REDIRECT_URI` differs from the one registered in Entra, or does not contain `/voting-app/` |
+| After Microsoft sign-in: error page / loop | the redirect URI registered in Entra is not exactly `PUBLIC_BASE_URL` + `/voting-app/auth/callback` (see section 2), or `PUBLIC_BASE_URL` is wrong |
 | "Too many requests" for everyone | the proxy does not send `X-Forwarded-For` or `TRUST_PROXY` is unset |
 | `migration NNN failed: permission denied to ...` | the owner role lacks `CREATEROLE`, or `MIGRATE_DATABASE_URL` points at `namra_app` instead of the owner |

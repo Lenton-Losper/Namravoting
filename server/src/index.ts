@@ -15,4 +15,5 @@ logOperatorWarnings(config);
 setInterval(() => logOperatorWarnings(getConfig()), 24 * 3600 * 1000).unref();   // keeps the secret-expiry warning in the logs every day
 app.listen(config.port, config.bindHost, () => {
   console.log(`NamRA voting API listening on ${config.bindHost}:${config.port} (auth=${config.authMode}, env=${config.nodeEnv})`);
+  if (config.entra) console.log(`[config] Microsoft redirect URI: ${config.entra.redirectUri} (it must be registered in the Entra app registration)`);
 });

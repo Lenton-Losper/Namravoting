@@ -23,7 +23,7 @@ describe('SEC-13: dev auth is an explicit opt-in and stays on this machine', () 
   it('dev mode listens on localhost only, unless the LAN script says otherwise; other modes listen on all interfaces', () => {
     expect(parseConfig({ ...base, AUTH_MODE: 'dev', ALLOW_DEV_AUTH: 'true' }).bindHost).toBe('127.0.0.1');
     expect(parseConfig({ ...base, AUTH_MODE: 'dev', ALLOW_DEV_AUTH: 'true', DEV_LAN: 'true' }).bindHost).toBe('0.0.0.0');
-    const entra = { ...base, AUTH_MODE: 'entra', NODE_ENV: 'production', ENTRA_TENANT_ID: 'fe7b029e-7e19-4525-bdf4-57462a59d299', ENTRA_CLIENT_ID: '281ab38e-9ff5-4f17-88ea-18bdc3e65457', ENTRA_CLIENT_SECRET: 's', ENTRA_REDIRECT_URI: 'https://a.test/auth/callback' };
+    const entra = { ...base, AUTH_MODE: 'entra', NODE_ENV: 'production', ENTRA_TENANT_ID: 'fe7b029e-7e19-4525-bdf4-57462a59d299', ENTRA_CLIENT_ID: '281ab38e-9ff5-4f17-88ea-18bdc3e65457', ENTRA_CLIENT_SECRET: 's', PUBLIC_BASE_URL: 'https://a.test' };
     expect(parseConfig(entra).bindHost).toBe('0.0.0.0');
   });
 });

@@ -1,4 +1,5 @@
 import { isSnapshotMemberSql } from '../services/umoja.js';
+import { isListedSql } from '../services/listed.js';
 import { Router } from 'express';
 import { z } from 'zod';
 import { getPool } from '../db.js';
@@ -18,7 +19,7 @@ export function photosRouter(): Router {
               EXISTS (SELECT 1 FROM campaign_members m WHERE m.campaign_id = k.id AND m.user_oid = $4 AND m.role = 'co_admin') AS co_admin,
               (k.eligibility = 'all'
                OR (k.eligibility = 'umoja' AND ${isSnapshotMemberSql('k.id', '$3')})
-               OR (k.eligibility = 'list' AND EXISTS (SELECT 1 FROM eligible_voters e WHERE e.campaign_id = k.id AND e.voter_email = $2))) AS eligible
+               OR (k.eligibility = 'list' AND ${isListedSql('k.id', '$3', '$2')})) AS eligible
          FROM candidates c JOIN campaigns k ON k.id = c.campaign_id WHERE c.id = $1`, [cid, me.email.toLowerCase(), me.oid, me.oid]);
     const row = rows[0];
     // Visible to the campaign's creator, or (once it has started) to voters who are eligible for it. Otherwise 404.
