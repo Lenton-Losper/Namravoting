@@ -61,8 +61,8 @@ describe('validation', () => {
     expect(createCampaignBody.safeParse({ title: 'ok' }).success).toBe(true);
   });
   it('limits bio to 500 chars', () => {
-    expect(candidateBody.safeParse({ name: 'a', bio: 'x'.repeat(501) }).success).toBe(false);
-    expect(candidateBody.safeParse({ name: 'a', bio: 'x'.repeat(500) }).success).toBe(true);
+    expect(candidateBody.safeParse({ name: 'a', region: 'Khomas', bio: 'x'.repeat(501) }).success).toBe(false);
+    expect(candidateBody.safeParse({ name: 'a', region: 'Khomas', bio: 'x'.repeat(500) }).success).toBe(true);
   });
   it('validates eligibility and vote bodies', () => {
     expect(eligibleBody.safeParse({ mode: 'list', emails: [] }).success).toBe(false);

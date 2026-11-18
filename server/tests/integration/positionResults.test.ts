@@ -173,7 +173,7 @@ describe('exports with several positions', () => {
     expect(lines).toContain('Press Secretary,Alice,Khomas,2');
     expect(lines).toContain('Press Secretary,Chipo,Zambezi,0');
     expect(lines).toContain('Finance Officer,Dana,Oshana,1');
-    expect(lines).toContain('Treasurer,Gideon,,0');
+    expect(lines).toContain('Treasurer,Gideon,Khomas,0');
     expect(lines).toContain('Press Secretary,Members who voted in this position,,4');
     expect(lines).toContain('Treasurer,Members who voted in this position,,0');
     expect(lines).toContain('Press Secretary,Tie for first place: Alice and Bob,,');

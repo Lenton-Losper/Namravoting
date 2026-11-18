@@ -581,8 +581,9 @@ export function adminRouter(): Router {
       // The list as it was when voting started, as a SHA-256 of the sorted list: a later change to it can be detected against this entry.
       const listHash = fresh.eligibility === 'list' ? (await tx.query('SELECT eligible_list_sha256($1) AS h', [c.id])).rows[0].h as string
         : fresh.eligibility === 'umoja' ? (await tx.query('SELECT campaign_voters_sha256($1) AS h', [c.id])).rows[0].h as string : null;
+      // The voting rules in force from this moment (pick range, region rule) are sealed in the audit chain with the start.
       await audit(tx, currentUser(req).oid, 'campaign.start', c.id, {
-        candidates: n, positions: nPos, position_rules: await positionRules(tx, c.id),   // the voting rules in force from this moment (pick range, region rule), sealed in the audit chain ...(fresh.eligibility === 'umoja' ? { frozen_members: frozen } : {}),
+        candidates: n, positions: nPos, position_rules: await positionRules(tx, c.id), ...(fresh.eligibility === 'umoja' ? { frozen_members: frozen } : {}),
         ...(fresh.eligibility === 'list' ? { eligible_count: (await tx.query('SELECT count(*)::int AS n FROM eligible_voters WHERE campaign_id = $1', [c.id])).rows[0].n, list_sha256: listHash } : {}),
         ...(fresh.eligibility === 'umoja' ? { list_sha256: listHash } : {}),
       });

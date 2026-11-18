@@ -12,7 +12,10 @@
 -- ---- 1. pick range -----------------------------------------------------------------------------------------------------------------
 ALTER TABLE positions ADD COLUMN min_picks int;
 ALTER TABLE positions ADD COLUMN max_picks int;
+-- (Positions of started campaigns are guarded by positions_draft_only: it is switched off for this one data move, like migration 019 did.)
+ALTER TABLE positions DISABLE TRIGGER positions_draft_only;
 UPDATE positions SET min_picks = seats, max_picks = seats;
+ALTER TABLE positions ENABLE TRIGGER positions_draft_only;
 ALTER TABLE positions ALTER COLUMN min_picks SET NOT NULL;
 ALTER TABLE positions ALTER COLUMN max_picks SET NOT NULL;
 ALTER TABLE positions ALTER COLUMN min_picks SET DEFAULT 1;

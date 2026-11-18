@@ -61,7 +61,7 @@ const pos = await admin.api('POST', `/api/campaigns/${camp.body.id}/positions`, 
 ok('admin adds a position', pos.status === 201, `HTTP ${pos.status}`);
 const cand = [];
 for (const [i, name] of ['Ann Example', 'Ben Example'].entries()) {
-  const f = new FormData(); f.append('name', name); f.append('position_id', pos.body.id);
+  const f = new FormData(); f.append('name', name); f.append('position_id', pos.body.id); f.append('region', 'Khomas');
   if (i === 0) f.append('photo', new Blob([PNG], { type: 'image/png' }), 'p.png');
   const r = await admin.api('POST', `/api/campaigns/${camp.body.id}/candidates`, f);
   ok(`admin adds candidate ${name}`, r.status === 201, `HTTP ${r.status}`); cand.push(r.body);

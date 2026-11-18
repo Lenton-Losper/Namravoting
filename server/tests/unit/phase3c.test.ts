@@ -85,12 +85,12 @@ describe('SEC-21: bidi and invisible characters are stripped from free text', ()
   it('the request schemas apply it: titles, names, bios, descriptions and reasons', () => {
     const t = createCampaignBody.parse({ title: `  Vote${RLO} for${ZW} chair  `, description: `Line 1\r\nLine${LRI} 2` });
     expect(t.title).toBe('Vote for chair'); expect(t.description).toBe('Line 1\nLine 2');
-    expect(candidateBody.parse({ name: `Al${RLO}ice`, bio: `bio${ZW}` })).toEqual({ name: 'Alice', bio: 'bio' });
+    expect(candidateBody.parse({ name: `Al${RLO}ice`, bio: `bio${ZW}`, region: 'Khomas' })).toEqual({ name: 'Alice', bio: 'bio', region: 'Khomas' });
     expect(resetBody.parse({ confirm_title: 'x', reason: `A reason${RLO} that is long enough` }).reason).toBe('A reason that is long enough');
     expect(closeBody.parse({ reason: `Everyone${ZW} has voted already` }).reason).toBe('Everyone has voted already');
   });
   it('a name made only of invisible characters is empty after cleaning, so it is refused', () => {
-    expect(candidateBody.safeParse({ name: `${RLO}${ZW}  ${BOM}` }).success).toBe(false);
+    expect(candidateBody.safeParse({ name: `${RLO}${ZW}  ${BOM}`, region: 'Khomas' }).success).toBe(false);
     expect(createCampaignBody.safeParse({ title: `${ZW}${ZW}` }).success).toBe(false);
   });
   it('the exact-match confirmation fields are NOT cleaned (they must equal the stored title byte for byte)', () => {
