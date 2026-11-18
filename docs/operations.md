@@ -143,7 +143,7 @@ To restore the Access-protected demo (AUTH_MODE=demo) instead of email-demo:
 
 ### Switching back to Microsoft sign-in (entra), step by step
 
-**Status:** the code and configuration for the switch-back are on branch `entra-return` (`worker/wrangler.jsonc` says `AUTH_MODE=entra`; `DEMO` and `DEMO_MEMBER_EMAILS` are gone). **Nothing is live until the branch is merged to `main` and Deploy (manual) is run**, which the gate only allows from `main` with green CI.
+**Status (decision of 18 Nov 2026):** the **Cloudflare test site stays on `AUTH_MODE=email-demo`** (type an address, no code, no password; `worker/wrangler.jsonc` says so, with `DEMO=true`). Its admins are `ADMIN_EMAILS` (`lenton.losper@namra.org.na`, `llosperofficial@gmail.com`). Umoja membership there is matched at sign-in by the address stored on the member list, with the same rules as the Entra binding, and the "Test mode" banner stays. **Microsoft Entra is the documented setup for the NamRA VM** (HOSTING.md): there the DBA sets `AUTH_MODE=entra`, `ENTRA_*`, `ENTRA_SECRET_EXPIRES_AT` and `ADMIN_OIDS`. The steps below are for moving the Cloudflare site to Entra later, if ever; they are not needed for the test site.
 
 > **This deploy is the whole of `main`, not only the sign-in change.** The live site still runs the pre-Part-B code at migration 012. A deploy from `main` also ships Part B, positions, the ballot redesign, results privacy, BASE_PATH and migrations 013 to 023 (019 rewrites the primary keys of `tallies` and `vote_receipts`). Read "Rolling back a deploy" below first, and do not deploy while a vote is open. The Deploy workflow takes the Neon snapshot before it migrates.
 

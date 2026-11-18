@@ -1,5 +1,6 @@
 {
-  // Live deployment (Microsoft Entra sign-in). Secrets (SESSION_SECRET, DATABASE_URL, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY) are set with
+  // Cloudflare TEST site: sign-in by typed email (AUTH_MODE=email-demo, no code, no password; the "Test mode" banner says so). The NamRA VM
+  // runs Microsoft Entra sign-in instead (HOSTING.md); main's defaults and docs for the VM stay Entra. Secrets (SESSION_SECRET, DATABASE_URL, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY) are set with
   // `wrangler secret put` and never written here.
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "namra-voting-demo",
@@ -25,17 +26,19 @@
   // Non-secret configuration.
   "vars": {
     "NODE_ENV": "production",
-    "AUTH_MODE": "entra",         // Microsoft sign-in. (email-demo, the typed-email demo sign-in, is still in the code but is off: docs/operations.md)
+    "AUTH_MODE": "email-demo",    // typed-email test sign-in. NEVER for a real vote. (The VM uses "entra": HOSTING.md)
     "STORAGE": "r2",
     "R2_BUCKET": "namra-voting-photos",
     "PUBLIC_BASE_URL": "https://namra-voting-demo.llosperofficial.workers.dev",
     "ENTRA_TENANT_ID": "fe7b029e-7e19-4525-bdf4-57462a59d299",
     "ENTRA_CLIENT_ID": "281ab38e-9ff5-4f17-88ea-18bdc3e65457",
-    // The redirect URI is PUBLIC_BASE_URL + BASE_PATH + /auth/callback (there is no ENTRA_REDIRECT_URI setting to keep in step with it).
-    // It must be registered in the Entra app registration: https://namra-voting-demo.llosperofficial.workers.dev/auth/callback
-    "ADMIN_EMAILS": "lenton.losper@namra.org.na",
-    // No DEMO / DEMO_MEMBER_EMAILS here: nobody is a member by an email override in the live site. (The app refuses to start with
-    // DEMO_MEMBER_EMAILS in production without DEMO=true, so a stray one cannot slip back in unnoticed.)
+    // (Entra settings below are unused in email-demo; they stay so a switch to AUTH_MODE=entra needs only the secret. The redirect URI would be
+    // PUBLIC_BASE_URL + BASE_PATH + /auth/callback: https://namra-voting-demo.llosperofficial.workers.dev/auth/callback)
+    // Admins on this test site (email-demo): these two addresses may sign in and are campaign admins. (With Entra, ADMIN_OIDS is the way.)
+    "ADMIN_EMAILS": "lenton.losper@namra.org.na,llosperofficial@gmail.com",
+    // email-demo refuses to start in production without DEMO=true. There is NO DEMO_MEMBER_EMAILS override: Umoja members are matched by the
+    // address on the member list (npm run members:import) when they sign in.
+    "DEMO": "true",
     // Admins by Entra object id (docs/operations.md). Once set, ADMIN_EMAILS is no longer used to grant admin rights.
     "ADMIN_OIDS": "87a4af90-dd00-48c6-9601-17e56248c9e1",
     // The date the new Entra client secret expires (YYYY-MM-DD, from Entra -> Certificates & secrets): admins are warned 30 days before,

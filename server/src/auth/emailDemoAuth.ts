@@ -5,6 +5,7 @@ import type { Config } from '../config.js';
 import { getPool } from '../db.js';
 import { HttpError } from '../errors.js';
 import { audit } from '../services/audit.js';
+import { bindMemberByEmail } from '../services/umoja.js';
 import { demoUserFor } from './demoAuth.js';
 import { clientIp } from './limits.js';
 import { createSession, endSession } from './sessions.js';
@@ -30,9 +31,9 @@ const body = z.object({
 const normal = (e: string) => e.trim().toLowerCase();
 const looksLikeEmail = (e: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
 
-/** Whether an address may sign in at all: any @namra.org.na address, or one listed in DEMO_USERS. */
-export function emailAllowed(email: string, config: Pick<Config, 'demoUsers'>): boolean {
-  return email.endsWith(`@${EMAIL_DEMO_DOMAIN}`) || Object.prototype.hasOwnProperty.call(config.demoUsers, email);
+/** Whether an address may sign in at all: any @namra.org.na address, or one listed in DEMO_USERS or ADMIN_EMAILS. */
+export function emailAllowed(email: string, config: Pick<Config, 'demoUsers'> & { demoAdminEmails?: string[] }): boolean {
+  return email.endsWith(`@${EMAIL_DEMO_DOMAIN}`) || Object.prototype.hasOwnProperty.call(config.demoUsers, email) || (config.demoAdminEmails ?? []).includes(email);
 }
 
 export function mount(app: Express, config: Config): void {
@@ -49,7 +50,7 @@ export function mount(app: Express, config: Config): void {
     if (!emailAllowed(email, config)) throw new HttpError(403, `Use your @${EMAIL_DEMO_DOMAIN} email address`, 'email_not_allowed');
 
     const profile = demoUserFor(email, config.demoUsers);
-    const admin = profile.roles.includes(ADMIN_ROLE);
+    const admin = profile.roles.includes(ADMIN_ROLE) || config.demoAdminEmails.includes(email);   // DEMO_USERS roles, or ADMIN_EMAILS
 
     // An existing account with this address keeps its id; otherwise the deterministic v5 id. The users row is created or refreshed.
     const existing = (await getPool().query('SELECT entra_oid FROM users WHERE lower(email) = $1 ORDER BY created_at LIMIT 1', [email])).rows[0];
@@ -58,6 +59,10 @@ export function mount(app: Express, config: Config): void {
       `INSERT INTO users (entra_oid, email, display_name, employee_code) VALUES ($1, $2, $3, $4)
        ON CONFLICT (entra_oid) DO UPDATE SET email = EXCLUDED.email, display_name = EXCLUDED.display_name, employee_code = EXCLUDED.employee_code`,
       [oid, email, profile.displayName, profile.employeeCode]);
+    // Umoja membership by the address on the member list, with the same rules as the Entra sign-in (exact lower-cased match; an ambiguous
+    // address, or one whose member is already bound to another account, binds nothing and is audited for the admins' warning).
+    // In this mode the address is only TYPED, so this proves nothing about who is typing: a test aid, shown with the "Test mode" banner.
+    await bindMemberByEmail(getPool(), oid, email);
     await createSession(req, res, config, { oid, email, claimAdmin: admin });
     await audit(getPool(), oid, 'auth.signin', null, { email, mode: 'email-demo', admin });
     res.json({ user: { oid, email, displayName: profile.displayName, roles: admin ? [ADMIN_ROLE] : [], employeeCode: profile.employeeCode } });

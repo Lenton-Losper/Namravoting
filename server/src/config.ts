@@ -109,6 +109,9 @@ export function parseConfig(env: NodeJS.ProcessEnv) {
   const demoUsers = parseDemoUsers(e.DEMO_USERS);
   return {
     demoUsers,
+    // ADMIN_EMAILS for the typed-email demo (AUTH_MODE=email-demo): these addresses may sign in and are campaign admins there. (With Entra the same
+    // setting is the documented fallback for ADMIN_OIDS, see parseEntra.) Lower-cased, plain addresses only.
+    demoAdminEmails: (e.ADMIN_EMAILS ?? '').split(',').map((x) => x.trim().toLowerCase()).filter((x) => /^[^\s@,]+@[^\s@,]+\.[^\s@,]+$/.test(x)),
     entra,
     demo: e.DEMO === 'true',
     nodeEnv: e.NODE_ENV,

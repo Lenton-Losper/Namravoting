@@ -1,13 +1,14 @@
 // AUTH_MODE=email-demo (DEMO ONLY): sign in by typing an email address. No code and no password, for admins too.
 import request from 'supertest';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { closeOwner, ownerDb, resetDb } from '../helpers.js';
+import { closeOwner, ownerDb, resetDb, setMembers } from '../helpers.js';
 import { parseConfig } from '../../src/config.js';
 
 // Config is read once per module graph: switch this file to email-demo BEFORE importing the app.
 const ADMIN = 'lenton.losper@namra.org.na';
 const GMAIL = 'llosperofficial@gmail.com';
 process.env.AUTH_MODE = 'email-demo';
+process.env.ADMIN_EMAILS = 'Extra.Admin@namra.org.na, outsider@example.org';   // admins by ADMIN_EMAILS (any domain), besides DEMO_USERS
 delete process.env.ADMIN_DEMO_PASSWORD;   // it no longer exists: email-demo must start without it
 process.env.DEMO_USERS = JSON.stringify({
   [ADMIN]: { displayName: 'Lenton Losper', roles: ['CampaignAdmin'], employeeCode: 'TST0026' },
@@ -135,5 +136,70 @@ describe('email-demo is refused where it does not belong', () => {
   it('starts without any admin password (there is none any more)', () => {
     expect(parseConfig({ ...base }).authMode).toBe('email-demo');
     expect(parseConfig({ ...base, NODE_ENV: 'production', DEMO: 'true' })).not.toHaveProperty('adminDemoPassword');
+  });
+});
+
+describe('admins by ADMIN_EMAILS', () => {
+  it('an ADMIN_EMAILS address signs in as a campaign admin, whatever its domain; DEMO_USERS admins still work', async () => {
+    for (const email of ['extra.admin@namra.org.na', 'outsider@example.org']) {
+      const b = await browser();
+      const r = await b.signIn(email).expect(200);
+      expect(r.body.user.roles, email).toEqual(['CampaignAdmin']);
+      await b.get('/api/campaigns/mine').expect(200);
+    }
+    expect((await (await browser()).signIn(ADMIN).expect(200)).body.user.roles).toEqual(['CampaignAdmin']);
+  });
+  it('an address that is in neither list and is not @namra.org.na is still refused', async () => {
+    await (await browser()).signIn('someone@example.org').expect(403);
+  });
+});
+
+describe('Umoja membership by the stored email at sign-in (test aid, same rules as the Entra binding)', () => {
+  const MEMBER = 'member.one@namra.org.na';
+  async function load(rows: [string, string][]) {
+    await setMembers(rows.map(([c]) => [c, true] as [string, boolean]));
+    for (const [c, e] of rows) await ownerDb().query('UPDATE umoja_members SET email = $2 WHERE employee_code = $1', [c, e]);
+  }
+  const boundTo = async (code: string) => (await ownerDb().query('SELECT entra_oid FROM umoja_members WHERE employee_code = $1', [code])).rows[0]?.entra_oid as string | null;
+  const events = async (action: string) => (await ownerDb().query('SELECT details FROM audit_log WHERE action = $1 ORDER BY seq', [action])).rows;
+
+  it('signing in with a listed address (any letter case) binds that account to the member and audits it', async () => {
+    await load([['NAM0001', MEMBER]]);
+    const r = await (await browser()).signIn(' Member.One@NamRA.org.na ').expect(200);
+    expect(await boundTo('NAM0001')).toBe(r.body.user.oid);
+    expect((await events('umoja.member_bound'))[0].details).toEqual({ oid: r.body.user.oid, by: 'email' });
+  });
+  it('an address that is not on the list binds nobody', async () => {
+    await load([['NAM0001', MEMBER]]);
+    await (await browser()).signIn('someone.else@namra.org.na').expect(200);
+    expect(await boundTo('NAM0001')).toBeNull();
+    expect(await events('umoja.bind_conflict')).toEqual([]);
+  });
+  it('a member already bound to another account is not rebound: audited, and admins are warned', async () => {
+    await load([['NAM0001', MEMBER]]);
+    await (await browser()).signIn(MEMBER).expect(200);
+    const first = await boundTo('NAM0001');
+    // a second account that carries the same address: give it the address by hand, as another sign-in identity would
+    await ownerDb().query("INSERT INTO users (entra_oid, email, display_name) VALUES ('eeeeeeee-0000-4000-8000-000000000001', 'x@x.test', 'Other')");
+    expect((await ownerDb().query("SELECT bind_umoja_member('eeeeeeee-0000-4000-8000-000000000001', $1) AS r", [MEMBER])).rows[0].r).toBe('conflict');
+    expect(await boundTo('NAM0001')).toBe(first);
+    expect((await events('umoja.bind_conflict'))[0].details).toEqual({ oid: 'eeeeeeee-0000-4000-8000-000000000001', reason: 'bound_to_other_account' });
+    const admin = await browser(); await admin.signIn(ADMIN).expect(200);
+    expect((await admin.get('/api/session').expect(200)).body.notices).toContainEqual({ kind: 'member_bind_conflicts', count: 1 });
+    const staff = await browser(); await staff.signIn('plain.staff@namra.org.na').expect(200);
+    expect((await staff.get('/api/session').expect(200)).body.notices).toEqual([]);
+  });
+  it('an ambiguous address binds nobody', async () => {
+    await load([['NAM0001', MEMBER], ['NAM0002', 'second@namra.org.na']]);
+    await ownerDb().query('DROP INDEX umoja_members_email_key');
+    try {
+      await ownerDb().query("UPDATE umoja_members SET email = $1 WHERE employee_code = 'NAM0002'", [MEMBER]);
+      await (await browser()).signIn(MEMBER).expect(200);
+      expect(await boundTo('NAM0001')).toBeNull(); expect(await boundTo('NAM0002')).toBeNull();
+      expect((await events('umoja.bind_conflict'))[0].details).toMatchObject({ reason: 'ambiguous' });
+    } finally {
+      await ownerDb().query("UPDATE umoja_members SET email = 'second@namra.org.na' WHERE employee_code = 'NAM0002'");
+      await ownerDb().query('CREATE UNIQUE INDEX umoja_members_email_key ON umoja_members (email) WHERE email IS NOT NULL');
+    }
   });
 });

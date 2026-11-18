@@ -46,7 +46,7 @@ export function mountAuth(app: Express, config: Config, entraOptions: EntraOptio
     // Operator banners (demo override active, secret about to expire) go to campaign admins only.
     // observing: how many campaigns this person has been asked to observe (shows the "Observing" link; a count, nothing else).
     const admin = !!user && !!user.roles?.includes(ADMIN_ROLE);
-    Promise.all([getObserving(user?.oid), admin && config.authMode === 'entra' ? memberBindConflicts(getPool()) : Promise.resolve(0)]).then(([observing, conflicts]) => {
+    Promise.all([getObserving(user?.oid), admin && (config.authMode === 'entra' || config.authMode === 'email-demo') ? memberBindConflicts(getPool()) : Promise.resolve(0)]).then(([observing, conflicts]) => {
       const notices: unknown[] = admin ? adminNotices(config) : [];
       if (conflicts > 0) notices.push({ kind: 'member_bind_conflicts', count: conflicts });
       res.json({ user, authMode: config.authMode, observing, notices });
