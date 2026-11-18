@@ -38,7 +38,8 @@ describe('a listed vote', () => {
     const c = await listed(admin, [S1.email]);
     await admin.post(`/api/campaigns/${c.id}/late-voters`).send({ email: S2.email, reason: REASON }).expect(201);
     const a = (await ownerDb().query("SELECT actor_oid, details FROM audit_log WHERE campaign_id = $1 AND action = 'voter.late_added'", [c.id])).rows;
-    expect(a).toHaveLength(1); expect(a[0].actor_oid).toBe(ADMIN_A.oid); expect(a[0].details).toEqual({ mode: 'list', email: S2.email, reason: REASON });
+    expect(a).toHaveLength(1); expect(a[0].actor_oid).toBe(ADMIN_A.oid); expect(a[0].details).toMatchObject({ mode: 'list', email: S2.email, reason: REASON, list_count: 2 });   // plus the SHA-256 of the list after the change (migration 023)
+    expect(a[0].details.list_sha256).toMatch(/^[0-9a-f]{64}$/);
     const g = (await admin.get(`/api/campaigns/${c.id}/late-voters`).expect(200)).body;
     expect(g).toMatchObject({ enabled: true, applicable: true, mode: 'list' });
     expect(g.entries).toEqual([expect.objectContaining({ by: ADMIN_A.displayName, identifier: S2.email, reason: REASON })]);
