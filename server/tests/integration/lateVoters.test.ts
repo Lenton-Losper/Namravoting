@@ -16,7 +16,7 @@ const bin = (res: import('superagent').Response, cb: (e: Error | null, b: Buffer
 async function listed(admin: Admin, emails: string[], start = true) {
   const c = (await admin.post('/api/campaigns').send({ title: 'Listed vote', eligibility: 'list', emails }).expect(201)).body;
   const cands: string[] = [];
-  for (const n of ['One', 'Two']) cands.push((await admin.post(`/api/campaigns/${c.id}/candidates`).field('name', n).expect(201)).body.id);
+  for (const n of ['One', 'Two']) cands.push((await admin.post(`/api/campaigns/${c.id}/candidates`).field('region', 'Khomas').field('name', n).expect(201)).body.id);
   if (start) await admin.post(`/api/campaigns/${c.id}/start`).expect(200);
   return { id: c.id as string, token: c.share_token as string, cands };
 }

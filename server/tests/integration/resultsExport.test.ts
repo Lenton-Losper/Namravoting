@@ -21,7 +21,7 @@ async function closedCampaign() {
   const admin = await login(app, ADMIN_A);
   const c = (await admin.post('/api/campaigns').send({ title: 'Staff Council Election', description: 'Pick the chair', eligibility: 'all', allow_edits_after_start: true }).expect(201)).body;
   const cands: string[] = [];
-  for (const name of ['Alice Example', INJECT, 'Carol Test']) cands.push((await admin.post(`/api/campaigns/${c.id}/candidates`).field('name', name).expect(201)).body.id);
+  for (const name of ['Alice Example', INJECT, 'Carol Test']) cands.push((await admin.post(`/api/campaigns/${c.id}/candidates`).field('region', 'Khomas').field('name', name).expect(201)).body.id);
   await admin.post(`/api/campaigns/${c.id}/start`).expect(200);
   await admin.patch(`/api/campaigns/${c.id}`).send({ title: 'Staff Council Election 2026' }).expect(200);
   const s1 = await login(app, S1); const s2 = await login(app, S2); const s3 = await login(app, S3);
@@ -77,7 +77,7 @@ describe('GET /api/campaigns/:id/results.xlsx', () => {
     const admin = await login(app, ADMIN_A);
     const c = (await admin.post('/api/campaigns').send({ title: 'Tie', eligibility: 'all' }).expect(201)).body;
     const cands: string[] = [];
-    for (const n of ['One', 'Two']) cands.push((await admin.post(`/api/campaigns/${c.id}/candidates`).field('name', n).expect(201)).body.id);
+    for (const n of ['One', 'Two']) cands.push((await admin.post(`/api/campaigns/${c.id}/candidates`).field('region', 'Khomas').field('name', n).expect(201)).body.id);
     await admin.post(`/api/campaigns/${c.id}/start`).expect(200);
     await (await login(app, S1)).post(`/api/vote/${c.share_token}`).send({ candidateId: cands[0] }).expect(201);
     await (await login(app, S2)).post(`/api/vote/${c.share_token}`).send({ candidateId: cands[1] }).expect(201);
@@ -116,7 +116,7 @@ describe('GET /api/campaigns/:id/results.pdf', () => {
     const row = (await ownerDb().query('SELECT * FROM campaigns WHERE id = $1', [id])).rows[0] as CampaignRow;
     const data = await gatherExport(getPool(), row, `Alice Admin (${ADMIN_A.email})`);
     const text = pdfText(await buildPdf(data, { compress: false }));
-    for (const want of ['NamRA | Voting', 'Staff Council Election 2026', 'Pick the chair', 'All staff', 'Alice Example', 'Carol Test', '66.7%', '33.3%', 'Total votes',
+    for (const want of ['Umoja Voting', 'Staff Council Election 2026', 'Pick the chair', 'All staff', 'Alice Example', 'Carol Test', '66.7%', '33.3%', 'Total votes',
       'Edited after start', 'title changed from', 'Generated', ADMIN_A.email, 'Windhoek time', 'CAT']) expect(text).toContain(want);
     const seal = (await ownerDb().query("SELECT hash FROM audit_log WHERE campaign_id = $1 AND action LIKE 'campaign.close%' ORDER BY seq DESC LIMIT 1", [id])).rows[0].hash as string;
     expect(text).toContain(seal);
@@ -127,7 +127,7 @@ describe('who may export, and when', () => {
   it('refuses an OPEN campaign for both formats (SEC-01), and a draft', async () => {
     const admin = await login(app, ADMIN_A);
     const c = (await admin.post('/api/campaigns').send({ title: 'Open', eligibility: 'all' }).expect(201)).body;
-    for (const n of ['A', 'B']) await admin.post(`/api/campaigns/${c.id}/candidates`).field('name', n).expect(201);
+    for (const n of ['A', 'B']) await admin.post(`/api/campaigns/${c.id}/candidates`).field('region', 'Khomas').field('name', n).expect(201);
     for (const f of ['xlsx', 'pdf']) await admin.get(`/api/campaigns/${c.id}/results.${f}`).expect(409);
     await admin.post(`/api/campaigns/${c.id}/start`).expect(200);
     await (await login(app, S1)).post(`/api/vote/${c.share_token}`).send({ candidateId: (await admin.get(`/api/campaigns/${c.id}`)).body.candidates[0].id }).expect(201);

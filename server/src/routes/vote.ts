@@ -12,6 +12,13 @@ import { getNotices, noticesForVoters, refreshStatus, type CampaignRow } from '.
 import { castVote, notMemberMessage } from '../services/voting.js';
 import { isSnapshotMemberSql, liveMemberKey, logNotMember, umojaStanding } from '../services/umoja.js';
 import { isListed, isListedSql } from '../services/listed.js';
+import { chooseLabel, regionRuleText } from '../domain/rules.js';
+
+/** What the ballot needs to know about a position's voting rules: the pick range, its label, and the region rule as data plus its sentence. */
+const pickRules = (p: { min_picks: number; max_picks: number; region_rule_min: number | null; region_rule_region_id: string | null; rule_region: string | null }) => ({
+  minPicks: p.min_picks, maxPicks: p.max_picks, chooseLabel: chooseLabel(p.min_picks, p.max_picks),
+  regionRule: p.region_rule_min == null ? null : { minOutside: p.region_rule_min, regionId: p.region_rule_region_id, regionName: p.rule_region, text: regionRuleText({ minOutside: p.region_rule_min, regionName: p.rule_region ?? '' }) },
+});
 
 /** Malformed and unknown tokens answer identically (404) so nothing reveals whether a campaign exists. */
 function parseToken(req: Request): string {
@@ -124,7 +131,7 @@ export function voteRouter(): Router {
     if (s.notMember) throw new HttpError(403, notMemberMessage, 'not_member');
     if (!s.eligible) throw new HttpError(403, 'You are not eligible to vote in this campaign', 'not_eligible');
     const showCandidates = c.status !== 'draft';
-    const posRows = (await getPool().query('SELECT id, title, description, seats, rule_text FROM positions WHERE campaign_id = $1 ORDER BY sort_order, created_at', [c.id])).rows;
+    const posRows = (await getPool().query('SELECT p.id, p.title, p.description, p.seats, p.rule_text, p.min_picks, p.max_picks, p.region_rule_min, p.region_rule_region_id, g.name AS rule_region FROM positions p LEFT JOIN regions g ON g.id = p.region_rule_region_id WHERE p.campaign_id = $1 ORDER BY p.sort_order, p.created_at', [c.id])).rows;
     // Candidates are loaded only for positions the caller has NOT voted in: a done position stays closed (its ballot is not served again).
     const open = posRows.filter((p) => !s.votedPositions.has(p.id));
     const cands = showCandidates && open.length ? await ballotCandidates(c.id, open.map((p) => p.id as string)) : [];
@@ -142,7 +149,7 @@ export function voteRouter(): Router {
       regions,
       progress: { voted: s.votedPositions.size, total: s.total },
       positions: showCandidates ? posRows.map((p) => ({
-        id: p.id, title: p.title, description: p.description, seats: p.seats, ruleText: p.rule_text, voted: s.votedPositions.has(p.id),
+        id: p.id, title: p.title, description: p.description, seats: p.seats, ruleText: p.rule_text, ...pickRules(p), voted: s.votedPositions.has(p.id),
         receiptCode: s.receiptCodes.get(p.id) ?? null,
         candidateCount: cands.filter((x) => x.position_id === p.id && !x.is_abstain && !x.withdrawn_at).length,
       })) : [],
@@ -159,14 +166,14 @@ export function voteRouter(): Router {
     const s = await standing(c, u);
     if (s.notMember) throw new HttpError(403, notMemberMessage, 'not_member');
     if (!s.eligible) throw new HttpError(403, 'You are not eligible to vote in this campaign', 'not_eligible');
-    const pos = (await getPool().query('SELECT id, title, description, seats, rule_text FROM positions WHERE id = $1 AND campaign_id = $2', [pid.data, c.id])).rows[0];
+    const pos = (await getPool().query('SELECT p.id, p.title, p.description, p.seats, p.rule_text, p.min_picks, p.max_picks, p.region_rule_min, p.region_rule_region_id, g.name AS rule_region FROM positions p LEFT JOIN regions g ON g.id = p.region_rule_region_id WHERE p.id = $1 AND p.campaign_id = $2', [pid.data, c.id])).rows[0];
     if (!pos) throw notFound();
     if (c.status === 'closed') throw new HttpError(409, 'Voting has closed', 'closed');
     if (c.status === 'draft') throw new HttpError(409, 'Voting is not open yet', 'not_open');
     if (s.votedPositions.has(pos.id)) throw new HttpError(409, 'You have already voted in this position', 'already_voted');
     const cands = await ballotCandidates(c.id, [pos.id]);
     res.set('Cache-Control', 'no-store').json({
-      position: { id: pos.id, title: pos.title, description: pos.description, seats: pos.seats, ruleText: pos.rule_text },
+      position: { id: pos.id, title: pos.title, description: pos.description, seats: pos.seats, ruleText: pos.rule_text, ...pickRules(pos) },
       campaign: { title: c.title, closesAt: c.closes_at, resultsReleaseAt: c.results_release_at ?? null },
       groupByRegion: !!c.results_group_by_region,
       voterState: s.state,

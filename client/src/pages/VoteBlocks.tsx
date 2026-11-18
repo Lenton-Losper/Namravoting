@@ -31,7 +31,11 @@ export function AnnouncementCard({ a }: { a: AnnouncementInfo }) {
 /** What the receipt and the closed screen say about the result: winners are announced, never published as numbers. */
 export const winnersLine = (releaseAt: string | null | undefined) => (releaseAt ? `Winners will be announced on ${fmtDate(releaseAt)}.` : 'Winners will be announced after voting closes.');
 
-export interface BlockPosition { id: string; title: string; description: string | null; seats?: number; ruleText?: string | null; voted: boolean; candidateCount: number; receiptCode?: string | null }
+/** A position's voting rules as the ballot receives them: the pick range and the optional "at least N from outside <region>" rule. */
+export interface PickRules { minPicks?: number; maxPicks?: number; chooseLabel?: string; regionRule?: { minOutside: number; regionId: string; regionName: string; text: string } | null }
+/** "Choose 4", "Choose up to 4" or "Choose 2 to 4" (the server sends the same text; this is for ballots from before the range existed). */
+export const pickLabel = (min: number, max: number) => (min === max ? `Choose ${max}` : min === 1 ? `Choose up to ${max}` : `Choose ${min} to ${max}`);
+export interface BlockPosition extends PickRules { id: string; title: string; description: string | null; seats?: number; ruleText?: string | null; voted: boolean; candidateCount: number; receiptCode?: string | null }
 export interface BlocksInfo {
   title: string; description: string | null; opensAt: string | null; closesAt: string | null;
   resultsReleaseAt?: string | null; groupByRegion?: boolean;
@@ -45,7 +49,7 @@ export interface BallotCandidate {
   regionId: string | null; region: string | null;
 }
 interface Ballot {
-  position: { id: string; title: string; description: string | null; seats?: number; ruleText?: string | null };
+  position: { id: string; title: string; description: string | null; seats?: number; ruleText?: string | null } & PickRules;
   regions: { id: string; name: string }[]; candidates: BallotCandidate[]; progress: { voted: number; total: number };
   campaign?: { title: string; closesAt: string | null; resultsReleaseAt?: string | null };
   groupByRegion?: boolean;
@@ -224,7 +228,13 @@ export function PositionBallot({ token, position, campaign, single, onBack, onDo
   const regionsUsed = useMemo(() => (ballot?.regions ?? []).filter((r) => people.some((c) => c.regionId === r.id)), [ballot, people]);
   const visible = useMemo(() => (showRegions && region ? people.filter((c) => c.regionId === region) : people), [people, region, showRegions]);
   const seats = Math.max(1, ballot?.position.seats ?? 1);
-  const multi = seats > 1;
+  // How many a voter may pick: the range (older ballots: exactly `seats`). The region rule, when there is one, is counted on what is picked.
+  const minP = Math.max(1, ballot?.position.minPicks ?? seats);
+  const maxP = Math.max(minP, ballot?.position.maxPicks ?? seats);
+  const multi = maxP > 1;
+  const rule = ballot?.position.regionRule ?? null;
+  const label = ballot?.position.chooseLabel ?? pickLabel(minP, maxP);
+  const [blockedMsg, setBlockedMsg] = useState<string | null>(null);
   // A choice that the filter hides, that no longer exists, or that has WITHDRAWN is dropped, so nobody confirms a candidate they cannot see or cannot choose.
   useEffect(() => {
     if (!ballot) return;
@@ -236,7 +246,16 @@ export function PositionBallot({ token, position, campaign, single, onBack, onDo
   const chosen = picked.map((id) => all.find((c) => c.id === id)).filter((c): c is BallotCandidate => !!c);   // in the order they were picked
   const abstaining = chosen.length === 1 && chosen[0].isAbstain;
   const pickedPeople = chosen.filter((c) => !c.isAbstain).length;
-  const full = multi && pickedPeople >= seats;
+  const full = multi && pickedPeople >= maxP;
+  // Region rule: candidates a voter can still choose outside the region cap what the rule can ask for (a withdrawal must not lock everybody out).
+  const outsideAvailable = rule ? people.filter((c) => !c.withdrawn && c.regionId !== rule.regionId).length : 0;
+  const needOutside = rule ? Math.min(rule.minOutside, outsideAvailable) : 0;
+  const pickedOutside = rule ? chosen.filter((c) => !c.isAbstain && c.regionId !== rule.regionId).length : 0;
+  const stillOutside = Math.max(0, needOutside - pickedOutside);
+  const ruleOk = stillOutside === 0;
+  const countOk = pickedPeople >= minP && pickedPeople <= maxP;
+  /** One more pick from INSIDE the region would leave too few places for the outside picks the rule still needs. */
+  const wouldBreakRule = (c: BallotCandidate) => !!rule && !c.isAbstain && c.regionId === rule.regionId && !picked.includes(c.id) && stillOutside > maxP - pickedPeople - 1;
   /** Scroll a chosen card to the middle of the screen and give it focus, so what the footer names can always be found. */
   const jumpTo = useCallback((id: string) => {
     const li = document.getElementById(`cand-${id}`) ?? null;
@@ -251,16 +270,18 @@ export function PositionBallot({ token, position, campaign, single, onBack, onDo
     const id = window.setTimeout(() => jumpTo(picked[0]), 0);   // after the cards are in the page
     return () => window.clearTimeout(id);
   }, [ballot, picked, jumpTo]);
-  const ready = abstaining || (multi ? pickedPeople === seats : chosen.length === 1);
+  const ready = abstaining || (countOk && ruleOk);
   /** One tap on a card. One seat: it becomes the choice. Several seats: it is added, or taken off again; nothing more once `seats` are picked. */
   function toggle(c: BallotCandidate) {
     if (c.withdrawn) return;
+    if (wouldBreakRule(c)) { setBlockedMsg(`You can't add another ${rule!.regionName} candidate: you still need ${stillOutside} from outside ${rule!.regionName} and only ${Math.max(0, maxP - pickedPeople)} place${maxP - pickedPeople === 1 ? ' is' : 's are'} left. Unselect a ${rule!.regionName} candidate, or pick from another region.`); return; }
+    setBlockedMsg(null);
     setPicked((cur) => {
       if (!multi) return [c.id];
       if (c.isAbstain) return cur.includes(c.id) ? [] : [c.id];       // Abstain stands alone
       const people = cur.filter((id) => id !== abstain?.id);
       if (people.includes(c.id)) return people.filter((id) => id !== c.id);
-      return people.length >= seats ? people : [...people, c.id];
+      return people.length >= maxP ? people : [...people, c.id];
     });
   }
 
@@ -269,7 +290,7 @@ export function PositionBallot({ token, position, campaign, single, onBack, onDo
     submitting.current = true; setBusy(true);
     try { sessionStorage.setItem(pendingKey(token, position.id), picked.join(',')); } catch { /* storage unavailable */ }
     try {
-      const r = await api<{ recorded: boolean; receiptCode?: string }>('POST', url, multi ? { candidateIds: picked } : { candidateId: picked[0] });
+      const r = await api<{ recorded: boolean; receiptCode?: string }>('POST', url, multi || picked.length > 1 ? { candidateIds: picked } : { candidateId: picked[0] });
       clearPending(token, position.id);
       setPicked([]);                                       // the chosen candidates are intentionally NOT kept on screen
       setReceipt(r.receiptCode ?? null); setStep('receipt');
@@ -316,9 +337,10 @@ export function PositionBallot({ token, position, campaign, single, onBack, onDo
     const on = picked.includes(c.id);
     const line = cardLine(c);
     const dimmed = full && !on && !c.withdrawn;   // the limit is reached: the other cards cannot be added until one is taken off
+    const blocked = !dimmed && !on && !c.withdrawn && wouldBreakRule(c);   // greyed out, but a tap explains why
     return (
-      <li key={c.id} id={`cand-${c.id}`} className={`ballot-card${on ? ' is-selected' : ''}${compact ? ' is-compact' : ''}${c.withdrawn ? ' is-withdrawn' : ''}${dimmed ? ' is-dimmed' : ''}`}>
-        <button type="button" className="ballot-card-main" aria-pressed={on} disabled={c.withdrawn || dimmed} onClick={() => toggle(c)}>
+      <li key={c.id} id={`cand-${c.id}`} className={`ballot-card${on ? ' is-selected' : ''}${compact ? ' is-compact' : ''}${c.withdrawn ? ' is-withdrawn' : ''}${dimmed ? ' is-dimmed' : ''}${blocked ? ' is-blocked' : ''}`}>
+        <button type="button" className="ballot-card-main" aria-pressed={on} aria-disabled={blocked || undefined} disabled={c.withdrawn || dimmed} onClick={() => toggle(c)}>
           <span className={`ballot-radio${multi ? ' is-check' : ''}`} aria-hidden="true">{on && (multi ? <Icon name="check" size={16} /> : <span className="ballot-radio-dot" />)}</span>
           <Avatar url={c.photoUrl} name={c.name} size={compact ? 'sm' : 'lg'} />
           <span className="ballot-card-text">
@@ -349,9 +371,10 @@ export function PositionBallot({ token, position, campaign, single, onBack, onDo
       </div>
       {helpSlot && createPortal(helpButton, helpSlot)}
       <p className="ballot-eyebrow">{campaign.title}</p>
-      <p className="ballot-step">Step 1 of 2 · Choose{multi ? ` ${seats}` : ''}</p>
+      <p className="ballot-step">Step 1 of 2 · {multi ? label : 'Choose'}</p>
       <h1 className="ballot-title">{position.title}</h1>
       {ballot?.position.ruleText && <p className="rule-text"><Icon name="info" size={16} /> <span>{ballot.position.ruleText}</span></p>}
+      {rule && <p className="rule-text region-rule-text"><Icon name="info" size={16} /> <span>{rule.text}</span></p>}
       <div className="ballot-chips">
         {campaign.closesAt && <span className="ballot-chip"><Icon name="clock" size={14} /> Closes {fmtDate(campaign.closesAt)}</span>}
         <span className="ballot-chip"><Icon name="lock" size={14} /> Your vote is anonymous</span>
@@ -359,8 +382,9 @@ export function PositionBallot({ token, position, campaign, single, onBack, onDo
       {ballot?.position.description && <p className="ballot-intro">{ballot.position.description}</p>}
       <p className="ballot-intro" role={multi ? 'status' : undefined}>
         {!multi ? "Pick one candidate. You'll see your choice again before anything is submitted."
-          : full ? `You've picked ${seats} of ${seats}. Unselect one to change.`
-          : `Pick exactly ${seats} candidates. You'll see your choices again before anything is submitted.`}
+          : full ? `You've picked ${maxP} of ${maxP}. Unselect one to change.`
+          : minP === maxP ? `Pick exactly ${maxP} candidates. You'll see your choices again before anything is submitted.`
+          : `Pick ${minP === 1 ? 'up to' : `${minP} to`} ${maxP} candidates. You'll see your choices again before anything is submitted.`}
       </p>
       <ErrorBox message={uncertain ? null : error} />   {/* the "may not have been recorded" screen says it better */}
       {!ballot && !error && !uncertain && <Spinner />}
@@ -396,12 +420,18 @@ export function PositionBallot({ token, position, campaign, single, onBack, onDo
               <p className="abstain-or">Or, if you don't want to choose a candidate:</p>
               <button type="button" className={`abstain-option${picked.includes(abstain.id) ? ' is-selected' : ''}`} aria-pressed={picked.includes(abstain.id)} onClick={() => toggle(abstain)}>
                 <span className="ballot-radio" aria-hidden="true">{picked.includes(abstain.id) && <span className="ballot-radio-dot" />}</span>
-                <span><strong>Abstain</strong> (none of the above)<span className="abstain-note">{multi ? `Counts as a vote cast, for no candidate, in all ${seats} places.` : 'Counts as a vote cast, for no candidate.'}</span></span>
+                <span><strong>Abstain</strong> (none of the above)<span className="abstain-note">{multi ? `Counts as a vote cast, for no candidate, in all ${minP} places.` : 'Counts as a vote cast, for no candidate.'}</span></span>
               </button>
             </div>
           )}
           <div className="ballot-footer">
             {dropped && <p className="ballot-footer-hint" role="status">{dropped} has withdrawn and was removed from your selection.</p>}
+            {rule && !abstaining && (
+              <p className={`region-counter${ruleOk ? ' is-met' : ''}`} role="status" data-testid="region-counter">
+                Outside {rule.regionName}: {pickedOutside} of {needOutside} needed{ruleOk ? ' ✓' : ''}
+              </p>
+            )}
+            {blockedMsg && <p className="ballot-footer-hint region-blocked-msg" role="alert">{blockedMsg}</p>}
             {chosen.length > 0 && !abstaining && (
               <p className="ballot-selected">Selected:{' '}
                 {chosen.map((c, i) => (
@@ -411,10 +441,14 @@ export function PositionBallot({ token, position, campaign, single, onBack, onDo
             )}
             {ready
               ? <button type="button" className="ballot-btn ballot-btn-primary" onClick={() => setStep('confirm')}>
-                  {abstaining ? 'Review: abstain' : multi ? `Review ${seats} votes` : `Review vote for ${chosen[0].name}`}
+                  {abstaining ? 'Review: abstain' : multi ? `Review ${pickedPeople} vote${pickedPeople === 1 ? '' : 's'}` : `Review vote for ${chosen[0].name}`}
                 </button>
               : multi
-                ? <button type="button" className="ballot-btn ballot-btn-primary" disabled>{pickedPeople === 0 ? `Select ${seats} candidates` : `${pickedPeople} of ${seats} selected`}</button>
+                ? <>
+                    <button type="button" className="ballot-btn ballot-btn-primary" disabled>{pickedPeople === 0 ? (minP === maxP ? `Select ${maxP} candidates` : `Select ${minP === 1 ? 'up to ' : `${minP} to `}${maxP} candidates`) : minP === maxP ? `${pickedPeople} of ${maxP} selected` : `${pickedPeople} selected`}</button>
+                    {!countOk && pickedPeople > 0 && pickedPeople < minP && <p className="ballot-footer-hint">Pick at least {minP} candidates to continue.</p>}
+                    {rule && !ruleOk && !abstaining && <p className="ballot-footer-hint region-needed" role="status">Pick {stillOutside} more from outside {rule.regionName} to continue.</p>}
+                  </>
                 : <><button type="button" className="ballot-btn ballot-btn-primary" disabled>Review vote</button><p className="ballot-footer-hint">Select a candidate to continue</p></>}
           </div>
         </>
@@ -522,7 +556,8 @@ export function CampaignBlocks({ token, info, reload }: { token: string; info: B
               <span className="position-title">{p.title}</span>
               {p.description && <span className="muted small excerpt">{p.description}</span>}
               {p.ruleText && <span className="rule-text"><Icon name="info" size={16} /> <span>{p.ruleText}</span></span>}
-              {(p.seats ?? 1) > 1 && !p.voted && <span className="muted small">Choose {p.seats}</span>}
+              {((p.maxPicks ?? p.seats ?? 1) > 1) && !p.voted && <span className="muted small">{p.chooseLabel ?? pickLabel(p.minPicks ?? p.seats ?? 1, p.maxPicks ?? p.seats ?? 1)}</span>}
+              {p.regionRule && !p.voted && <span className="muted small">{p.regionRule.text}</span>}
               {p.voted
                 ? <><span className="chip chip-closed position-status"><Icon name="check" size={14} /> Voted</span>{p.receiptCode && <span className="position-receipt">Receipt {p.receiptCode}</span>}</>
                 : <span className="chip chip-open position-status">{p.candidateCount} candidate{p.candidateCount === 1 ? '' : 's'}</span>}

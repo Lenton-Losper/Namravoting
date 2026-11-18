@@ -51,9 +51,9 @@ export const integrityMessage = (e: IntegrityBlocked) =>
   `Receipts (${e.receipts}) and tallies (${e.ballots}) do not match${e.positions.length ? ` (in: ${e.positions.join(', ')})` : ''}, so the campaign was NOT closed. Investigate (see the audit log), then acknowledge to allow closing.`;
 
 /** Receipts and the sum of the counters, per position (in ballot order). */
-export async function positionCounts(db: Queryable, campaignId: string): Promise<{ id: string; title: string; seats: number; ballots: number; receipts: number }[]> {
+export async function positionCounts(db: Queryable, campaignId: string): Promise<{ id: string; title: string; seats: number; min_picks: number; max_picks: number; ballots: number; receipts: number }[]> {
   const { rows } = await db.query(
-    `SELECT p.id, p.title, p.seats,
+    `SELECT p.id, p.title, p.seats, p.min_picks, p.max_picks,
             coalesce((SELECT sum(t.votes) FROM tallies t WHERE t.campaign_id = p.campaign_id AND t.position_id = p.id), 0)::int AS ballots,
             (SELECT count(*) FROM vote_receipts v WHERE v.campaign_id = p.campaign_id AND v.position_id = p.id)::int AS receipts
        FROM positions p WHERE p.campaign_id = $1 ORDER BY p.sort_order, p.created_at`, [campaignId]);
@@ -84,8 +84,9 @@ export async function closeInTx(
   const perPosition = await positionCounts(db, campaignId);
   const ballots = perPosition.reduce((n, p) => n + p.ballots, 0);
   const receipts = perPosition.reduce((n, p) => n + p.receipts, 0);
-  // A ballot adds one vote per seat (an abstaining ballot adds one per seat to the Abstain line), so the counters must equal receipts x seats.
-  const mismatched = perPosition.filter((p) => p.ballots !== p.receipts * p.seats).map((p) => p.title);
+  // A ballot adds between min_picks and max_picks votes (an abstaining ballot adds min_picks to the Abstain line), so the counters must lie in
+  // receipts x min_picks .. receipts x max_picks. With an exact count (min = max) that is the old equality.
+  const mismatched = perPosition.filter((p) => p.ballots < p.receipts * p.min_picks || p.ballots > p.receipts * p.max_picks).map((p) => p.title);
   const integrity: Integrity = { ballots, receipts, match: mismatched.length === 0 };
   let acknowledged = false;
   if (!integrity.match) {

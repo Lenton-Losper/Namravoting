@@ -23,8 +23,8 @@ interface Fx { id: string; token: string; cands: string[]; photos: string[] }
 async function fixture(admin: Session, stage: Stage, title = TITLE): Promise<Fx> {
   const c = (await admin.post('/api/campaigns').send({ title }).expect(201)).body;
   await admin.put(`/api/campaigns/${c.id}/eligible`).send({ mode: 'all' }).expect(200);
-  const a = (await admin.post(`/api/campaigns/${c.id}/candidates`).field('name', 'Alpha Person').attach('photo', await png(200, 200), { filename: 'a.png', contentType: 'image/png' }).expect(201)).body;
-  const b = (await admin.post(`/api/campaigns/${c.id}/candidates`).field('name', 'Bravo Person').attach('photo', await png(120, 90), { filename: 'b.png', contentType: 'image/png' }).expect(201)).body;
+  const a = (await admin.post(`/api/campaigns/${c.id}/candidates`).field('region', 'Khomas').field('name', 'Alpha Person').attach('photo', await png(200, 200), { filename: 'a.png', contentType: 'image/png' }).expect(201)).body;
+  const b = (await admin.post(`/api/campaigns/${c.id}/candidates`).field('region', 'Khomas').field('name', 'Bravo Person').attach('photo', await png(120, 90), { filename: 'b.png', contentType: 'image/png' }).expect(201)).body;
   const photos = (await ownerDb().query('SELECT photo_path FROM candidates WHERE campaign_id = $1', [c.id])).rows.map((r) => r.photo_path as string);
   if (stage !== 'draft') await admin.post(`/api/campaigns/${c.id}/start`).expect(200);
   if (stage === 'closed' || stage === 'archived') await admin.post(`/api/campaigns/${c.id}/close`).expect(200);

@@ -11,7 +11,7 @@ import { candParams, positionBody, positionParams, positionPatchBody, regionBody
 import { audit } from '../services/audit.js';
 import type { CampaignRow } from '../services/campaigns.js';
 import { deletePhoto } from '../services/images.js';
-import { addAbstainLines, positionBlocks } from '../services/positions.js';
+import { addAbstainLines, positionBlocks, resolvePicks, ruleChange } from '../services/positions.js';
 
 /**
  * Admin side of positions, regions and nominations. Every route sits behind loadRunnable (the creator or a co-admin of THIS campaign):
@@ -53,12 +53,15 @@ export function positionsRouter(d: Deps): Router {
     const c = camp(res); const u = currentUser(req);
     const b = positionBody.parse(req.body);
     const created = await d.inDraftTx(c.id, async (tx) => {
+      const seats = b.seats ?? 1;
+      const picks = await resolvePicks(tx, c.id, { seats, minPicks: b.min_picks, maxPicks: b.max_picks, rule: b.region_rule ?? null });
       const { rows } = await tx.query(
-        `INSERT INTO positions (campaign_id, title, description, seats, min_candidates, max_candidates, rule_text, sort_order)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,(SELECT COALESCE(max(sort_order), 0) + 1 FROM positions WHERE campaign_id = $1)) RETURNING id, title`,
-        [c.id, b.title, b.description ?? null, b.seats ?? 1, b.min_candidates ?? null, b.max_candidates ?? null, b.rule_text ?? null]);
+        `INSERT INTO positions (campaign_id, title, description, seats, min_picks, max_picks, region_rule_min, region_rule_region_id, min_candidates, max_candidates, rule_text, sort_order)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,(SELECT COALESCE(max(sort_order), 0) + 1 FROM positions WHERE campaign_id = $1)) RETURNING id, title`,
+        [c.id, b.title, b.description ?? null, seats, picks.min, picks.max, picks.rule?.min_outside ?? null, picks.rule?.region_id ?? null, b.min_candidates ?? null, b.max_candidates ?? null, b.rule_text ?? null]);
       if (c.allow_abstain) await addAbstainLines(tx, c.id);   // a campaign that allows abstaining gets the line on every position
       await audit(tx, u.oid, 'position.add', c.id, { position_id: rows[0].id, title: rows[0].title });
+      if (picks.min !== seats || picks.max !== seats || picks.rule) await audit(tx, u.oid, 'position.rule_set', c.id, { position_id: rows[0].id, title: rows[0].title, ...(await ruleChange(tx, null, { min: picks.min, max: picks.max, rule: picks.rule })) });
       return rows[0];
     });
     res.status(201).json({ id: created.id, positions: await positionBlocks(camp(res)) });
@@ -87,7 +90,7 @@ export function positionsRouter(d: Deps): Router {
       const cur = await lockPosition(tx, c.id, pid);
       if (live) {
         // Open campaign with "Allow edits after start": title and description only (the database enforces the same).
-        if (b.seats !== undefined || b.min_candidates !== undefined || b.max_candidates !== undefined || b.status !== undefined) {
+        if (b.seats !== undefined || b.min_picks !== undefined || b.max_picks !== undefined || b.region_rule !== undefined || b.min_candidates !== undefined || b.max_candidates !== undefined || b.status !== undefined) {
           throw new HttpError(409, 'Once voting has started only a position\'s title, description and eligibility text can change', 'locked');
         }
         const changes: { what: string; name?: string; from?: string | null; to?: string | null }[] = [];
@@ -103,18 +106,35 @@ export function positionsRouter(d: Deps): Router {
       const min = b.min_candidates !== undefined ? b.min_candidates : cur.min_candidates;
       const max = b.max_candidates !== undefined ? b.max_candidates : cur.max_candidates;
       if (min != null && max != null && max < min) throw new HttpError(400, 'The maximum cannot be below the minimum', 'bad_limits');
+      // Voting rules: how many a voter may pick, and the optional region rule. Changing the number of winners alone keeps an exact count in step with it.
+      const seatsNow = b.seats ?? cur.seats;
+      const wasExact = cur.min_picks === cur.seats && cur.max_picks === cur.seats;
+      const follow = b.seats !== undefined && wasExact && b.min_picks === undefined && b.max_picks === undefined;
+      const picks = await resolvePicks(tx, c.id, {
+        seats: seatsNow,
+        minPicks: follow ? undefined : (b.min_picks ?? cur.min_picks),
+        maxPicks: follow ? undefined : (b.max_picks ?? cur.max_picks),
+        rule: b.region_rule !== undefined ? b.region_rule : (cur.region_rule_min == null ? null : { min_outside: cur.region_rule_min, region_id: cur.region_rule_region_id }),
+      });
       await tx.query(
         `UPDATE positions SET title = coalesce($3, title),
            description = CASE WHEN $4::boolean THEN $5 ELSE description END,
            seats = coalesce($6, seats),
+           min_picks = $14, max_picks = $15, region_rule_min = $16, region_rule_region_id = $17,
            rule_text = CASE WHEN $12::boolean THEN $13 ELSE rule_text END,
            min_candidates = CASE WHEN $7::boolean THEN $8::int ELSE min_candidates END,
            max_candidates = CASE WHEN $9::boolean THEN $10::int ELSE max_candidates END,
            status = coalesce($11, status)
          WHERE id = $1 AND campaign_id = $2`,
         [pid, c.id, b.title ?? null, b.description !== undefined, b.description ?? null, b.seats ?? null,
-         b.min_candidates !== undefined, b.min_candidates ?? null, b.max_candidates !== undefined, b.max_candidates ?? null, b.status ?? null, b.rule_text !== undefined, b.rule_text ?? null]);
+         b.min_candidates !== undefined, b.min_candidates ?? null, b.max_candidates !== undefined, b.max_candidates ?? null, b.status ?? null, b.rule_text !== undefined, b.rule_text ?? null,
+         picks.min, picks.max, picks.rule?.min_outside ?? null, picks.rule?.region_id ?? null]);
       await audit(tx, u.oid, 'position.update', c.id, { position_id: pid, fields: Object.keys(b) });
+      const before = { min: cur.min_picks as number, max: cur.max_picks as number, rule: cur.region_rule_min == null ? null : { min_outside: cur.region_rule_min as number, region_id: cur.region_rule_region_id as string } };
+      const after = { min: picks.min, max: picks.max, rule: picks.rule };
+      if (before.min !== after.min || before.max !== after.max || JSON.stringify(before.rule) !== JSON.stringify(after.rule)) {
+        await audit(tx, u.oid, 'position.rule_set', c.id, { position_id: pid, title: cur.title, ...(await ruleChange(tx, before, after)) });
+      }
     });
     res.json({ positions: await positionBlocks(camp(res)) });
   });
@@ -271,6 +291,7 @@ export function positionsRouter(d: Deps): Router {
       if (!old) throw notFound();
       const used = (await tx.query('SELECT count(*)::int AS n FROM candidates WHERE region_id = $1', [rid])).rows[0].n as number;
       if (used) throw new HttpError(409, `${used} candidate${used === 1 ? ' is' : 's are'} in ${old.name}. Move them to another region first.`, 'region_in_use');
+      if ((await tx.query('SELECT 1 FROM positions WHERE region_rule_region_id = $1', [rid])).rowCount) throw new HttpError(409, `A voting rule names ${old.name}. Change or remove the rule first.`, 'region_in_rule');
       await tx.query('DELETE FROM regions WHERE id = $1 AND campaign_id = $2', [rid, c.id]);
       await audit(tx, u.oid, 'region.remove', c.id, { region_id: rid, name: old.name });
     });

@@ -18,7 +18,7 @@ const fakeMailer = (log: Sent[], fail?: Error): Mailer => ({ send: async (bcc, s
 async function listed(admin: Admin, emails: string[], extra: Record<string, unknown> = {}) {
   const c = (await admin.post('/api/campaigns').send({ title: 'Staff survey', eligibility: 'list', emails, ...extra }).expect(201)).body;
   const cands: string[] = [];
-  for (const n of ['One', 'Two']) cands.push((await admin.post(`/api/campaigns/${c.id}/candidates`).field('name', n).expect(201)).body.id);
+  for (const n of ['One', 'Two']) cands.push((await admin.post(`/api/campaigns/${c.id}/candidates`).field('region', 'Khomas').field('name', n).expect(201)).body.id);
   await admin.post(`/api/campaigns/${c.id}/start`).expect(200);
   return { id: c.id as string, token: c.share_token as string, cands };
 }

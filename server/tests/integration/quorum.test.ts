@@ -20,7 +20,7 @@ const VOTERS = [S1, S2, S3, S4];
 async function vote(admin: Admin, opts: { quorum?: number | null; votes: number; close?: boolean }) {
   const c = (await admin.post('/api/campaigns').send({ title: 'Quorum vote', eligibility: 'list', emails: VOTERS.map((v) => v.email), ...(opts.quorum ? { quorum_percent: opts.quorum } : {}) }).expect(201)).body;
   const cands: string[] = [];
-  for (const n of ['One', 'Two']) cands.push((await admin.post(`/api/campaigns/${c.id}/candidates`).field('name', n).expect(201)).body.id);
+  for (const n of ['One', 'Two']) cands.push((await admin.post(`/api/campaigns/${c.id}/candidates`).field('region', 'Khomas').field('name', n).expect(201)).body.id);
   await admin.post(`/api/campaigns/${c.id}/start`).expect(200);
   for (let i = 0; i < opts.votes; i++) await (await login(app, VOTERS[i])).post(`/api/vote/${c.share_token}`).send({ candidateId: cands[0] }).expect(201);
   if (opts.close !== false) await admin.post(`/api/campaigns/${c.id}/close`).send({}).expect(200);
@@ -49,7 +49,7 @@ describe('the quorum setting', () => {
     await admin.put(`/api/campaigns/${c.id}/eligible`).send({ mode: 'all' }).expect(409);              // would leave a quorum with nobody to count against
     expect((await admin.patch(`/api/campaigns/${c.id}`).send({ quorum_percent: null }).expect(200)).body.quorum_percent).toBeNull();
     await admin.patch(`/api/campaigns/${c.id}`).send({ quorum_percent: 60 }).expect(200);
-    for (const n of ['One', 'Two']) await admin.post(`/api/campaigns/${c.id}/candidates`).field('name', n).expect(201);
+    for (const n of ['One', 'Two']) await admin.post(`/api/campaigns/${c.id}/candidates`).field('region', 'Khomas').field('name', n).expect(201);
     await admin.post(`/api/campaigns/${c.id}/start`).expect(200);
     expect((await admin.patch(`/api/campaigns/${c.id}`).send({ quorum_percent: 10 }).expect(409)).body.code).toBe('locked');   // even with "edits after start"
     await expect(appRole.query('UPDATE campaigns SET quorum_percent = 10 WHERE id = $1', [c.id])).rejects.toThrow(/locked/);

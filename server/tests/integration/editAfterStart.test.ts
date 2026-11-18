@@ -23,7 +23,7 @@ async function make(admin: Admin, opts: { allow?: boolean; eligibility?: 'all' |
   if (opts.closes_at) body.closes_at = opts.closes_at;
   const c = (await admin.post('/api/campaigns').send(body).expect(201)).body;
   const candidates: string[] = [];
-  for (let i = 0; i < (opts.n ?? 2); i++) candidates.push((await admin.post(`/api/campaigns/${c.id}/candidates`).field('name', `Candidate ${i + 1}`).expect(201)).body.id);
+  for (let i = 0; i < (opts.n ?? 2); i++) candidates.push((await admin.post(`/api/campaigns/${c.id}/candidates`).field('region', 'Khomas').field('name', `Candidate ${i + 1}`).expect(201)).body.id);
   if (opts.start) await admin.post(`/api/campaigns/${c.id}/start`).expect(200);
   return { id: c.id as string, token: c.share_token as string, candidates };
 }
@@ -74,7 +74,7 @@ describe('allow edits after start: off by default', () => {
     expect((await admin.get(`/api/campaigns/${c.id}`)).body.allow_edits_after_start).toBe(false);
     await admin.patch(`/api/campaigns/${c.id}`).send({ title: 'Changed' }).expect(409);
     await admin.patch(`/api/campaigns/${c.id}`).send({ closes_at: new Date(Date.now() + 3600_000).toISOString() }).expect(409);
-    await admin.post(`/api/campaigns/${c.id}/candidates`).field('name', 'Late').expect(409);
+    await admin.post(`/api/campaigns/${c.id}/candidates`).field('region', 'Khomas').field('name', 'Late').expect(409);
     await admin.patch(`/api/campaigns/${c.id}/candidates/${c.candidates[0]}`).field('name', 'Renamed').expect(409);
     await admin.del(`/api/campaigns/${c.id}/candidates/${c.candidates[0]}`).expect(409);
     expect(await editAudits(c.id)).toHaveLength(0);
@@ -147,7 +147,7 @@ describe('allow edits after start: title, description, closing time', () => {
     const c = await make(admin, { allow: true, start: true });
     await admin.post(`/api/campaigns/${c.id}/close`).send({}).expect(200);
     await admin.patch(`/api/campaigns/${c.id}`).send({ title: 'Too late' }).expect(409);
-    await admin.post(`/api/campaigns/${c.id}/candidates`).field('name', 'Late').expect(409);
+    await admin.post(`/api/campaigns/${c.id}/candidates`).field('region', 'Khomas').field('name', 'Late').expect(409);
   });
 
   it("only the owner can edit; another admin gets 404 and nothing is written", async () => {
@@ -176,7 +176,7 @@ describe('allow edits after start: candidates until the first vote', () => {
   it('can be added, edited and removed before any vote; every change is audited and the ballot follows', async () => {
     const admin = await login(app, ADMIN_A);
     const c = await make(admin, { allow: true, start: true, n: 2 });
-    const added = (await admin.post(`/api/campaigns/${c.id}/candidates`).field('name', 'Late Starter').field('bio', 'joined').attach('photo', await png(), 'p.png').expect(201)).body;
+    const added = (await admin.post(`/api/campaigns/${c.id}/candidates`).field('region', 'Khomas').field('name', 'Late Starter').field('bio', 'joined').attach('photo', await png(), 'p.png').expect(201)).body;
     await admin.patch(`/api/campaigns/${c.id}/candidates/${c.candidates[0]}`).field('name', 'Renamed One').expect(200);
     await admin.del(`/api/campaigns/${c.id}/candidates/${c.candidates[1]}`).expect(204);
 
@@ -203,7 +203,7 @@ describe('allow edits after start: candidates until the first vote', () => {
     const c = await make(admin, { allow: true, start: true, n: 3 });
     const s1 = await login(app, S1);
     await s1.post(`/api/vote/${c.token}`).send({ candidateId: c.candidates[0] }).expect(201);
-    const add = await admin.post(`/api/campaigns/${c.id}/candidates`).field('name', 'Too Late').expect(409);
+    const add = await admin.post(`/api/campaigns/${c.id}/candidates`).field('region', 'Khomas').field('name', 'Too Late').expect(409);
     expect(add.body.code).toBe('votes_cast');
     await admin.patch(`/api/campaigns/${c.id}/candidates/${c.candidates[1]}`).field('name', 'Nope').expect(409);
     await admin.del(`/api/campaigns/${c.id}/candidates/${c.candidates[2]}`).expect(409);
@@ -259,7 +259,7 @@ describe('the database enforces the same limits, whatever the application does (
   it('as the app role: candidate changes stop at the first receipt, even with the flag', async () => {
     const admin = await login(app, ADMIN_A);
     const c = await make(admin, { allow: true, start: true, n: 3 });
-    await appRole.query("INSERT INTO candidates (campaign_id, position_id, name, sort_order) VALUES ($1, (SELECT id FROM positions WHERE campaign_id = $1 LIMIT 1), 'before', 99)", [c.id]);   // no receipt yet: allowed
+    await appRole.query("INSERT INTO candidates (campaign_id, position_id, region_id, name, sort_order) VALUES ($1, (SELECT id FROM positions WHERE campaign_id = $1 LIMIT 1), (SELECT id FROM regions WHERE campaign_id = $1 LIMIT 1), 'before', 99)", [c.id]);   // no receipt yet: allowed
     const s1 = await login(app, S1);
     await s1.post(`/api/vote/${c.token}`).send({ candidateId: c.candidates[0] }).expect(201);
     await expect(appRole.query("INSERT INTO candidates (campaign_id, position_id, name, sort_order) VALUES ($1, (SELECT id FROM positions WHERE campaign_id = $1 LIMIT 1), 'after', 100)", [c.id])).rejects.toThrow(/locked/);

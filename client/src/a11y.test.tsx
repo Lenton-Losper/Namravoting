@@ -158,7 +158,7 @@ describe('keyboard and screen-reader basics', () => {
     await screen.findAllByRole('main');
     expect(screen.getAllByRole('main')).toHaveLength(1);
     expect(screen.getAllByRole('navigation').every((n) => n.getAttribute('aria-label'))).toBe(true);
-    expect(screen.getAllByRole('img', { name: 'NamRA' }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole('img', { name: 'Umoja Social Club' }).length).toBeGreaterThan(0);
   });
 
   it('a dialog is announced as a modal dialog with a name, and Escape closes it', async () => {

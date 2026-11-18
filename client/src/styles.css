@@ -3,11 +3,15 @@
    Orange is an accent only (nav/tab underline, card top border, small icons, focus ring).
    ========================================================================== */
 :root {
-  --navy: #1E4462;
-  --navy-text: #16324F;
-  --orange: #F98127;
-  --orange-50: #FEF3EA;
-  --orange-text: #A24A06;       /* darker orange for small TEXT on orange-50 (the brand orange fails AA there) */
+  /* Umoja brand colours: change them HERE and nowhere else. Blue is the primary (text, buttons, header). Orange is an ACCENT only: brand orange on
+     white is 2.9:1, so it never carries text or essential UI on white. It is fine on the blue header (4.8:1), as decoration, and as a fill
+     with BLUE text (4.8:1). */
+  --navy: #002D4D;
+  --navy-text: #00243D;
+  --orange: #FF6800;
+  --orange-50: #FFF1E8;
+  --orange-text: #A33E00;       /* darker orange for small TEXT on orange-50 and for the focus ring (brand orange fails AA there) */
+  --on-orange: #002D4D;         /* text on an orange fill */
   --bg: #FFFFFF;
   --surface-muted: #F5F7F9;
   --border: #E3E8EE;
@@ -15,10 +19,10 @@
   --success: #1A7F37;
   --danger: #C62828;
   /* Ballot screens (docs/ballot-screen-redesign.md) */
-  --b-navy: #12355B; --b-text: #0F1B2D; --b-secondary: #4A5565; --b-body: #1F2A3A;
+  --b-navy: #002D4D; --b-text: #0F1B2D; --b-secondary: #4A5565; --b-body: #1F2A3A;
   --b-line: #D9DEE5; --b-border: #8A94A3; --b-hair: #E3E7ED; --b-sheet-line: #C9D0DA; --b-ring: #6B7585;
   --b-page: #F5F7FA; --b-selected: #EEF3F9; --b-tint: #DCE6F1; --b-disabled: #5B6575;
-  --glow: 0 0 0 3px rgba(18, 53, 91, .18); --ok-bg: #E6F2EB; --ok-text: #1E6B43; --bad-bg: #FDECEA; --bad-text: #B42318;   /* the halo of a selected card */
+  --glow: 0 0 0 3px rgba(0, 45, 77, .18); --ok-bg: #E6F2EB; --ok-text: #1E6B43; --bad-bg: #FDECEA; --bad-text: #B42318;   /* the halo of a selected card */
 
   --radius: 6px;
   --radius-sm: 4px;
@@ -67,12 +71,13 @@ main:focus { outline: none; }
 .brand { text-decoration: none; color: #fff; display: inline-flex; align-items: center; }
 .wordmark { display: inline-flex; align-items: center; gap: 12px; color: #fff; }
 .wordmark-logo { display: inline-flex; background: #fff; border-radius: 9px; padding: 2px; box-shadow: 0 0 0 1px rgba(255, 255, 255, .25); }
-.wordmark-logo img { display: block; width: 32px; height: 32px; border-radius: 7px; }
+.wordmark-logo { padding: 3px 6px; }
+.wordmark-logo img { display: block; height: 34px; width: auto; max-width: 40vw; border-radius: 6px; }
 .wordmark-sep { width: 1px; height: 24px; background: rgba(255, 255, 255, .5); }
 .wordmark-sub { font-size: 15px; font-weight: 600; }
 .wordmark-dark { color: var(--navy-text); }
 .wordmark-dark .wordmark-logo { background: transparent; box-shadow: 0 0 0 1px var(--border); }
-.wordmark-dark .wordmark-logo img { width: 40px; height: 40px; }
+.wordmark-dark .wordmark-logo img { height: 56px; width: auto; max-width: 70vw; }
 .tie-note { margin: 0 0 12px; padding: 10px 12px; border-left: 4px solid var(--orange, #E8741A); background: var(--orange-50, #fff4ea); border-radius: 6px; }
 .runoff-panel { margin-top: 16px; }
 .quorum-bad { border-left-color: #b42318; background: #fff1f0; }
@@ -174,7 +179,7 @@ input[readonly] { background: var(--surface-muted); }
 textarea { line-height: 1.5; }
 input[type="radio"], input[type="checkbox"] { width: 16px; height: 16px; min-height: 0; accent-color: var(--navy); }
 input[type="file"] { padding: 6px; }
-input:focus-visible, textarea:focus-visible, select:focus-visible { outline: none; border-color: var(--orange); box-shadow: 0 0 0 3px rgba(249, 129, 39, .35); }
+input:focus-visible, textarea:focus-visible, select:focus-visible { outline: none; border-color: var(--orange); box-shadow: 0 0 0 3px rgba(255, 104, 0, .35); }
 .form-card { padding: 0; }
 .form-section { display: block; padding: 24px; border-bottom: 1px solid var(--border); }
 .form-card > .form-section:last-child { border-bottom: 0; }
@@ -456,6 +461,14 @@ body:has(.ballot-screen-receipt) { background: #fff; }
 .is-selected .ballot-radio.is-check { background: var(--b-navy); color: #fff; }
 .ballot-card.is-dimmed { opacity: .55; box-shadow: none; }
 .ballot-card.is-dimmed .ballot-card-main { cursor: not-allowed; }
+/* region rule: a card that cannot be added without making the rule impossible is greyed out but still answers a tap (it explains why) */
+.ballot-card.is-blocked { opacity: .55; box-shadow: none; }
+.ballot-card.is-blocked .ballot-card-main { cursor: not-allowed; }
+.region-counter { margin: 0 0 8px; font-size: 14px; font-weight: 600; color: var(--b-text); }
+.region-counter.is-met { color: #166534; }
+.region-blocked-msg { color: #7f1d1d; }
+.voting-rules { border: 1px solid #d6dbe3; border-radius: 10px; padding: 12px; }
+.voting-rules legend { font-weight: 600; padding: 0 6px; }
 .confirm-choices { display: flex; flex-direction: column; gap: 8px; }
 /* The eligibility line under a position title: informational only. */
 .rule-text { display: flex; align-items: flex-start; gap: 6px; margin: 0 0 12px; font-size: 13px; line-height: 1.4; color: var(--b-secondary); }

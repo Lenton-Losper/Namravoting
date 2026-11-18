@@ -66,7 +66,7 @@ describe('happy path', () => {
     const admin = await login(app, ADMIN_A);
     const c = await makeCampaign(admin, 1);
     await admin.post(`/api/campaigns/${c.id}/start`).expect(409);
-    await admin.post(`/api/campaigns/${c.id}/candidates`).field('name', 'Second').expect(201);
+    await admin.post(`/api/campaigns/${c.id}/candidates`).field('region', 'Khomas').field('name', 'Second').expect(201);
     await admin.post(`/api/campaigns/${c.id}/start`).expect(200);
     const qr = await admin.get(`/api/campaigns/${c.id}/qr.png`).expect(200);
     expect(qr.headers['content-type']).toContain('image/png');
@@ -236,7 +236,7 @@ describe('authorisation', () => {
     const base = `/api/campaigns/${c.id}`;
     await b.get(base).expect(404);
     await b.patch(base).send({ title: 'hijack' }).expect(404);
-    await b.post(`${base}/candidates`).field('name', 'x').expect(404);
+    await b.post(`${base}/candidates`).field('region', 'Khomas').field('name', 'x').expect(404);
     await b.put(`${base}/eligible`).send({ mode: 'all' }).expect(404);
     await b.post(`${base}/start`).expect(404);
     await b.post(`${base}/close`).expect(404);
@@ -358,7 +358,7 @@ describe('locking after start', () => {
     await a.post(`/api/campaigns/${c.id}/start`).expect(200);
     const base = `/api/campaigns/${c.id}`;
     await a.patch(base).send({ title: 'nope' }).expect(409);
-    await a.post(`${base}/candidates`).field('name', 'late').expect(409);
+    await a.post(`${base}/candidates`).field('region', 'Khomas').field('name', 'late').expect(409);
     await a.patch(`${base}/candidates/${c.candidates[0]}`).field('name', 'renamed').expect(409);
     await a.del(`${base}/candidates/${c.candidates[0]}`).expect(409);
     await a.put(`${base}/eligible`).send({ mode: 'all' }).expect(409);
@@ -440,7 +440,7 @@ describe('uploads', () => {
     const a = await login(app, ADMIN_A);
     const c = await makeCampaign(a, 0);
     const exe = Buffer.concat([Buffer.from('MZ'), Buffer.alloc(2000, 1)]);
-    const r = await a.post(`/api/campaigns/${c.id}/candidates`).field('name', 'x').attach('photo', exe, { filename: 'photo.jpg', contentType: 'image/jpeg' }).expect(400);
+    const r = await a.post(`/api/campaigns/${c.id}/candidates`).field('region', 'Khomas').field('name', 'x').attach('photo', exe, { filename: 'photo.jpg', contentType: 'image/jpeg' }).expect(400);
     expect(r.body.code).toBe('bad_image');
     expect((await ownerDb().query('SELECT 1 FROM candidates WHERE campaign_id = $1', [c.id])).rowCount).toBe(0);
   });
@@ -449,13 +449,13 @@ describe('uploads', () => {
     const a = await login(app, ADMIN_A);
     const c = await makeCampaign(a, 0);
     const big = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(2 * 1024 * 1024 + 10, 7)]);
-    await a.post(`/api/campaigns/${c.id}/candidates`).field('name', 'x').attach('photo', big, { filename: 'big.jpg', contentType: 'image/jpeg' }).expect(413);
+    await a.post(`/api/campaigns/${c.id}/candidates`).field('region', 'Khomas').field('name', 'x').attach('photo', big, { filename: 'big.jpg', contentType: 'image/jpeg' }).expect(413);
   });
 
   it('accepts a PNG, re-encodes to JPEG max 800px and serves it via the authenticated route only', async () => {
     const a = await login(app, ADMIN_A);
     const c = await makeCampaign(a, 0);
-    const r = await a.post(`/api/campaigns/${c.id}/candidates`).field('name', 'Pic').attach('photo', await png(2000, 1500), { filename: 'p.png', contentType: 'image/png' }).expect(201);
+    const r = await a.post(`/api/campaigns/${c.id}/candidates`).field('region', 'Khomas').field('name', 'Pic').attach('photo', await png(2000, 1500), { filename: 'p.png', contentType: 'image/png' }).expect(201);
     expect(r.body.photo_url).toBe(`/api/photos/${r.body.id}`);
     expect(r.body.photo_path).toBeUndefined();
     const img = await a.get(r.body.photo_url).buffer(true).parse((res, cb) => {

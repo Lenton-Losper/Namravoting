@@ -1,15 +1,15 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { NAMRA_LOGO_JPEG } from '../../src/services/logo.js';
+import { UMOJA_LOGO_PNG } from '../../src/services/logo.js';
 import { buildPdf } from '../../src/services/resultsExport.js';
 
-const asset = path.resolve(__dirname, '../../../client/src/assets/namra-logo.jpg');
+const asset = path.resolve(__dirname, '../../../client/src/assets/umoja-logo.png');
 
-describe('the NamRA logo', () => {
+describe('the Umoja logo', () => {
   it('the copy embedded for the PDF is byte for byte the supplied file', () => {
-    expect(NAMRA_LOGO_JPEG.equals(fs.readFileSync(asset))).toBe(true);
-    expect(NAMRA_LOGO_JPEG.subarray(0, 3).toString('hex')).toBe('ffd8ff');   // a JPEG
+    expect(UMOJA_LOGO_PNG.equals(fs.readFileSync(asset))).toBe(true);
+    expect(UMOJA_LOGO_PNG.subarray(0, 8).toString('hex')).toBe('89504e470d0a1a0a');   // a real PNG (the supplied file was WebP data)
   });
 
   it('the PDF header embeds it as an image', async () => {
@@ -20,7 +20,7 @@ describe('the NamRA logo', () => {
     }, { compress: false });
     const text = pdf.toString('latin1');
     expect(text).toContain('/Subtype /Image');
-    expect(text).toContain('/Filter /DCTDecode');                              // the JPEG is embedded as is, not re-encoded
-    expect(text).toContain(NAMRA_LOGO_JPEG.toString('latin1').slice(0, 64));   // and it is the same bytes
+    expect(text).toContain('/Filter /FlateDecode');
+    expect(text).toContain('Umoja Voting');
   });
 });

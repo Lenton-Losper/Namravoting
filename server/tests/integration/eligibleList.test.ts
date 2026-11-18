@@ -20,7 +20,7 @@ const REASON = 'Joined the organisation after voting began';
 async function listed(admin: Admin, emails: string[], start = true) {
   const c = (await admin.post('/api/campaigns').send({ title: 'Listed vote', eligibility: 'list', emails }).expect(201)).body;
   const cands: string[] = [];
-  for (const n of ['One', 'Two']) cands.push((await admin.post(`/api/campaigns/${c.id}/candidates`).field('name', n).expect(201)).body.id);
+  for (const n of ['One', 'Two']) cands.push((await admin.post(`/api/campaigns/${c.id}/candidates`).field('region', 'Khomas').field('name', n).expect(201)).body.id);
   if (start) await admin.post(`/api/campaigns/${c.id}/start`).expect(200);
   return { id: c.id as string, token: c.share_token as string, cands };
 }
@@ -130,7 +130,7 @@ describe('late add (the audited way into a running list)', () => {
     const draft = await listed(admin, [S1.email], false);
     await expect(appRole.query('SELECT late_add_eligible($1, $2, $3, $4)', [draft.id, await sessionFor(ADMIN_A), S2.email, REASON])).rejects.toMatchObject({ code: 'NR409' });
     const all = (await admin.post('/api/campaigns').send({ title: 'All staff', eligibility: 'all' }).expect(201)).body;
-    for (const n of ['One', 'Two']) await admin.post(`/api/campaigns/${all.id}/candidates`).field('name', n).expect(201);
+    for (const n of ['One', 'Two']) await admin.post(`/api/campaigns/${all.id}/candidates`).field('region', 'Khomas').field('name', n).expect(201);
     await admin.post(`/api/campaigns/${all.id}/start`).expect(200);
     await expect(appRole.query('SELECT late_add_eligible($1, $2, $3, $4)', [all.id, await sessionFor(ADMIN_A), S2.email, REASON])).rejects.toMatchObject({ code: 'NR409' });
   });
@@ -169,7 +169,7 @@ describe('the SHA-256 of the sorted list is in the audit trail', () => {
     const admin = await login(app, ADMIN_A);
     await setMembers([['NAM0002', true], ['NAM0001', true], ['NAM0003', false]]);
     const c = (await admin.post('/api/campaigns').send({ title: 'Umoja vote', eligibility: 'umoja' }).expect(201)).body;
-    for (const n of ['One', 'Two']) await admin.post(`/api/campaigns/${c.id}/candidates`).field('name', n).expect(201);
+    for (const n of ['One', 'Two']) await admin.post(`/api/campaigns/${c.id}/candidates`).field('region', 'Khomas').field('name', n).expect(201);
     await admin.post(`/api/campaigns/${c.id}/start`).expect(200);
     const want = crypto.createHash('sha256').update('NAM0001\nNAM0002', 'utf8').digest('hex');
     expect((await audits(c.id, 'campaign.start'))[0].details).toMatchObject({ frozen_members: 3, list_sha256: want });

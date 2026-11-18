@@ -49,6 +49,9 @@ describe('text contrast (AA: 4.5:1)', () => {
     ['confirm warning text on its amber fill', '#6B4200', '#FFF6E5'],
     ['receipt check icon on its green circle', '#1E6B43', '#E6F2EB'],
     ['initials on their tint', token('b-navy'), token('b-tint')],
+    ['Umoja blue text on the orange fill (orange buttons and chips use blue text, never white)', token('on-orange'), token('orange')],
+    ['orange-text (small text and the focus ring) on the orange tint', token('orange-text'), token('orange-50')],
+    ['orange-text on white', token('orange-text'), '#FFFFFF'],
     ['operator banner text', '#78350f', '#fffbeb'],
     ['operator danger banner text', '#7f1d1d', '#fef2f2'],
   ];
@@ -56,6 +59,17 @@ describe('text contrast (AA: 4.5:1)', () => {
 });
 
 describe('non-text contrast (AA: 3:1)', () => {
+  it('the brand orange on the blue header (the active nav underline, icons) against the blue', () => { expect(ratio(token('orange'), token('navy'))).toBeGreaterThanOrEqual(UI); });
+  it('the brand colours are the Umoja ones, defined once in :root', () => {
+    expect(token('navy').toLowerCase()).toBe('#002d4d'); expect(token('orange').toLowerCase()).toBe('#ff6800');
+    expect(css.match(/#002d4d/gi)!.length).toBeLessThanOrEqual(6);   // the tokens (and their comments), not scattered copies
+  });
+  it('brand orange on white is 2.9:1, so the stylesheet never uses it for text or as a white-on-orange button', () => {
+    expect(ratio(token('orange'), '#FFFFFF')).toBeLessThan(UI);
+    const textRules = css.split('}').filter((r) => /(^|[;{\s])color:\s*var\(--orange\)/.test(r)).map((r) => r.split('{')[0].trim());
+    for (const sel of textRules) expect(sel, `"${sel}" colours text orange`).toMatch(/icon/);   // icons only (always beside a text label)
+    expect(css).not.toMatch(/background:\s*var\(--orange\)[^}]*color:\s*#fff/i);
+  });
   it('the border of a form field against the page', () => { expect(ratio(token('muted'), token('bg'))).toBeGreaterThanOrEqual(UI); });
   it('the stylesheet really uses a strong border for form fields (not the faint decorative one)', () => {
     const rule = /\binput, textarea, select \{[^}]*\}/.exec(css)![0];

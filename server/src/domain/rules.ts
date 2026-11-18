@@ -11,10 +11,34 @@ import { isContender, standing, type Counted } from './results.js';
  * untouched: a rule reads its settings from `position.rules`.
  */
 
+/** "At least `minOutside` picks from outside `regionName`". Applies to what a voter may choose, never to who wins. */
+export interface RegionRule { minOutside: number; regionId: string; regionName: string; /** non-withdrawn candidates outside the region (when known): the rule never asks for more than exist */ outsideAvailable?: number }
+
 export interface RulePosition {
-  id: string; title: string; seats: number; rules: Record<string, unknown>;
+  id: string; title: string;
+  /** Winners (results). NOT how many a voter picks: that is minPicks..maxPicks. */
+  seats: number;
+  /** How many candidates a voter may choose (inclusive). Equal = an exact count. Defaults to `seats` when not given. */
+  minPicks?: number; maxPicks?: number;
+  regionRule?: RegionRule | null;
+  rules: Record<string, unknown>;
   minCandidates: number | null; maxCandidates: number | null;
 }
+
+export const picksRange = (p: { seats: number; minPicks?: number; maxPicks?: number }): { min: number; max: number } => ({ min: p.minPicks ?? p.seats, max: p.maxPicks ?? p.seats });
+
+/** "Choose 4", "Choose up to 4" (from one), or "Choose 2 to 4". */
+export function chooseLabel(min: number, max: number): string {
+  if (min === max) return `Choose ${max}`;
+  return min === 1 ? `Choose up to ${max}` : `Choose ${min} to ${max}`;
+}
+
+/** The rule as a sentence for voters and candidates, generated from the data so it can never disagree with it. */
+export const regionRuleText = (r: { minOutside: number; regionName: string }): string =>
+  `At least ${r.minOutside} pick${r.minOutside === 1 ? '' : 's'} from outside ${r.regionName}`;
+
+/** How many outside-the-region picks a ballot needs: the rule, but never more than there are candidates outside the region to pick. */
+export const requiredOutside = (r: RegionRule): number => Math.min(r.minOutside, r.outsideAvailable ?? r.minOutside);
 /** Who is voting. Used only to decide whether the ballot is allowed: it is never stored next to a candidate. */
 export interface RuleMember { key: string; oid: string }
 export interface RuleCandidate { id: string; name: string; regionId: string | null; regionName: string | null; isAbstain: boolean; withdrawn: boolean }
@@ -48,8 +72,21 @@ export function validateSelection(position: RulePosition, picks: RuleCandidate[]
     if (picks.length > 1) throw new BallotRejected('Abstain cannot be combined with candidates', 'abstain_mixed', 400);
     return;
   }
-  if (picks.length !== position.seats) {
-    throw new BallotRejected(position.seats === 1 ? 'Choose one candidate' : `Choose exactly ${position.seats} candidates (you chose ${picks.length})`, 'wrong_number', 400);
+  const { min, max } = picksRange(position);
+  if (picks.length < min || picks.length > max) {
+    throw new BallotRejected(min === max
+      ? (max === 1 ? 'Choose one candidate' : `Choose exactly ${max} candidates (you chose ${picks.length})`)
+      : `Choose ${min === 1 ? `up to ${max}` : `${min} to ${max}`} candidates (you chose ${picks.length})`, 'wrong_number', 400);
+  }
+  // The region rule is about the selection as a whole, so it is judged here, before anything is written. Violations are 409 (a rule of this
+  // vote, not a malformed request). A ballot that abstains returned above: it picks nobody, so it has no region to count.
+  const rule = position.regionRule;
+  if (rule) {
+    const need = requiredOutside(rule);
+    const outside = picks.filter((p) => p.regionId !== rule.regionId).length;
+    if (outside < need) {
+      throw new BallotRejected(`${regionRuleText({ minOutside: need, regionName: rule.regionName })}: you chose ${outside}. Change your selection and try again.`, 'region_rule', 409);
+    }
   }
 }
 

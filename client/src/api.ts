@@ -75,6 +75,8 @@ export type NominationState = 'not_invited' | 'open' | 'closed' | 'expired' | 'e
 /** One block on the campaign page: a position with its candidate counts and nomination status (and, once closed, its outcome). */
 export interface Position {
   id: string; title: string; description: string | null; sort_order: number; seats: number; rule_text?: string | null; min_candidates: number | null; max_candidates: number | null;
+  /** How many a voter may pick (equal = exactly that many), the ballot label, and the optional region vote rule. */
+  min_picks?: number; max_picks?: number; choose_label?: string; region_rule?: { min_outside: number; region_id: string; region: string; text: string } | null;
   status: 'open' | 'closed'; nomination_state: NominationState; invite_url: string | null; required: number;
   counts: { approved: number; submitted: number; rejected: number; withdrawn: number; invited: number };
   result: { turnout: number; winners: string[]; tie: string[] | null } | null;

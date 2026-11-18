@@ -22,9 +22,9 @@ interface Fx { id: string; token: string; cands: string[]; photoCand: string; cl
 /** A campaign with 2 candidates (one with a photo), eligibility list = [S1], advanced to the requested stage. */
 async function fixture(admin: Session, stage: Stage): Promise<Fx> {
   const c = (await admin.post('/api/campaigns').send({ title: TITLE, description: 'Secret description Yankee' }).expect(201)).body;
-  const withPhoto = (await admin.post(`/api/campaigns/${c.id}/candidates`).field('name', 'Alpha Person').field('bio', 'bio alpha')
+  const withPhoto = (await admin.post(`/api/campaigns/${c.id}/candidates`).field('region', 'Khomas').field('name', 'Alpha Person').field('bio', 'bio alpha')
     .attach('photo', await png(200, 200), { filename: 'a.png', contentType: 'image/png' }).expect(201)).body;
-  const plain = (await admin.post(`/api/campaigns/${c.id}/candidates`).field('name', 'Bravo Person').expect(201)).body;
+  const plain = (await admin.post(`/api/campaigns/${c.id}/candidates`).field('region', 'Khomas').field('name', 'Bravo Person').expect(201)).body;
   await admin.put(`/api/campaigns/${c.id}/eligible`).send({ mode: 'list', emails: [S1.email] }).expect(200);
   if (stage !== 'draft') await admin.post(`/api/campaigns/${c.id}/start`).expect(200);
   if (stage === 'closed' || stage === 'published') await admin.post(`/api/campaigns/${c.id}/close`).expect(200);
@@ -50,7 +50,7 @@ interface AdminRoute { name: string; stage: Stage; call: (s: Session, f: Fx) => 
 const adminRoutes: AdminRoute[] = [
   { name: 'GET /campaigns/:id', stage: 'draft', call: (s, f) => s.get(`/api/campaigns/${f.id}`), control: 200 },
   { name: 'PATCH /campaigns/:id', stage: 'draft', call: (s, f) => s.patch(`/api/campaigns/${f.id}`).send({ title: 'Changed' }), control: 200 },
-  { name: 'POST /campaigns/:id/candidates', stage: 'draft', call: (s, f) => s.post(`/api/campaigns/${f.id}/candidates`).field('name', 'New'), control: 201 },
+  { name: 'POST /campaigns/:id/candidates', stage: 'draft', call: (s, f) => s.post(`/api/campaigns/${f.id}/candidates`).field('region', 'Khomas').field('name', 'New'), control: 201 },
   { name: 'PATCH /campaigns/:id/candidates/:cid', stage: 'draft', call: (s, f) => s.patch(`/api/campaigns/${f.id}/candidates/${f.cands[1]}`).field('name', 'Renamed'), control: 200 },
   { name: 'DELETE /campaigns/:id/candidates/:cid', stage: 'draft', call: (s, f) => s.del(`/api/campaigns/${f.id}/candidates/${f.cands[1]}`), control: 204 },
   { name: 'PUT /campaigns/:id/eligible', stage: 'draft', call: (s, f) => s.put(`/api/campaigns/${f.id}/eligible`).send({ mode: 'all' }), control: 200 },

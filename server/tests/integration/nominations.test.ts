@@ -114,7 +114,7 @@ describe('the candidate fills in their profile', () => {
     const { e, invite } = await setup();
     const { token } = await invite(0);
     await submit(await login(app, S1), token, { name: 'One', region_id: e.regions.Khomas }).expect(201);
-    await expect(ownerDb().query("INSERT INTO candidates (campaign_id, position_id, name, status, submitted_by_oid) VALUES ($1, $2, 'Two', 'submitted', $3)", [e.id, e.positions[0].id, S1.oid])).rejects.toThrow(/candidates_one_profile_idx|unique/);
+    await expect(ownerDb().query("INSERT INTO candidates (campaign_id, position_id, region_id, name, status, submitted_by_oid) VALUES ($1, $2, (SELECT id FROM regions WHERE campaign_id = $1 LIMIT 1), 'Two', 'submitted', $3)", [e.id, e.positions[0].id, S1.oid])).rejects.toThrow(/candidates_one_profile_idx|unique/);
   });
 
   it('can be edited until the admin approves it; then it is locked for the candidate', async () => {
@@ -190,8 +190,8 @@ describe('when nominations close', () => {
     const me = await login(app, S1);
     await submit(me, token, { name: 'Sam', region_id: e.regions.Khomas }).expect(201);
     const id = (await rows(e.positions[0].id))[0].id;
-    for (const n of ['A', 'B']) await admin.post(`/api/campaigns/${e.id}/candidates`).field('name', n).field('position_id', e.positions[0].id).expect(201);
-    for (const n of ['C', 'D']) await admin.post(`/api/campaigns/${e.id}/candidates`).field('name', n).field('position_id', e.positions[1].id).expect(201);
+    for (const n of ['A', 'B']) await admin.post(`/api/campaigns/${e.id}/candidates`).field('region', 'Khomas').field('name', n).field('position_id', e.positions[0].id).expect(201);
+    for (const n of ['C', 'D']) await admin.post(`/api/campaigns/${e.id}/candidates`).field('region', 'Khomas').field('name', n).field('position_id', e.positions[1].id).expect(201);
     await admin.post(`/api/campaigns/${e.id}/start`).expect(200);
 
     const info = (await me.get(`/api/nominate/${token}`).expect(200)).body;
@@ -246,7 +246,7 @@ describe('only approved candidates reach the ballot', () => {
     await admin.post(`/api/campaigns/${e.id}/candidates/${ids[1]}/approve`).expect(200);
     await admin.post(`/api/campaigns/${e.id}/candidates/${ids[2]}/reject`).send({ reason: 'Not a member of staff.' }).expect(200);
     await (await login(app, S4)).post(`/api/nominate/${token}/withdraw`).expect(200);                              // ids[3] withdraws
-    for (const n of ['C', 'D']) await admin.post(`/api/campaigns/${e.id}/candidates`).field('name', n).field('position_id', e.positions[1].id).expect(201);
+    for (const n of ['C', 'D']) await admin.post(`/api/campaigns/${e.id}/candidates`).field('region', 'Khomas').field('name', n).field('position_id', e.positions[1].id).expect(201);
     await admin.post(`/api/campaigns/${e.id}/start`).expect(200);
 
     const voter = await login(app, (await import('../helpers.js')).ADMIN_B);

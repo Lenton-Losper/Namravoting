@@ -42,7 +42,7 @@ function TopBar() {
   return (
     <header className="topbar">
       <div className="topbar-in">
-        <Link to="/" className="brand" aria-label="NamRA Voting home"><Wordmark /></Link>
+        <Link to="/" className="brand" aria-label="Umoja Voting home"><Wordmark /></Link>
         {user && (
           <>
             <nav className="topnav" aria-label="Main">

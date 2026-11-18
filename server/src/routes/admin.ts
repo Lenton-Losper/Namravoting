@@ -1,6 +1,6 @@
 import { activeMemberCount, snapshotVoters } from '../services/umoja.js';
 import { createTallies } from '../services/tallies.js';
-import { defaultPosition, positionBlocks, seedRegions, setAbstain, startProblems } from '../services/positions.js';
+import { defaultPosition, positionBlocks, positionRules, seedRegions, setAbstain, startProblems } from '../services/positions.js';
 import { positionsRouter } from './positions.js';
 import crypto from 'node:crypto';
 import { Router, type Request, type RequestHandler, type Response } from 'express';
@@ -180,6 +180,15 @@ function cleanEmails(raw: string[]): { emails: string[]; invalid: string[]; not_
 /** What the admin is told after saving a list: exactly which entries were skipped or look wrong, and who has never signed in. */
 function warningsOf(checked: { invalid: string[]; not_namra: string[] }, summary: { never_signed_in: string[] } | null) {
   return { invalid: checked.invalid, not_namra: checked.not_namra, never_signed_in: summary?.never_signed_in ?? [] };
+}
+
+/** The region a candidate stands in: by id or by name, inside THIS campaign. A candidate cannot be saved without one. */
+async function resolveRegion(tx: PoolClient, campaignId: string, id?: string, name?: string): Promise<string> {
+  const row = id
+    ? (await tx.query('SELECT id FROM regions WHERE id = $1 AND campaign_id = $2', [id, campaignId])).rows[0]
+    : name ? (await tx.query('SELECT id FROM regions WHERE campaign_id = $1 AND lower(name) = lower($2)', [campaignId, name])).rows[0] : undefined;
+  if (!row) throw new HttpError(400, id || name ? 'That region does not belong to this campaign' : 'Choose a region for this candidate', id || name ? 'invalid_region' : 'region_required');
+  return row.id as string;
 }
 
 /**
@@ -416,7 +425,7 @@ export function adminRouter(): Router {
     const c = camp(res);
     const b = candidateBody.parse({
       name: req.body?.name, ...(req.body?.bio !== undefined ? { bio: req.body.bio } : {}), ...(req.body?.pledge ? { pledge: req.body.pledge } : {}),
-      ...(req.body?.position_id ? { position_id: req.body.position_id } : {}), ...(req.body?.region_id ? { region_id: req.body.region_id } : {}) });
+      ...(req.body?.position_id ? { position_id: req.body.position_id } : {}), ...(req.body?.region_id ? { region_id: req.body.region_id } : {}), ...(req.body?.region ? { region: req.body.region } : {}) });
     const photo = req.file ? await savePhoto(req.file.buffer) : null;
     try {
       const cand = await inEditTx(c.id, async (tx, live) => {
@@ -426,14 +435,14 @@ export function adminRouter(): Router {
         if (!positionId) throw new HttpError(400, 'Choose the position this candidate stands for', 'position_required');
         const pos = (await tx.query('SELECT max_candidates FROM positions WHERE id = $1 AND campaign_id = $2 FOR UPDATE', [positionId, c.id])).rows[0];
         if (!pos) throw new HttpError(400, 'That position does not belong to this campaign', 'invalid_position');
-        if (b.region_id && !(await tx.query('SELECT 1 FROM regions WHERE id = $1 AND campaign_id = $2', [b.region_id, c.id])).rowCount) throw new HttpError(400, 'That region does not belong to this campaign', 'invalid_region');
+        const regionId = await resolveRegion(tx, c.id, b.region_id, b.region);
         if (pos.max_candidates != null && (await tx.query("SELECT count(*)::int AS n FROM candidates WHERE position_id = $1 AND NOT is_abstain AND status = 'approved'", [positionId])).rows[0].n >= pos.max_candidates) {
           throw new HttpError(409, `This position allows at most ${pos.max_candidates} candidates`, 'position_full');
         }
         const { rows } = await tx.query(
           `INSERT INTO candidates (campaign_id, position_id, region_id, name, bio, pledge, photo_path, sort_order)
            VALUES ($1,$2,$3,$4,$5,$7,$6,(SELECT COALESCE(max(sort_order),0)+1 FROM candidates WHERE position_id = $2 AND NOT is_abstain))
-           RETURNING id, name, bio, pledge, photo_path, sort_order, position_id, region_id, status`, [c.id, positionId, b.region_id ?? null, b.name, b.bio || null, photo, b.pledge || null]);
+           RETURNING id, name, bio, pledge, photo_path, sort_order, position_id, region_id, status`, [c.id, positionId, regionId, b.name, b.bio || null, photo, b.pledge || null]);
         if (live) {
           await tx.query('INSERT INTO tallies (campaign_id, position_id, candidate_id, votes) VALUES ($1, $2, $3, 0)', [c.id, positionId, rows[0].id]);   // a started campaign has a counter per candidate
           await auditEdit(tx, currentUser(req).oid, c.id, [{ what: 'candidate_added', name: b.name }]);
@@ -452,14 +461,19 @@ export function adminRouter(): Router {
       ...(req.body?.bio !== undefined ? { bio: req.body.bio } : {}),
       ...(req.body?.pledge !== undefined ? { pledge: req.body.pledge } : {}),
       ...(req.body?.removePhoto !== undefined ? { removePhoto: req.body.removePhoto } : {}),
-      ...(req.body?.region_id !== undefined ? { region_id: req.body.region_id === '' ? null : req.body.region_id } : {}),
+      ...(req.body?.region_id ? { region_id: req.body.region_id } : {}),
+      ...(req.body?.region ? { region: req.body.region } : {}),
     });
+    if (req.body?.region_id === '' || req.body?.region === '') throw new HttpError(400, 'A candidate always has a region: choose one', 'region_required');
     const newPhoto = req.file ? await savePhoto(req.file.buffer) : null;
     try {
       const { cand, oldPhoto } = await inEditTx(c.id, async (tx, live) => {
         if (live) await requireNoVotes(tx, c.id);
-        const old = await tx.query('SELECT name, photo_path FROM candidates WHERE id = $1 AND campaign_id = $2 AND NOT is_abstain FOR UPDATE', [cid, c.id]);
+        const old = await tx.query('SELECT name, photo_path, region_id FROM candidates WHERE id = $1 AND campaign_id = $2 AND NOT is_abstain FOR UPDATE', [cid, c.id]);
         if (!old.rowCount) throw notFound();
+        const newRegion = b.region_id !== undefined || b.region !== undefined ? await resolveRegion(tx, c.id, b.region_id, b.region) : undefined;
+        // A candidate's region is part of what voters and the region rule rely on: it is fixed once voting has started.
+        if (live && newRegion !== undefined && newRegion !== old.rows[0].region_id) throw new HttpError(409, 'A candidate\'s region cannot change once voting has started', 'region_locked');
         const setPhoto = newPhoto !== null || b.removePhoto === 'true';
         const { rows } = await tx.query(
           `UPDATE candidates SET name = COALESCE($3, name),
@@ -468,7 +482,7 @@ export function adminRouter(): Router {
              region_id = CASE WHEN $8::boolean THEN $9::uuid ELSE region_id END,
              pledge = CASE WHEN $10::boolean THEN NULLIF($11, '') ELSE pledge END
            WHERE id = $1 AND campaign_id = $2 RETURNING id, name, bio, pledge, photo_path, sort_order, position_id, region_id, status`,
-          [cid, c.id, b.name ?? null, b.bio !== undefined, b.bio ?? null, setPhoto, newPhoto, b.region_id !== undefined, b.region_id ?? null, b.pledge !== undefined, b.pledge ?? null]);
+          [cid, c.id, b.name ?? null, b.bio !== undefined, b.bio ?? null, setPhoto, newPhoto, newRegion !== undefined, newRegion ?? null, b.pledge !== undefined, b.pledge ?? null]);
         if (live) {
           const oldName = old.rows[0].name as string;
           await auditEdit(tx, currentUser(req).oid, c.id, [{ what: 'candidate_edited', name: rows[0].name, ...(rows[0].name !== oldName ? { from: oldName, to: rows[0].name as string } : {}) }]);
@@ -568,7 +582,7 @@ export function adminRouter(): Router {
       const listHash = fresh.eligibility === 'list' ? (await tx.query('SELECT eligible_list_sha256($1) AS h', [c.id])).rows[0].h as string
         : fresh.eligibility === 'umoja' ? (await tx.query('SELECT campaign_voters_sha256($1) AS h', [c.id])).rows[0].h as string : null;
       await audit(tx, currentUser(req).oid, 'campaign.start', c.id, {
-        candidates: n, positions: nPos, ...(fresh.eligibility === 'umoja' ? { frozen_members: frozen } : {}),
+        candidates: n, positions: nPos, position_rules: await positionRules(tx, c.id),   // the voting rules in force from this moment (pick range, region rule), sealed in the audit chain ...(fresh.eligibility === 'umoja' ? { frozen_members: frozen } : {}),
         ...(fresh.eligibility === 'list' ? { eligible_count: (await tx.query('SELECT count(*)::int AS n FROM eligible_voters WHERE campaign_id = $1', [c.id])).rows[0].n, list_sha256: listHash } : {}),
         ...(fresh.eligibility === 'umoja' ? { list_sha256: listHash } : {}),
       });
@@ -821,8 +835,8 @@ export function adminRouter(): Router {
           [token, u.oid, title, c.description, c.eligibility, c.allow_edits_after_start === true, c.id, round]);
         const id = rows[0].id as string;
         // The run-off keeps the position and the regions of the original, so its ballot and results read the same way.
-        const pos = (await tx.query('SELECT title, description, seats, rules FROM positions WHERE campaign_id = $1 ORDER BY sort_order, created_at LIMIT 1', [c.id])).rows[0];
-        const newPos = (await tx.query('INSERT INTO positions (campaign_id, title, description, seats, rules, sort_order) VALUES ($1,$2,$3,$4,$5,0) RETURNING id', [id, pos.title, pos.description, pos.seats, pos.rules])).rows[0].id as string;
+        const pos = (await tx.query('SELECT title, description, seats, min_picks, max_picks, rules FROM positions WHERE campaign_id = $1 ORDER BY sort_order, created_at LIMIT 1', [c.id])).rows[0];
+        const newPos = (await tx.query('INSERT INTO positions (campaign_id, title, description, seats, min_picks, max_picks, rules, sort_order) VALUES ($1,$2,$3,$4,$6,$7,$5,0) RETURNING id', [id, pos.title, pos.description, pos.seats, pos.rules, pos.min_picks, pos.max_picks])).rows[0].id as string;
         await tx.query('INSERT INTO regions (campaign_id, name, sort_order) SELECT $1, name, sort_order FROM regions WHERE campaign_id = $2', [id, c.id]);
         for (let i = 0; i < tied.length; i++) {
           await tx.query('INSERT INTO candidates (campaign_id, position_id, region_id, name, bio, pledge, photo_path, sort_order) VALUES ($1,$2,(SELECT id FROM regions WHERE campaign_id = $1 AND name = $3),$4,$5,$8,$6,$7)', [id, newPos, tied[i].region, tied[i].name, tied[i].bio, photos[i], i + 1, tied[i].pledge]);

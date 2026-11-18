@@ -19,7 +19,7 @@ type Admin = Awaited<ReturnType<typeof login>>;
 async function campaign(admin: Admin, opts: { archive?: boolean; close?: boolean } = {}) {
   const c = (await admin.post('/api/campaigns').send({ title: 'Old vote', eligibility: 'list', emails: [S1.email, S2.email, S3.email] }).expect(201)).body;
   const cands: string[] = [];
-  for (const n of ['One', 'Two']) cands.push((await admin.post(`/api/campaigns/${c.id}/candidates`).field('name', n).attach('photo', await png(), { filename: 'p.png', contentType: 'image/png' }).expect(201)).body.id);
+  for (const n of ['One', 'Two']) cands.push((await admin.post(`/api/campaigns/${c.id}/candidates`).field('region', 'Khomas').field('name', n).attach('photo', await png(), { filename: 'p.png', contentType: 'image/png' }).expect(201)).body.id);
   await admin.post(`/api/campaigns/${c.id}/start`).expect(200);
   await (await login(app, S1)).post(`/api/vote/${c.share_token}`).send({ candidateId: cands[0] }).expect(201);
   await (await login(app, S2)).post(`/api/vote/${c.share_token}`).send({ candidateId: cands[0] }).expect(201);

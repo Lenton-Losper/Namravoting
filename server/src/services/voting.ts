@@ -83,7 +83,8 @@ export async function castVote(voterOid: string, voterEmail: string, shareToken:
         if (new Set(picks).size !== picks.length) throw new HttpError(400, 'Each candidate can be chosen only once', 'duplicate_candidate');
         const rows = (await c.query(
           `SELECT t.position_id, t.candidate_id, k.name, k.is_abstain, (k.withdrawn_at IS NOT NULL) AS withdrawn, k.region_id, r.name AS region_name,
-                  p.title, p.seats, p.rules, p.min_candidates, p.max_candidates
+                  p.title, p.seats, p.min_picks, p.max_picks, p.region_rule_min, p.region_rule_region_id,
+                  (SELECT g.name FROM regions g WHERE g.id = p.region_rule_region_id) AS rule_region_name, p.rules, p.min_candidates, p.max_candidates
              FROM tallies t JOIN candidates k ON k.id = t.candidate_id AND k.campaign_id = t.campaign_id
              JOIN positions p ON p.id = t.position_id LEFT JOIN regions r ON r.id = k.region_id
             WHERE t.campaign_id = $1 AND t.candidate_id = ANY($2::uuid[])`, [camp.id, picks])).rows;
@@ -92,7 +93,15 @@ export async function castVote(voterOid: string, voterEmail: string, shareToken:
           throw new HttpError(400, 'Candidate does not belong to this position', 'invalid_candidate');
         }
         votedPosition = first.position_id;
-        const rulePos = { id: first.position_id, title: first.title, seats: first.seats, rules: first.rules, minCandidates: first.min_candidates, maxCandidates: first.max_candidates };
+        // The region rule (at least N picks from outside a region) is part of the position; "outside" counts only candidates who can still be chosen.
+        const regionRule = first.region_rule_min == null ? null : {
+          minOutside: first.region_rule_min as number, regionId: first.region_rule_region_id as string, regionName: first.rule_region_name as string,
+          outsideAvailable: (await c.query(
+            "SELECT count(*)::int AS n FROM candidates WHERE position_id = $1 AND NOT is_abstain AND status = 'approved' AND withdrawn_at IS NULL AND region_id IS DISTINCT FROM $2",
+            [first.position_id, first.region_rule_region_id])).rows[0].n as number,
+        };
+        const rulePos = { id: first.position_id, title: first.title, seats: first.seats, minPicks: first.min_picks as number, maxPicks: first.max_picks as number, regionRule,
+          rules: first.rules, minCandidates: first.min_candidates, maxCandidates: first.max_candidates };
         const ruleCands = picks.map((id) => {
           const x = rows.find((y) => y.candidate_id === id)!;
           return { id, name: x.name, regionId: x.region_id, regionName: x.region_name, isAbstain: x.is_abstain, withdrawn: x.withdrawn };
@@ -114,10 +123,10 @@ export async function castVote(voterOid: string, voterEmail: string, shareToken:
         // whole selection. The receipt code goes on the receipt row only. NEVER log it (this function logs nothing about a vote).
         await c.query('INSERT INTO vote_receipts (campaign_id, position_id, voter_oid, member_key, receipt_code) VALUES ($1, $2, $3, $4, $5)', [camp.id, first.position_id, voterOid, memberKey, receiptCode]);
 
-        // One vote for each pick. An Abstain ballot abstains from EVERY seat, so it adds `seats` to the Abstain line: that keeps "counters = receipts
-        // x seats" exact for the integrity check, whatever was chosen. (The tally guard allows +1 per statement, hence one statement per vote.)
+        // One vote for each pick. An Abstain ballot adds `min_picks` votes to the Abstain line, so every ballot adds between min_picks and max_picks
+        // votes: that keeps "receipts x min <= counters <= receipts x max" true for the integrity check, whatever was chosen. (The tally guard allows +1 per statement, hence one statement per vote.)
         for (const rc of ruleCands) {
-          for (let i = 0; i < (rc.isAbstain ? rulePos.seats : 1); i++) {
+          for (let i = 0; i < (rc.isAbstain ? rulePos.minPicks : 1); i++) {
             const t = await c.query('UPDATE tallies SET votes = votes + 1 WHERE campaign_id = $1 AND candidate_id = $2', [camp.id, rc.id]);
             if (t.rowCount === 0) throw new HttpError(400, 'Candidate does not belong to this campaign', 'invalid_candidate');
           }

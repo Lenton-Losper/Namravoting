@@ -180,10 +180,10 @@ describe('the candidate pledge', () => {
     const admin = await login(app, ADMIN_A);
     const c = (await admin.post('/api/campaigns').send({ title: 'T', eligibility: 'all' }).expect(201)).body;
     const pos = (await admin.post(`/api/campaigns/${c.id}/positions`).send({ title: 'P' }).expect(201)).body;
-    const cand = (await admin.post(`/api/campaigns/${c.id}/candidates`).field('name', 'Alice').field('position_id', pos.id).field('pledge', 'Open books, every quarter.').expect(201)).body;
+    const cand = (await admin.post(`/api/campaigns/${c.id}/candidates`).field('region', 'Khomas').field('name', 'Alice').field('position_id', pos.id).field('pledge', 'Open books, every quarter.').expect(201)).body;
     expect(cand.pledge).toBe('Open books, every quarter.');
-    await admin.post(`/api/campaigns/${c.id}/candidates`).field('name', 'Too Long').field('position_id', pos.id).field('pledge', 'x'.repeat(161)).expect(400);
-    await admin.post(`/api/campaigns/${c.id}/candidates`).field('name', 'Bob').field('position_id', pos.id).expect(201);
+    await admin.post(`/api/campaigns/${c.id}/candidates`).field('region', 'Khomas').field('name', 'Too Long').field('position_id', pos.id).field('pledge', 'x'.repeat(161)).expect(400);
+    await admin.post(`/api/campaigns/${c.id}/candidates`).field('region', 'Khomas').field('name', 'Bob').field('position_id', pos.id).expect(201);
     await admin.post(`/api/campaigns/${c.id}/start`).expect(200);
     const ballot = (await (await login(app, S1)).get(`/api/vote/${c.share_token}/positions/${pos.id}`).expect(200)).body;
     expect(ballot.candidates.find((x: { name: string }) => x.name === 'Alice').pledge).toBe('Open books, every quarter.');

@@ -18,7 +18,7 @@ async function setup(opts: { require_approval?: boolean } = {}) {
   const A = await login(app, ADMIN_A); const B = await login(app, ADMIN_B); const o = await login(app, S1);
   const c = (await A.post('/api/campaigns').send({ title: 'Team vote', eligibility: 'all', ...(opts.require_approval ? { require_approval: true } : {}) }).expect(201)).body;
   const cands: string[] = [];
-  for (const n of ['One', 'Two']) cands.push((await A.post(`/api/campaigns/${c.id}/candidates`).field('name', n).expect(201)).body.id);
+  for (const n of ['One', 'Two']) cands.push((await A.post(`/api/campaigns/${c.id}/candidates`).field('region', 'Khomas').field('name', n).expect(201)).body.id);
   await A.post(`/api/campaigns/${c.id}/team`).send({ email: ADMIN_B.email, role: 'co_admin' }).expect(201);
   await A.post(`/api/campaigns/${c.id}/team`).send({ email: S1.email, role: 'observer' }).expect(201);
   return { A, B, o, id: c.id as string, token: c.share_token as string, cands };
@@ -62,7 +62,7 @@ describe('a co-admin can run the campaign, but not do the owner-only things', ()
     expect((await t.B.get(`/api/campaigns/${t.id}`).expect(200)).body.my_role).toBe('co_admin');
     expect((await t.B.get('/api/campaigns/mine').expect(200)).body.campaigns.map((c: { id: string }) => c.id)).toContain(t.id);
     await t.B.patch(`/api/campaigns/${t.id}`).send({ title: 'Team vote (edited)' }).expect(200);
-    await t.B.post(`/api/campaigns/${t.id}/candidates`).field('name', 'Three').expect(201);
+    await t.B.post(`/api/campaigns/${t.id}/candidates`).field('region', 'Khomas').field('name', 'Three').expect(201);
     await t.B.post(`/api/campaigns/${t.id}/start`).expect(200);
     await vote(t.token, S2, t.cands[0]);
     await t.B.post(`/api/campaigns/${t.id}/close`).send({}).expect(200);

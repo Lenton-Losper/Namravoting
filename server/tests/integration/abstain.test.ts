@@ -18,7 +18,7 @@ async function make(admin: Admin, opts: { abstain?: boolean; n?: number; allow?:
   if (opts.allow) body.allow_edits_after_start = true;
   const c = (await admin.post('/api/campaigns').send(body).expect(201)).body;
   const cands: string[] = [];
-  for (let i = 0; i < (opts.n ?? 2); i++) cands.push((await admin.post(`/api/campaigns/${c.id}/candidates`).field('name', `Cand ${i + 1}`).expect(201)).body.id);
+  for (let i = 0; i < (opts.n ?? 2); i++) cands.push((await admin.post(`/api/campaigns/${c.id}/candidates`).field('region', 'Khomas').field('name', `Cand ${i + 1}`).expect(201)).body.id);
   if (opts.start) await admin.post(`/api/campaigns/${c.id}/start`).expect(200);
   return { id: c.id as string, token: c.share_token as string, cands, created: c };
 }

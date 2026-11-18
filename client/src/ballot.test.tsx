@@ -303,12 +303,12 @@ describe('the stylesheet follows the card design', () => {
     expect(rule('.ballot-card')).toMatch(/border: 2px solid var\(--b-border\)/);
     expect(css).toMatch(/--b-border: #8A94A3/);
   });
-  it('a selected card has the #12355B border, a 3px rgba(18,53,91,.18) glow and the #EEF3F9 fill', () => {
+  it('a selected card has the #002D4D border, a 3px rgba(0,45,77,.18) glow and the #EEF3F9 fill', () => {
     expect(rule('.ballot-card.is-selected')).toMatch(/border-color: var\(--b-navy\)/);
     expect(rule('.ballot-card.is-selected')).toMatch(/box-shadow: var\(--glow\)/);
     expect(rule('.ballot-card.is-selected')).toMatch(/background: var\(--b-selected\)/);
-    expect(css).toMatch(/--b-navy: #12355B/); expect(css).toMatch(/--b-selected: #EEF3F9/);
-    expect(css).toMatch(/--glow: 0 0 0 3px rgba\(18, 53, 91, \.18\)/);
+    expect(css).toMatch(/--b-navy: #002D4D/); expect(css).toMatch(/--b-selected: #EEF3F9/);
+    expect(css).toMatch(/--glow: 0 0 0 3px rgba\(0, 45, 77, \.18\)/);
   });
   it('the card: 16px radius, 24px 20px 20px select area, 12px gaps, 14px radio inset, 44px statement row', () => {
     expect(rule('.ballot-card')).toMatch(/border-radius: 16px/);

@@ -1,4 +1,4 @@
-import logo from './assets/namra-logo.jpg';
+import logo from './assets/umoja-logo.png';
 import type { ReactNode } from 'react';
 
 /** Small inline outline icons (no dependency). All are decorative; the parent control carries the accessible name. */
@@ -36,13 +36,13 @@ export function Icon({ name, size = 16 }: { name: string; size?: number }) {
 }
 
 /**
- * Wordmark: "NamRA | Voting".
- * The official NamRA mark (client/src/assets/namra-logo.jpg, used as supplied) sits on a small white rounded backing, so it stays visible on the navy bar.
+ * Wordmark: the Umoja Social Club logo, then "Voting".
+ * The logo (client/src/assets/umoja-logo.png, 642x234) has a white background, so it sits on a small white rounded pad that keeps it readable on the blue bar.
  */
 export function Wordmark({ dark = false }: { dark?: boolean }) {
   return (
     <span className={`wordmark${dark ? ' wordmark-dark' : ''}`}>
-      <span className="wordmark-logo"><img src={logo} alt="NamRA" width={32} height={32} decoding="async" /></span>
+      <span className="wordmark-logo"><img src={logo} alt="Umoja Social Club" width={91} height={34} decoding="async" /></span>
       <span className="wordmark-sep" aria-hidden="true" />
       <span className="wordmark-sub">Voting</span>
     </span>

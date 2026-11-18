@@ -18,7 +18,7 @@ async function closed(admin: Admin, votes: number[], opts: { eligibility?: 'all'
   if (opts.emails) body.emails = opts.emails;
   const c = (await admin.post('/api/campaigns').send(body).expect(201)).body;
   const cands: string[] = [];
-  for (let i = 0; i < votes.length; i++) cands.push((await admin.post(`/api/campaigns/${c.id}/candidates`).field('name', `Cand ${i + 1}`).field('bio', `bio ${i + 1}`).expect(201)).body.id);
+  for (let i = 0; i < votes.length; i++) cands.push((await admin.post(`/api/campaigns/${c.id}/candidates`).field('region', 'Khomas').field('name', `Cand ${i + 1}`).field('bio', `bio ${i + 1}`).expect(201)).body.id);
   await admin.post(`/api/campaigns/${c.id}/start`).expect(200);
   const voters = [S1, S2, S3];
   let v = 0;

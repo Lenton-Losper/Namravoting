@@ -83,7 +83,7 @@ export async function makeCampaign(admin: Session, n = 2, title = 'Test vote', e
   await admin.put(`/api/campaigns/${c.id}/eligible`).send({ mode: eligibility }).expect(200);   // new campaigns default to umoja; older tests want 'all'
   const candidates: string[] = [];
   for (let i = 0; i < n; i++) {
-    const r = await admin.post(`/api/campaigns/${c.id}/candidates`).field('name', `Candidate ${i + 1}`).field('bio', 'bio').expect(201);
+    const r = await admin.post(`/api/campaigns/${c.id}/candidates`).field('region', 'Khomas').field('name', `Candidate ${i + 1}`).field('bio', 'bio').expect(201);
     candidates.push(r.body.id);
   }
   return { id: c.id as string, token: c.share_token as string, candidates };
@@ -119,7 +119,7 @@ export async function makeElection(admin: Session, spec: ElectionSpec): Promise<
     for (const cand of p.candidates) {
       const name = typeof cand === 'string' ? cand : cand.name;
       const region = typeof cand === 'string' ? undefined : cand.region;
-      let req = admin.post(`/api/campaigns/${c.id}/candidates`).field('name', name).field('position_id', pos.id);
+      let req = admin.post(`/api/campaigns/${c.id}/candidates`).field('region', 'Khomas').field('name', name).field('position_id', pos.id);
       if (region) req = req.field('region_id', regions[region]);
       candidates.push({ id: (await req.expect(201)).body.id, name });
     }

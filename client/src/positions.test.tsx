@@ -640,7 +640,7 @@ describe('the admin positions screen', () => {
     expect(within(dlg).getByRole('status').textContent).toBe('2 winners, 3–13 candidates, voters pick 2.');
     await user.click(within(dlg).getByRole('button', { name: 'Add position' }));
     await waitFor(() => expect(calls.find((c) => c.method === 'POST' && c.url === `/api/campaigns/${ID}/positions`)?.body).toEqual({
-      title: 'Additional Members', description: null, rule_text: 'Must be from the HR Department', seats: 2, min_candidates: 3, max_candidates: 13 }));
+      title: 'Additional Members', description: null, rule_text: 'Must be from the HR Department', seats: 2, min_candidates: 3, max_candidates: 13, region_rule: null }));
   });
 
   it('the tabs say "Positions (n)" and the active tab is navy with a thicker underline', async () => {

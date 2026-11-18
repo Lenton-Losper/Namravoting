@@ -53,15 +53,15 @@ describe('positions as blocks', () => {
     const admin = await login(app, ADMIN_A);
     const e = await makeElection(admin, { positions: [{ title: 'One', candidates: ['A'] }, { title: 'Two', candidates: ['B'] }] });
     const other = await makeElection(admin, { title: 'Another', positions: [{ title: 'Elsewhere', candidates: ['X'] }] });
-    await admin.post(`/api/campaigns/${e.id}/candidates`).field('name', 'No position').expect(400);
-    await admin.post(`/api/campaigns/${e.id}/candidates`).field('name', 'Wrong').field('position_id', other.positions[0].id).expect(400);
-    await admin.post(`/api/campaigns/${e.id}/candidates`).field('name', 'Wrong region').field('position_id', e.positions[0].id).field('region_id', other.regions.Khomas).expect(400);
+    await admin.post(`/api/campaigns/${e.id}/candidates`).field('region', 'Khomas').field('name', 'No position').expect(400);
+    await admin.post(`/api/campaigns/${e.id}/candidates`).field('region', 'Khomas').field('name', 'Wrong').field('position_id', other.positions[0].id).expect(400);
+    await admin.post(`/api/campaigns/${e.id}/candidates`).field('region', 'Khomas').field('name', 'Wrong region').field('position_id', e.positions[0].id).field('region_id', other.regions.Khomas).expect(400);
   });
 
   it('a position\'s own maximum is enforced for candidates the admin adds', async () => {
     const admin = await login(app, ADMIN_A);
     const e = await makeElection(admin, { positions: [{ title: 'Tiny', candidates: ['A', 'B'], max: 2 }] });
-    expect((await admin.post(`/api/campaigns/${e.id}/candidates`).field('name', 'C').field('position_id', e.positions[0].id).expect(409)).body.code).toBe('position_full');
+    expect((await admin.post(`/api/campaigns/${e.id}/candidates`).field('region', 'Khomas').field('name', 'C').field('position_id', e.positions[0].id).expect(409)).body.code).toBe('position_full');
   });
 
   it('positions are locked once the campaign starts (409, and the database refuses too)', async () => {
@@ -79,7 +79,7 @@ describe('positions as blocks', () => {
     const admin = await login(app, ADMIN_A);
     const c = (await admin.post('/api/campaigns').send({ title: 'Flagged', eligibility: 'all', allow_edits_after_start: true }).expect(201)).body;
     const pos = (await admin.post(`/api/campaigns/${c.id}/positions`).send({ title: 'Secretary' }).expect(201)).body.id;
-    for (const n of ['A', 'B']) await admin.post(`/api/campaigns/${c.id}/candidates`).field('name', n).field('position_id', pos).expect(201);
+    for (const n of ['A', 'B']) await admin.post(`/api/campaigns/${c.id}/candidates`).field('region', 'Khomas').field('name', n).field('position_id', pos).expect(201);
     await admin.post(`/api/campaigns/${c.id}/start`).expect(200);
     await admin.patch(`/api/campaigns/${c.id}/positions/${pos}`).send({ title: 'General Secretary', description: 'Takes the minutes' }).expect(200);
     await admin.patch(`/api/campaigns/${c.id}/positions/${pos}`).send({ seats: 2 }).expect(409);
@@ -104,7 +104,7 @@ describe('the start check, per position', () => {
     expect(r.body.code).toBe('needs_candidates');
     expect(r.body.error).toContain('Finance Officer');
     expect(r.body.error).not.toContain('Press Secretary');
-    await admin.post(`/api/campaigns/${e.id}/candidates`).field('name', 'D').field('position_id', e.positions[1].id).expect(201);
+    await admin.post(`/api/campaigns/${e.id}/candidates`).field('region', 'Khomas').field('name', 'D').field('position_id', e.positions[1].id).expect(201);
     await admin.post(`/api/campaigns/${e.id}/start`).expect(200);
   });
 
@@ -113,17 +113,17 @@ describe('the start check, per position', () => {
     const e = await makeElection(admin, { positions: [{ title: 'Needs three', candidates: ['A', 'B'], min: 3 }] });
     const r = await admin.post(`/api/campaigns/${e.id}/start`).expect(409);
     expect(r.body.error).toMatch(/Needs three: needs at least 3/);
-    await admin.post(`/api/campaigns/${e.id}/candidates`).field('name', 'C').field('position_id', e.positions[0].id).expect(201);
+    await admin.post(`/api/campaigns/${e.id}/candidates`).field('region', 'Khomas').field('name', 'C').field('position_id', e.positions[0].id).expect(201);
     await admin.post(`/api/campaigns/${e.id}/start`).expect(200);
   });
 
   it('counts only APPROVED candidates (a pending or rejected nomination does not help), and starting creates one counter per approved candidate', async () => {
     const admin = await login(app, ADMIN_A);
     const e = await makeElection(admin, { positions: [{ title: 'P', candidates: ['A', 'B'] }] });
-    await ownerDb().query("INSERT INTO candidates (campaign_id, position_id, name, status) VALUES ($1, $2, 'Pending', 'submitted'), ($1, $2, 'Rejected', 'rejected')", [e.id, e.positions[0].id]);
+    await ownerDb().query("INSERT INTO candidates (campaign_id, position_id, region_id, name, status) VALUES ($1, $2, (SELECT id FROM regions WHERE campaign_id = $1 LIMIT 1), 'Pending', 'submitted'), ($1, $2, (SELECT id FROM regions WHERE campaign_id = $1 LIMIT 1), 'Rejected', 'rejected')", [e.id, e.positions[0].id]);
     await ownerDb().query("DELETE FROM candidates WHERE id = $1", [e.positions[0].candidates[1].id]);   // leaves only A approved
     expect((await admin.post(`/api/campaigns/${e.id}/start`).expect(409)).body.error).toMatch(/P: needs at least 2 approved candidates \(has 1\)/);
-    await admin.post(`/api/campaigns/${e.id}/candidates`).field('name', 'B2').field('position_id', e.positions[0].id).expect(201);
+    await admin.post(`/api/campaigns/${e.id}/candidates`).field('region', 'Khomas').field('name', 'B2').field('position_id', e.positions[0].id).expect(201);
     await admin.post(`/api/campaigns/${e.id}/start`).expect(200);
     const t = (await ownerDb().query('SELECT count(*)::int AS n FROM tallies WHERE campaign_id = $1', [e.id])).rows[0].n;
     expect(t).toBe(2);                                                         // A and B2; the pending and rejected ones have no counter
@@ -181,8 +181,8 @@ describe('a one-position campaign built the old way still works', () => {
   it('adding a candidate with no position creates the one default position, named after the campaign', async () => {
     const admin = await login(app, ADMIN_A);
     const c = (await admin.post('/api/campaigns').send({ title: 'Old style vote', eligibility: 'all' }).expect(201)).body;
-    await admin.post(`/api/campaigns/${c.id}/candidates`).field('name', 'One').expect(201);
-    await admin.post(`/api/campaigns/${c.id}/candidates`).field('name', 'Two').expect(201);
+    await admin.post(`/api/campaigns/${c.id}/candidates`).field('region', 'Khomas').field('name', 'One').expect(201);
+    await admin.post(`/api/campaigns/${c.id}/candidates`).field('region', 'Khomas').field('name', 'Two').expect(201);
     const pos = (await admin.get(`/api/campaigns/${c.id}/positions`).expect(200)).body.positions;
     expect(pos).toHaveLength(1);
     expect(pos[0].title).toBe('Old style vote');

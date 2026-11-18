@@ -19,8 +19,8 @@ const STATUS_LABEL: Record<NonNullable<Nomination['status']>, string> = {
 export const needsMore = (p: Position) => p.counts.approved < p.required;
 export const winnersLabel = (n: number) => `${n} winner${n === 1 ? '' : 's'}`;
 /** "2 winners, 3–13 candidates, voters pick 2." (no maximum: "3 or more candidates") */
-export const positionRuleSummary = (seats: number, min: number, max: number | null) =>
-  `${winnersLabel(seats)}, ${max ? `${min}–${max}` : `${min} or more`} candidates, voters pick ${seats}.`;
+export const positionRuleSummary = (seats: number, min: number, max: number | null, picks?: { min: number; max: number }) =>
+  `${winnersLabel(seats)}, ${max ? `${min}–${max}` : `${min} or more`} candidates, voters ${picks ? (picks.min === picks.max ? `pick ${picks.max}` : `pick ${picks.min === 1 ? 'up to' : `${picks.min} to`} ${picks.max}`) : `pick ${seats}`}.`;
 
 /** Why the campaign cannot start yet, or null. Every position needs enough APPROVED candidates (at least 2, or its own minimum). */
 export function startBlocker(positions: Position[]): string | null {
@@ -39,12 +39,24 @@ function PositionDialog({ c, existing, live, onDone, onCancel }: { c: CampaignDe
   const [ruleText, setRuleText] = useState(existing?.rule_text ?? '');
   const [min, setMin] = useState(existing?.min_candidates ? String(existing.min_candidates) : '2');
   const [max, setMax] = useState(existing?.max_candidates ? String(existing.max_candidates) : '');
+  // What a voter may pick: blank = the number of winners. Equal = exactly that many; fewer minimum than maximum = "up to".
+  const [minPicks, setMinPicks] = useState(existing?.min_picks ? String(existing.min_picks) : '');
+  const [maxPicks, setMaxPicks] = useState(existing?.max_picks ? String(existing.max_picks) : '');
+  // The optional region rule: "at least N picks from outside <region>".
+  const [ruleOn, setRuleOn] = useState(!!existing?.region_rule);
+  const [ruleN, setRuleN] = useState(existing?.region_rule ? String(existing.region_rule.min_outside) : '2');
+  const [ruleRegion, setRuleRegion] = useState(existing?.region_rule?.region_id ?? '');
+  const effMax = Number(maxPicks) || Number(minPicks) || Number(seats) || 1;
+  const effMin = Number(minPicks) || (maxPicks ? Number(maxPicks) : Number(seats) || 1);
+  const ruleProblem = ruleOn ? (!ruleRegion ? 'Choose the region the rule is about.' : !(Number(ruleN) >= 1) ? 'Say how many picks must come from outside it.' : Number(ruleN) > effMax ? `A voter can pick at most ${effMax}, so the rule cannot ask for ${ruleN}.` : null) : null;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   async function save() {
     setBusy(true); setError(null);
     const body = live ? { title, description: description || null, rule_text: ruleText.trim() || null }
-      : { title, description: description || null, rule_text: ruleText.trim() || null, seats: Number(seats) || 1, min_candidates: min && Number(min) !== 2 ? Number(min) : null, max_candidates: max ? Number(max) : null };
+      : { title, description: description || null, rule_text: ruleText.trim() || null, seats: Number(seats) || 1, min_candidates: min && Number(min) !== 2 ? Number(min) : null, max_candidates: max ? Number(max) : null,
+        ...(minPicks ? { min_picks: Number(minPicks) } : {}), ...(maxPicks ? { max_picks: Number(maxPicks) } : {}),
+        region_rule: ruleOn ? { min_outside: Number(ruleN), region_id: ruleRegion } : null };
     try {
       if (existing) await api('PATCH', `/api/campaigns/${c.id}/positions/${existing.id}`, body);
       else await api('POST', `/api/campaigns/${c.id}/positions`, body);
@@ -52,7 +64,7 @@ function PositionDialog({ c, existing, live, onDone, onCancel }: { c: CampaignDe
     } catch (e) { setError((e as Error).message); setBusy(false); }
   }
   return (
-    <Dialog title={existing ? `Edit ${existing.title}` : 'Add a position'} confirmLabel={existing ? 'Save position' : 'Add position'} busy={busy} confirmDisabled={!title.trim()} onConfirm={() => void save()} onCancel={onCancel}>
+    <Dialog title={existing ? `Edit ${existing.title}` : 'Add a position'} confirmLabel={existing ? 'Save position' : 'Add position'} busy={busy} confirmDisabled={!title.trim() || !!ruleProblem} onConfirm={() => void save()} onCancel={onCancel}>
       <div className="stack">
         <label>Title<span className="field-helper">For example “Press Secretary”. Shown to voters on the position block.</span><input value={title} onChange={(e) => setTitle(e.target.value)} maxLength={200} required /></label>
         <label>Description<span className="field-helper">Optional.</span><textarea rows={2} value={description} onChange={(e) => setDescription(e.target.value)} maxLength={2000} /></label>
@@ -60,11 +72,27 @@ function PositionDialog({ c, existing, live, onDone, onCancel }: { c: CampaignDe
         {!live && (
           <>
             <div className="field-grid">
-              <label>Number of winners<span className="field-helper">How many seats this position fills. Each voter picks exactly this many candidates.</span><input type="number" min={1} max={50} value={seats} onChange={(e) => setSeats(e.target.value)} /></label>
+              <label>Number of winners<span className="field-helper">How many seats this position fills (how many win).</span><input type="number" min={1} max={50} value={seats} onChange={(e) => setSeats(e.target.value)} /></label>
               <label>Minimum candidates to start<span className="field-helper">Default 2. Approved candidates only.</span><input type="number" min={1} max={500} value={min} onChange={(e) => setMin(e.target.value)} /></label>
               <label>Maximum candidates<span className="field-helper">Optional.</span><input type="number" min={1} max={500} value={max} onChange={(e) => setMax(e.target.value)} /></label>
             </div>
-            <p className="position-summary-line" role="status">{positionRuleSummary(Number(seats) || 1, Number(min) || 2, max ? Number(max) : null)}</p>
+            <fieldset className="stack voting-rules">
+              <legend>Voting rules</legend>
+              <div className="field-grid">
+                <label>Voters pick at least<span className="field-helper">Blank = the number of winners.</span><input type="number" min={1} max={50} placeholder={seats} value={minPicks} onChange={(e) => setMinPicks(e.target.value)} /></label>
+                <label>Voters pick at most<span className="field-helper">Equal to “at least” = exactly that many.</span><input type="number" min={1} max={50} placeholder={seats} value={maxPicks} onChange={(e) => setMaxPicks(e.target.value)} /></label>
+              </div>
+              <label className="check"><input type="checkbox" checked={ruleOn} onChange={(e) => setRuleOn(e.target.checked)} /> Region rule: a ballot needs picks from outside one region</label>
+              {ruleOn && (
+                <div className="field-grid">
+                  <label>At least<select value={ruleN} onChange={(e) => setRuleN(e.target.value)}>{Array.from({ length: Math.max(1, effMax) }, (_, i) => i + 1).map((n) => <option key={n} value={n}>{n}</option>)}</select></label>
+                  <label>picks from outside<select value={ruleRegion} onChange={(e) => setRuleRegion(e.target.value)}><option value="" disabled>Choose a region…</option>{(c.regions ?? []).map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}</select></label>
+                </div>
+              )}
+              {ruleOn && !ruleProblem && ruleRegion && <p className="field-helper" role="status">Voters and candidates see: “At least {ruleN} pick{Number(ruleN) === 1 ? '' : 's'} from outside {(c.regions ?? []).find((r) => r.id === ruleRegion)?.name}”. It limits what a ballot may contain, never who wins.</p>}
+              {ruleProblem && <p className="error" role="alert">{ruleProblem}</p>}
+            </fieldset>
+            <p className="position-summary-line" role="status">{positionRuleSummary(Number(seats) || 1, Number(min) || 2, max ? Number(max) : null, { min: effMin, max: effMax })}</p>
           </>
         )}
         {live && <p className="field-helper">Voting is open: only the title, description and eligibility text can change. The change is recorded and shown to voters.</p>}
@@ -103,7 +131,7 @@ function CandidateForm({ c, position, existing, onDone, onCancel }: { c: Campaig
     e.preventDefault(); setBusy(true); setError(null);
     const fd = new FormData();
     fd.append('name', name); fd.append('bio', bio); fd.append('pledge', pledge);
-    if (existing) fd.append('region_id', region); else { fd.append('position_id', position.id); if (region) fd.append('region_id', region); }
+    fd.append('region_id', region); if (!existing) fd.append('position_id', position.id);
     if (file) fd.append('photo', file);
     if (existing && removePhoto) fd.append('removePhoto', 'true');
     try { await api(existing ? 'PATCH' : 'POST', `/api/campaigns/${c.id}/candidates${existing ? `/${existing.id}` : ''}`, fd); onDone(); }
@@ -121,13 +149,14 @@ function CandidateForm({ c, position, existing, onDone, onCancel }: { c: Campaig
         </div>
       </div>
       <label>Name<input value={name} onChange={(e) => setName(e.target.value)} required maxLength={120} /></label>
-      <label>Region<select value={region} onChange={(e) => setRegion(e.target.value)}><option value="">No region</option>{(c.regions ?? []).map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}</select></label>
+      <label>Region *<span className="field-helper">{c.status === 'draft' ? 'Required. Voting rules and the ballot use it.' : 'Locked: a region cannot change once voting has started.'}</span>
+        <select value={region} onChange={(e) => setRegion(e.target.value)} required disabled={!!existing && c.status !== 'draft'}><option value="" disabled>Choose a region…</option>{(c.regions ?? []).map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}</select></label>
       <label>Pledge <span className="field-helper">One line voters see on the ballot, e.g. 'A stronger voice for every region'. {pledge.length}/160</span><input value={pledge} onChange={(e) => setPledge(e.target.value)} maxLength={160} /></label>
       <label>Short bio <span className="field-helper">{bio.length}/500 characters</span><textarea rows={3} value={bio} onChange={(e) => setBio(e.target.value)} maxLength={500} /></label>
       <ErrorBox message={error} />
       <div className="form-actions">
         <button type="button" className="btn btn-secondary" onClick={onCancel}>Cancel</button>
-        <button className="btn btn-primary" disabled={busy || !name.trim()}>{existing ? 'Save candidate' : 'Add candidate'}</button>
+        <button className="btn btn-primary" disabled={busy || !name.trim() || !region}>{existing ? 'Save candidate' : 'Add candidate'}</button>
       </div>
     </form>
   );
@@ -199,6 +228,7 @@ function PositionDetail({ c, p, reload, editable, canEditPosition }: { c: Campai
     <section className="position-detail" aria-label={`${p.title} details`}>
       {p.description && <p className="prow-desc">{p.description}</p>}
       {p.rule_text && <p className="rule-text"><Icon name="info" size={16} /> <span>{p.rule_text}</span></p>}
+      {p.region_rule && <p className="rule-text"><Icon name="info" size={16} /> <span>{p.region_rule.text}</span></p>}
       <InvitePanel c={c} p={p} reload={refresh} />
       <ErrorBox message={error} />
       <div className="section-title"><h4>Candidates</h4>

@@ -16,7 +16,7 @@ describe('SEC-20: the pixel limit is checked from the header, before decoding', 
   async function upload(buf: Buffer) {
     const admin = await login(app, ADMIN_A);
     const c = await makeCampaign(admin, 0);
-    return admin.post(`/api/campaigns/${c.id}/candidates`).field('name', 'Pic').attach('photo', buf, { filename: 'p.png', contentType: 'image/png' });
+    return admin.post(`/api/campaigns/${c.id}/candidates`).field('region', 'Khomas').field('name', 'Pic').attach('photo', buf, { filename: 'p.png', contentType: 'image/png' });
   }
 
   it('a tiny file that describes a 25-megapixel image is refused with a clear message', async () => {
@@ -49,7 +49,7 @@ describe('SEC-20: the pixel limit is checked from the header, before decoding', 
     const admin = await login(app, ADMIN_A);
     const c = await makeCampaign(admin, 0);
     const img = await solid(2000, 2000);
-    const rs = await Promise.all(Array.from({ length: 6 }, (_, i) => admin.post(`/api/campaigns/${c.id}/candidates`).field('name', `P${i}`).attach('photo', img, { filename: 'p.png', contentType: 'image/png' })));
+    const rs = await Promise.all(Array.from({ length: 6 }, (_, i) => admin.post(`/api/campaigns/${c.id}/candidates`).field('region', 'Khomas').field('name', `P${i}`).attach('photo', img, { filename: 'p.png', contentType: 'image/png' })));
     expect(rs.map((r) => r.status)).toEqual([201, 201, 201, 201, 201, 201]);
   });
 });
@@ -59,10 +59,10 @@ describe('SEC-21 through the API', () => {
     const admin = await login(app, ADMIN_A);
     const c = (await admin.post('/api/campaigns').send({ title: `Chair${RLO} election`, description: `Please${String.fromCharCode(0x200b)} vote` }).expect(201)).body;
     expect(c.title).toBe('Chair election'); expect(c.description).toBe('Please vote');
-    const cand = (await admin.post(`/api/campaigns/${c.id}/candidates`).field('name', `Al${RLO}ice`).field('bio', 'ok').expect(201)).body;
+    const cand = (await admin.post(`/api/campaigns/${c.id}/candidates`).field('region', 'Khomas').field('name', `Al${RLO}ice`).field('bio', 'ok').expect(201)).body;
     expect(cand.name).toBe('Alice');
     expect((await ownerDb().query('SELECT name FROM candidates WHERE id = $1', [cand.id])).rows[0].name).toBe('Alice');
-    await admin.post(`/api/campaigns/${c.id}/candidates`).field('name', `${RLO}${String.fromCharCode(0x200b)}`).expect(400);
+    await admin.post(`/api/campaigns/${c.id}/candidates`).field('region', 'Khomas').field('name', `${RLO}${String.fromCharCode(0x200b)}`).expect(400);
   });
 });
 

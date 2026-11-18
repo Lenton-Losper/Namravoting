@@ -15,7 +15,7 @@ type Admin = Awaited<ReturnType<typeof login>>;
 async function make(admin: Admin, n = 3, opts: { start?: boolean; abstain?: boolean } = {}) {
   const c = (await admin.post('/api/campaigns').send({ title: 'Withdraw test', eligibility: 'all', ...(opts.abstain ? { allow_abstain: true } : {}) }).expect(201)).body;
   const cands: string[] = [];
-  for (let i = 0; i < n; i++) cands.push((await admin.post(`/api/campaigns/${c.id}/candidates`).field('name', `Cand ${i + 1}`).expect(201)).body.id);
+  for (let i = 0; i < n; i++) cands.push((await admin.post(`/api/campaigns/${c.id}/candidates`).field('region', 'Khomas').field('name', `Cand ${i + 1}`).expect(201)).body.id);
   if (opts.start !== false) await admin.post(`/api/campaigns/${c.id}/start`).expect(200);
   return { id: c.id as string, token: c.share_token as string, cands };
 }

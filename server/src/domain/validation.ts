@@ -64,13 +64,22 @@ export const candidateBody = z.object({
   pledge: lines(160).optional(),
   /** Which position the candidate stands for. Optional only while the campaign has a single position. */
   position_id: uuid.optional(),
+  /** Every candidate stands for a region: give its id, or its name (resolved inside this campaign). */
   region_id: uuid.optional(),
-}).strict();
+  region: line(80).optional(),
+}).strict().refine((v) => !!v.region_id || !!v.region, { message: 'Choose a region for this candidate', path: ['region_id'] });
+
+/** "At least `min_outside` picks from outside `region_id`" (a voting rule of one position). */
+const regionRuleBody = z.object({ min_outside: z.number().int().min(1).max(50), region_id: uuid }).strict();
 
 export const positionBody = z.object({
   title: line(200),
   description: lines(2000).nullable().optional(),
   seats: z.number().int().min(1).max(50).optional(),
+  /** How many candidates a voter may choose. Equal = exactly that many. Omitted = the number of winners (seats). */
+  min_picks: z.number().int().min(1).max(50).optional(),
+  max_picks: z.number().int().min(1).max(50).optional(),
+  region_rule: regionRuleBody.nullable().optional(),
   /** Informational eligibility line shown to voters (e.g. "Must be from the HR Department"). Never checked at the ballot. */
   rule_text: line(200).nullable().optional(),
   min_candidates: z.number().int().min(1).max(500).nullable().optional(),
@@ -80,6 +89,9 @@ export const positionPatchBody = z.object({
   title: line(200).optional(),
   description: lines(2000).nullable().optional(),
   seats: z.number().int().min(1).max(50).optional(),
+  min_picks: z.number().int().min(1).max(50).optional(),
+  max_picks: z.number().int().min(1).max(50).optional(),
+  region_rule: regionRuleBody.nullable().optional(),
   rule_text: line(200).nullable().optional(),
   min_candidates: z.number().int().min(1).max(500).nullable().optional(),
   max_candidates: z.number().int().min(1).max(500).nullable().optional(),
@@ -103,7 +115,8 @@ export const candidatePatchBody = z.object({
   bio: lines(500).optional(),
   pledge: lines(160).optional(),
   removePhoto: z.enum(['true', 'false']).optional(),
-  region_id: uuid.nullable().optional(),
+  region_id: uuid.optional(),   // a candidate always has a region: it can be changed, not cleared
+  region: line(80).optional(),
 }).strict();
 
 export const eligibleBody = z.discriminatedUnion('mode', [

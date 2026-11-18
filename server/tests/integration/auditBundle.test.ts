@@ -20,7 +20,7 @@ const bin = (res: import('superagent').Response, cb: (e: Error | null, b: Buffer
 async function history(admin: Admin, opts: { close?: boolean } = {}) {
   const c = (await admin.post('/api/campaigns').send({ title: 'Leadership election', eligibility: 'all', closes_at: new Date(Date.now() + 3600_000).toISOString() }).expect(201)).body;
   const cands: string[] = [];
-  for (const n of ['One', 'Two']) cands.push((await admin.post(`/api/campaigns/${c.id}/candidates`).field('name', n).expect(201)).body.id);
+  for (const n of ['One', 'Two']) cands.push((await admin.post(`/api/campaigns/${c.id}/candidates`).field('region', 'Khomas').field('name', n).expect(201)).body.id);
   await admin.post(`/api/campaigns/${c.id}/start`).expect(200);
   await (await login(app, S1)).post(`/api/vote/${c.share_token}`).send({ candidateId: cands[0] }).expect(201);
   await admin.post(`/api/campaigns/${c.id}/reset`).send({ confirm_title: 'Leadership election', reason: 'The wrong list was shown to voters' }).expect(200);
