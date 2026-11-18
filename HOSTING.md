@@ -97,6 +97,7 @@ Needs Docker Engine with the Compose plugin (v2.20 or newer). Run the commands i
 
 ```bash
 cp .env.example .env            # then edit .env as in section 2 (delete the development lines above the production section)
+mkdir -p data                  # folder for the Umoja member list (section 6a); create it now, or Docker creates it owned by root
 docker compose build            # release package: installs the runtime packages only. Source checkout: also compiles the app (BASE_PATH=/voting-app)
 ```
 
@@ -308,7 +309,7 @@ Umoja votes are open to the members on the list NamRA HR gives you. Load it once
 
 **What the command does.** For each Employee Code: a new one is **added** (as an active member), one that exists with a different address is **updated** (the address only), one that exists with the same address is **unchanged**. It **never deletes** a member, never changes an existing member's active flag or Microsoft match, and an address that already belongs to another member rejects that row. It is safe to run twice. It prints counts (added, updated, unchanged, rejected) and row numbers, **never names, addresses or codes**, and writes one audit-log entry with the counts and the **SHA-256 of the file**.
 
-**Docker** (the file is `data/umoja-emails.xlsx` on the VM, which the app container sees as `/data/umoja-emails.xlsx`):
+**Docker** (the file is `data/umoja-emails.xlsx` next to `docker-compose.yml`, which the app container sees as `/data/umoja-emails.xlsx`; create the folder yourself with `mkdir -p data` **before the first `docker compose` command**, or Docker creates it owned by root):
 
 ```bash
 # 1. Check the file itself (no database is touched): row counts and rejected row numbers

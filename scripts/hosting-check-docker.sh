@@ -28,6 +28,7 @@ DC="docker compose --profile localdb"
 cleanup() { status=$?; if [ "$status" -ne 0 ]; then echo "::group::container logs"; $DC logs --no-color --tail 150 || true; echo "::endgroup::"; fi; $DC down -v --remove-orphans >/dev/null 2>&1 || true; rm -f .env; exit "$status"; }
 trap cleanup EXIT
 
+mkdir -p data   # the member-list folder (HOSTING.md 6a): created by the installer, or Docker makes it root-owned
 echo "== build the image"
 $DC build
 echo "== start PostgreSQL 16"
@@ -40,7 +41,7 @@ echo "== migrations (first run, then again: must be a no-op)"
 $DC run --rm -T app node server/dist/migrateCli.js | tail -3
 $DC run --rm -T app node server/dist/migrateCli.js | tee /dev/stderr | grep -q "migrations up to date"
 echo "== member import (FAKE data): check, dry run, real run, second run"
-mkdir -p data && printf 'Employee Code,Display Name,Email Address
+printf 'Employee Code,Display Name,Email Address
 ABC0001,Fake One,one@namra.org.na
 ABC0002,Fake Two,two@namra.org.na
 ABC0003,Fake Three,three@example.com
@@ -50,7 +51,7 @@ out=$($DC run --rm -T app node server/dist/importMembers.js /data/members.csv --
 out=$($DC run --rm -T app node server/dist/importMembers.js /data/members.csv); echo "$out"; echo "$out" | grep -q "IMPORT DONE"
 out=$($DC run --rm -T app node server/dist/importMembers.js /data/members.csv); echo "$out"; echo "$out" | grep -q "unchanged: 2"
 if echo "$out" | grep -qE "ABC000|Fake|[a-z]@namra"; then echo "the import printed a code, name or address"; exit 1; fi
-rm -rf data
+rm -f data/members.csv
 echo "== start the app"
 $DC up -d --wait app
 echo "== health"
